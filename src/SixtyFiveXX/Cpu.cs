@@ -56,6 +56,9 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// <summary>The vector the in-progress interrupt or BRK sequence will read.</summary>
     private int _vector = IrqVector;
 
+    /// <summary>High byte of an unstable store's target address, plus one.</summary>
+    private byte _storeHigh;
+
     /// <summary>Creates a core over the given bus.</summary>
     public Cpu(TBus bus)
     {
@@ -197,6 +200,16 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
         _ => throw new InvalidOperationException($"{_op} is not a branch."),
     };
 
+    /// <summary>The value an unstable store will write, before the address fold-in.</summary>
+    private byte UnstableStoreValue() => _op switch
+    {
+        Op.Sha => (byte)(_s.A & _s.X & _storeHigh),
+        Op.Shx => (byte)(_s.X & _storeHigh),
+        Op.Shy => (byte)(_s.Y & _storeHigh),
+        Op.Tas => (byte)(_s.A & _s.X & _storeHigh),
+        _ => throw new InvalidOperationException($"{_op} is not an unstable store."),
+    };
+
     private void Execute(MicroOp micro)
     {
         switch (micro)
@@ -299,6 +312,18 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
             case MicroOp.DummyReadFixup:
                 _bus.Read(_addr);
                 if (_pageCross) _addr = (_addr + 0x100) & 0xFFFF;
+                break;
+
+            case MicroOp.UnstableStoreFixup:
+                _bus.Read(_addr);
+                // The value these instructions store is ANDed with the target's high
+                // byte plus one. On a page cross the AND result also becomes the high
+                // byte, so the write lands somewhere other than the nominal address.
+                _storeHigh = (byte)(((_addr >> 8) & 0xFF) + 1);
+                if (_pageCross)
+                {
+                    _addr = (_addr & 0x00FF) | (UnstableStoreValue() << 8);
+                }
                 break;
 
             case MicroOp.PtrReadLo:

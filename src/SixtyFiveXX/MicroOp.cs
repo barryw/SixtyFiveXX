@@ -58,6 +58,13 @@ internal enum MicroOp : byte
     /// <summary>Dummy read at addr; unconditionally fix addr if a page was crossed.</summary>
     DummyReadFixup,
 
+    /// <summary>
+    /// Dummy read at addr, then the unstable-store address correction: on a page cross
+    /// the stored value's high-byte AND is folded into the address itself. Used only by
+    /// SHA, SHX, SHY and TAS.
+    /// </summary>
+    UnstableStoreFixup,
+
     /// <summary>Run the operation to produce data, then Write(addr, data).</summary>
     ExecWrite,
 

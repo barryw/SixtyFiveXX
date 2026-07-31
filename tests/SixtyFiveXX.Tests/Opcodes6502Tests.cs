@@ -15,7 +15,7 @@ public class Opcodes6502Tests
     public void Table_DefinesTheExpectedNumberOfOpcodes()
     {
         var legal = Opcodes6502.Table.Count(e => e.Operation != Op.Undefined);
-        Assert.Equal(236, legal);
+        Assert.Equal(244, legal);
     }
 
     [Theory]

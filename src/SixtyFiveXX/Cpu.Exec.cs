@@ -134,10 +134,38 @@ public sealed partial class Cpu<TBus>
                 break;
             }
 
+            // Undocumented and unstable. The magic constant $EE was determined
+            // empirically from the SingleStepTests vectors, not chosen: for $8B with
+            // A=$E4, X=$E2, imm=$23, only ($E4 | $EE) & $E2 & $23 yields the expected $22.
+            case Op.Ane: _s.A = (byte)((_s.A | AneMagic) & _s.X & _data); SetZN(_s.A); break;
+            case Op.Lxa: _s.A = _s.X = (byte)((_s.A | AneMagic) & _data); SetZN(_s.A); break;
+
+            case Op.Las:
+                _s.A = _s.X = _s.S = (byte)(_data & _s.S);
+                SetZN(_s.A);
+                break;
+
+            // The unstable stores set no flags. UnstableStoreFixup has already computed
+            // the high byte these AND against.
+            case Op.Sha: _data = (byte)(_s.A & _s.X & _storeHigh); break;
+            case Op.Shx: _data = (byte)(_s.X & _storeHigh); break;
+            case Op.Shy: _data = (byte)(_s.Y & _storeHigh); break;
+            case Op.Tas:
+                _s.S = (byte)(_s.A & _s.X);
+                _data = (byte)(_s.S & _storeHigh);
+                break;
+
             default:
                 throw new NotImplementedException($"Operation {_op} is not implemented yet.");
         }
     }
+
+    /// <summary>
+    /// The "magic" constant ANE and LXA mix into the accumulator. On real silicon this
+    /// is the decaying value of an internal bus and varies by chip and temperature;
+    /// $EE is what the SingleStepTests vectors encode and what most parts produce.
+    /// </summary>
+    private const byte AneMagic = 0xEE;
 
     /// <summary>Sets Z and N from a result byte. Every 6502 operation that touches them does it this way.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

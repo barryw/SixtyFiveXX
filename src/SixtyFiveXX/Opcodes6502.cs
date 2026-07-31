@@ -277,6 +277,16 @@ internal static class Opcodes6502
         Set(0xCB, "SBX", AddrMode.Immediate, Op.Sbx, Access.Read);
         Set(0xEB, "SBC", AddrMode.Immediate, Op.Sbc, Access.Read);   // duplicate of $E9
 
+        // ---- Undocumented: unstable -------------------------------------------
+        Set(0x8B, "ANE", AddrMode.Immediate,       Op.Ane, Access.Read);
+        Set(0xAB, "LXA", AddrMode.Immediate,       Op.Lxa, Access.Read);
+        Set(0xBB, "LAS", AddrMode.AbsoluteY,       Op.Las, Access.Read);
+        Set(0x93, "SHA", AddrMode.IndirectIndexed, Op.Sha, Access.Write);
+        Set(0x9F, "SHA", AddrMode.AbsoluteY,       Op.Sha, Access.Write);
+        Set(0x9B, "TAS", AddrMode.AbsoluteY,       Op.Tas, Access.Write);
+        Set(0x9C, "SHY", AddrMode.AbsoluteX,       Op.Shy, Access.Write);
+        Set(0x9E, "SHX", AddrMode.AbsoluteY,       Op.Shx, Access.Write);
+
         return t;
     }
 }

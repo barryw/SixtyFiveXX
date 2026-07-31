@@ -55,4 +55,8 @@ internal enum Op : byte
     // Undocumented immediate-mode instructions with flag behaviour unlike any
     // documented opcode.
     Anc, Alr, Arr, Sbx,
+
+    // Undocumented and genuinely unstable on real silicon. Modelled as the
+    // deterministic values the SingleStepTests vectors encode.
+    Ane, Lxa, Las, Sha, Shx, Shy, Tas,
 }
