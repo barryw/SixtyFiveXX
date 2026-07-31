@@ -1,0 +1,8 @@
+bin/
+obj/
+*.user
+.idea/
+.vs/
+.DS_Store
+BenchmarkDotNet.Artifacts/
+tests/SixtyFiveXX.Conformance/.harte-cache/
