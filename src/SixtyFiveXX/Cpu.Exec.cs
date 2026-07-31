@@ -93,6 +93,16 @@ public sealed partial class Cpu<TBus>
             case Op.Adc: Adc(_data); break;
             case Op.Sbc: Sbc(_data); break;
 
+            // Undocumented combination read-modify-writes. Each performs a documented
+            // memory operation and then a documented ALU operation on the result.
+            // Rra and Isc inherit decimal-mode behaviour from Adc and Sbc.
+            case Op.Slo: _data = Asl(_data); _s.A |= _data; SetZN(_s.A); break;
+            case Op.Rla: _data = Rol(_data); _s.A &= _data; SetZN(_s.A); break;
+            case Op.Sre: _data = Lsr(_data); _s.A ^= _data; SetZN(_s.A); break;
+            case Op.Rra: _data = Ror(_data); Adc(_data); break;
+            case Op.Dcp: _data = (byte)(_data - 1); Compare(_s.A); break;
+            case Op.Isc: _data = (byte)(_data + 1); Sbc(_data); break;
+
             default:
                 throw new NotImplementedException($"Operation {_op} is not implemented yet.");
         }

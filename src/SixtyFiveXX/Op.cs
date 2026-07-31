@@ -39,6 +39,10 @@ internal enum Op : byte
     /// </summary>
     NopRead,
 
+    // Undocumented combination read-modify-writes: a shift or increment on memory,
+    // followed by an ALU operation against the accumulator, sharing one operand.
+    Slo, Rla, Sre, Rra, Dcp, Isc,
+
     // Branch conditions
     Bcc, Bcs, Beq, Bmi, Bne, Bpl, Bvc, Bvs,
 }

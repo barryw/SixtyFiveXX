@@ -1,8 +1,9 @@
 namespace SixtyFiveXX;
 
 /// <summary>
-/// The MOS 6502 opcode table. Phase 1 covers the 151 documented opcodes; every other
-/// entry is <see cref="OpcodeInfo.Undefined"/> until undocumented opcodes land.
+/// The MOS 6502 opcode table: the 151 documented opcodes, the 27 undocumented NOPs, and
+/// the 42 undocumented combination read-modify-write opcodes (SLO, RLA, SRE, RRA, DCP,
+/// ISC). Every remaining entry is <see cref="OpcodeInfo.Undefined"/>.
 /// </summary>
 internal static class Opcodes6502
 {
@@ -232,6 +233,28 @@ internal static class Opcodes6502
 
         foreach (var op in new[] { 0x1C, 0x3C, 0x5C, 0x7C, 0xDC, 0xFC })
             Set(op, "NOP", AddrMode.AbsoluteX, Op.NopRead, Access.Read);
+
+        // ---- Undocumented: combination read-modify-writes -----------------------
+        // All six share one addressing set. Every indexed form pays the page-cross
+        // fixup unconditionally, because read-modify-write always does.
+        void SetCombo(string mnemonic, Op operation, int zpX, int zp, int abs,
+                      int zpYIndirect, int zeroPageX, int absY, int absX)
+        {
+            Set(zpX,         mnemonic, AddrMode.IndexedIndirect, operation, Access.ReadModifyWrite);
+            Set(zp,          mnemonic, AddrMode.ZeroPage,        operation, Access.ReadModifyWrite);
+            Set(abs,         mnemonic, AddrMode.Absolute,        operation, Access.ReadModifyWrite);
+            Set(zpYIndirect, mnemonic, AddrMode.IndirectIndexed, operation, Access.ReadModifyWrite);
+            Set(zeroPageX,   mnemonic, AddrMode.ZeroPageX,       operation, Access.ReadModifyWrite);
+            Set(absY,        mnemonic, AddrMode.AbsoluteY,       operation, Access.ReadModifyWrite);
+            Set(absX,        mnemonic, AddrMode.AbsoluteX,       operation, Access.ReadModifyWrite);
+        }
+
+        SetCombo("SLO", Op.Slo, 0x03, 0x07, 0x0F, 0x13, 0x17, 0x1B, 0x1F);
+        SetCombo("RLA", Op.Rla, 0x23, 0x27, 0x2F, 0x33, 0x37, 0x3B, 0x3F);
+        SetCombo("SRE", Op.Sre, 0x43, 0x47, 0x4F, 0x53, 0x57, 0x5B, 0x5F);
+        SetCombo("RRA", Op.Rra, 0x63, 0x67, 0x6F, 0x73, 0x77, 0x7B, 0x7F);
+        SetCombo("DCP", Op.Dcp, 0xC3, 0xC7, 0xCF, 0xD3, 0xD7, 0xDB, 0xDF);
+        SetCombo("ISC", Op.Isc, 0xE3, 0xE7, 0xEF, 0xF3, 0xF7, 0xFB, 0xFF);
 
         return t;
     }
