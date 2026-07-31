@@ -42,6 +42,9 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// <summary>The effective address.</summary>
     private int _addr;
 
+    /// <summary>Set when indexing carried out of the low byte of the effective address.</summary>
+    private bool _pageCross;
+
     /// <summary>Creates a core over the given bus.</summary>
     public Cpu(TBus bus)
     {
@@ -155,6 +158,57 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
 
             case MicroOp.RmwWrite:
                 _bus.Write(_addr, _data);
+                break;
+
+            case MicroOp.FetchAddrHiX:
+            {
+                var hi = _bus.Read(_s.PC);
+                _s.PC++;
+                var lo = (_addr & 0xFF) + _s.X;
+                _pageCross = lo > 0xFF;
+                _addr = (hi << 8) | (lo & 0xFF);
+                break;
+            }
+
+            case MicroOp.FetchAddrHiY:
+            {
+                var hi = _bus.Read(_s.PC);
+                _s.PC++;
+                var lo = (_addr & 0xFF) + _s.Y;
+                _pageCross = lo > 0xFF;
+                _addr = (hi << 8) | (lo & 0xFF);
+                break;
+            }
+
+            case MicroOp.ZpIndexX:
+                _bus.Read(_addr);                      // dummy read at the unindexed address
+                _addr = (_addr + _s.X) & 0xFF;         // page zero indexing wraps within the page
+                break;
+
+            case MicroOp.ZpIndexY:
+                _bus.Read(_addr);
+                _addr = (_addr + _s.Y) & 0xFF;
+                break;
+
+            case MicroOp.ReadPageCross:
+                // The read happens either way. Without a page cross it is the real read
+                // and the instruction is done; with one it was a read of the wrong
+                // address and the next micro-op re-reads the corrected one.
+                _data = _bus.Read(_addr);
+                if (_pageCross)
+                {
+                    _addr = (_addr + 0x100) & 0xFFFF;
+                }
+                else
+                {
+                    Exec();
+                    EndInstruction();
+                }
+                break;
+
+            case MicroOp.DummyReadFixup:
+                _bus.Read(_addr);
+                if (_pageCross) _addr = (_addr + 0x100) & 0xFFFF;
                 break;
 
             default:
