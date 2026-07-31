@@ -11,7 +11,7 @@ public class AbsoluteAndZeroPageTests
         var (cpu, ram) = TestMachine.Flat(0x0200, 0xA5, 0x42);
         ram[0x0042] = 0x37;
 
-        var cycles = TestMachine.StepOne(cpu);
+        var cycles = cpu.Step();
 
         Assert.Equal(0x37, cpu.State.A);
         Assert.Equal(3, cycles);
@@ -24,7 +24,7 @@ public class AbsoluteAndZeroPageTests
         var (cpu, ram) = TestMachine.Flat(0x0200, 0xAD, 0x34, 0x12);
         ram[0x1234] = 0x99;
 
-        var cycles = TestMachine.StepOne(cpu);
+        var cycles = cpu.Step();
 
         Assert.Equal(0x99, cpu.State.A);
         Assert.Equal(4, cycles);
@@ -37,7 +37,7 @@ public class AbsoluteAndZeroPageTests
         var (cpu, ram, log) = TestMachine.Logged(0x0200, 0xAD, 0x34, 0x12);
         ram[0x1234] = 0x99;
 
-        TestMachine.StepOne(cpu);
+        cpu.Step();
 
         Assert.Equal(
         [
@@ -54,7 +54,7 @@ public class AbsoluteAndZeroPageTests
         var (cpu, ram) = TestMachine.Flat(0x0200, 0x8D, 0x00, 0x30);
         cpu.State.A = 0x5A;
 
-        var cycles = TestMachine.StepOne(cpu);
+        var cycles = cpu.Step();
 
         Assert.Equal(0x5A, ram[0x3000]);
         Assert.Equal(4, cycles);
@@ -66,7 +66,7 @@ public class AbsoluteAndZeroPageTests
         var (cpu, ram, log) = TestMachine.Logged(0x0200, 0xE6, 0x10);
         ram[0x0010] = 0x41;
 
-        var cycles = TestMachine.StepOne(cpu);
+        var cycles = cpu.Step();
 
         Assert.Equal(0x42, ram[0x0010]);
         Assert.Equal(5, cycles);
@@ -86,7 +86,7 @@ public class AbsoluteAndZeroPageTests
         var (cpu, ram) = TestMachine.Flat(0x0200, 0xEE, 0x00, 0x40);
         ram[0x4000] = 0xFF;
 
-        var cycles = TestMachine.StepOne(cpu);
+        var cycles = cpu.Step();
 
         Assert.Equal(0x00, ram[0x4000]);
         Assert.True(cpu.State.Z);
@@ -99,7 +99,7 @@ public class AbsoluteAndZeroPageTests
         var (cpu, ram) = TestMachine.Flat(0x0200, 0xC6, 0x10);
         ram[0x0010] = 0x00;
 
-        TestMachine.StepOne(cpu);
+        cpu.Step();
 
         Assert.Equal(0xFF, ram[0x0010]);
         Assert.True(cpu.State.N);
@@ -112,7 +112,7 @@ public class AbsoluteAndZeroPageTests
         var (cpu, _) = TestMachine.Flat(0x0200, 0xE8);
         cpu.State.X = 0xFF;
 
-        TestMachine.StepOne(cpu);
+        cpu.Step();
 
         Assert.Equal(0x00, cpu.State.X);
         Assert.True(cpu.State.Z);
@@ -124,7 +124,7 @@ public class AbsoluteAndZeroPageTests
         var (cpu, _) = TestMachine.Flat(0x0200, 0x88);
         cpu.State.Y = 0x00;
 
-        TestMachine.StepOne(cpu);
+        cpu.Step();
 
         Assert.Equal(0xFF, cpu.State.Y);
         Assert.True(cpu.State.N);

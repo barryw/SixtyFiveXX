@@ -130,7 +130,7 @@ internal enum MicroOp : byte
     /// <summary>Dummy read at PC; PC++. BRK's signature byte.</summary>
     BrkPad,
 
-    /// <summary>Dummy read at PC. Filler for a hardware interrupt sequence.</summary>
+    /// <summary>Dummy read at PC. Filler for the hardware interrupt sequence and, twice over, for reset.</summary>
     IntDummy,
 
     /// <summary>Write(0x100 + S, P) with B set for BRK and clear for IRQ/NMI; S--; set I.</summary>

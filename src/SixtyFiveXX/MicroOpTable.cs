@@ -23,7 +23,12 @@ internal sealed class MicroOpTable
     /// <summary>The descriptors this table was built from.</summary>
     public readonly OpcodeInfo[] Info;
 
-    /// <summary>Index of the hardware interrupt sequence in <see cref="Ops"/>.</summary>
+    /// <summary>
+    /// Index of the hardware interrupt sequence in <see cref="Ops"/>. The caller must set
+    /// the CPU's vector field to <c>NmiVector</c> or <c>IrqVector</c> before entering this
+    /// sequence — the sequence itself never sets it, since only the dispatcher knows
+    /// which interrupt is being serviced.
+    /// </summary>
     public readonly ushort IrqEntry;
 
     /// <summary>Index of the reset sequence in <see cref="Ops"/>.</summary>

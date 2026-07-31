@@ -12,7 +12,7 @@ public class IndexedAddressingTests
         cpu.State.X = 0x10;
         ram[0x3010] = 0x77;
 
-        var cycles = TestMachine.StepOne(cpu);
+        var cycles = cpu.Step();
 
         Assert.Equal(0x77, cpu.State.A);
         Assert.Equal(4, cycles);
@@ -26,7 +26,7 @@ public class IndexedAddressingTests
         ram[0x3010] = 0xAA;   // the unfixed (wrong) address: $30F0 + $20 keeps the old high byte
         ram[0x3110] = 0xBB;   // the corrected address
 
-        var cycles = TestMachine.StepOne(cpu);
+        var cycles = cpu.Step();
 
         Assert.Equal(0xBB, cpu.State.A);
         Assert.Equal(5, cycles);
@@ -47,7 +47,7 @@ public class IndexedAddressingTests
         cpu.State.X = 0x10;
         cpu.State.A = 0x5A;
 
-        var cycles = TestMachine.StepOne(cpu);
+        var cycles = cpu.Step();
 
         Assert.Equal(5, cycles);
         Assert.Equal(
@@ -67,7 +67,7 @@ public class IndexedAddressingTests
         cpu.State.X = 0x05;
         ram[0x3005] = 0x10;
 
-        var cycles = TestMachine.StepOne(cpu);
+        var cycles = cpu.Step();
 
         Assert.Equal(0x11, ram[0x3005]);
         Assert.Equal(7, cycles);
@@ -80,7 +80,7 @@ public class IndexedAddressingTests
         cpu.State.Y = 0x01;
         ram[0x2100] = 0x3C;
 
-        var cycles = TestMachine.StepOne(cpu);
+        var cycles = cpu.Step();
 
         Assert.Equal(0x3C, cpu.State.A);
         Assert.Equal(5, cycles);
@@ -94,7 +94,7 @@ public class IndexedAddressingTests
         ram[0x0010] = 0x64;    // ($F0 + $20) & $FF = $10
         ram[0x0110] = 0xFF;    // must NOT be read
 
-        var cycles = TestMachine.StepOne(cpu);
+        var cycles = cpu.Step();
 
         Assert.Equal(0x64, cpu.State.A);
         Assert.Equal(4, cycles);
@@ -114,7 +114,7 @@ public class IndexedAddressingTests
         cpu.State.Y = 0x04;
         ram[0x0084] = 0x2B;
 
-        var cycles = TestMachine.StepOne(cpu);
+        var cycles = cpu.Step();
 
         Assert.Equal(0x2B, cpu.State.X);
         Assert.Equal(4, cycles);
@@ -127,7 +127,7 @@ public class IndexedAddressingTests
         cpu.State.X = 0x01;
         ram[0x0000] = 0x5E;
 
-        var cycles = TestMachine.StepOne(cpu);
+        var cycles = cpu.Step();
 
         Assert.Equal(0x5E, cpu.State.A);
         Assert.Equal(5, cycles);

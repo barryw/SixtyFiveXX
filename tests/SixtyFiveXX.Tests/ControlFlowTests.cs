@@ -10,7 +10,7 @@ public class ControlFlowTests
     {
         var (cpu, _) = TestMachine.Flat(0x0200, 0x4C, 0x34, 0x12);
 
-        var cycles = TestMachine.StepOne(cpu);
+        var cycles = cpu.Step();
 
         Assert.Equal(0x1234, cpu.State.PC);
         Assert.Equal(3, cycles);
@@ -23,7 +23,7 @@ public class ControlFlowTests
         ram[0x3000] = 0x78;
         ram[0x3001] = 0x56;
 
-        var cycles = TestMachine.StepOne(cpu);
+        var cycles = cpu.Step();
 
         Assert.Equal(0x5678, cpu.State.PC);
         Assert.Equal(5, cycles);
@@ -37,7 +37,7 @@ public class ControlFlowTests
         ram[0x3100] = 0xEE;    // what a fixed CPU would read — must NOT be used
         ram[0x3000] = 0x56;    // what an NMOS 6502 actually reads
 
-        TestMachine.StepOne(cpu);
+        cpu.Step();
 
         Assert.Equal(0x5678, cpu.State.PC);
     }
@@ -45,16 +45,16 @@ public class ControlFlowTests
     [Fact]
     public void Jsr_PushesTheAddressOfItsLastByteAndTakesSixCycles()
     {
-        var (cpu, ram) = TestMachine.Flat(0x0200, 0x20, 0x00, 0x30);   // JSR $3000
+        var (cpu, ram) = TestMachine.Flat(0x0300, 0x20, 0x00, 0x30);   // JSR $3000
         cpu.State.S = 0xFD;
 
-        var cycles = TestMachine.StepOne(cpu);
+        var cycles = cpu.Step();
 
         Assert.Equal(0x3000, cpu.State.PC);
         Assert.Equal(6, cycles);
         Assert.Equal(0xFB, cpu.State.S);
-        Assert.Equal(0x02, ram[0x01FD]);    // high byte of $0202
-        Assert.Equal(0x02, ram[0x01FC]);    // low byte of $0202 — the JSR's last byte
+        Assert.Equal(0x03, ram[0x01FD]);    // high byte of $0302
+        Assert.Equal(0x02, ram[0x01FC]);    // low byte of $0302 — the JSR's last byte
     }
 
     [Fact]
@@ -63,8 +63,8 @@ public class ControlFlowTests
         var (cpu, ram) = TestMachine.Flat(0x0200, 0x20, 0x00, 0x30);   // JSR $3000
         ram[0x3000] = 0x60;                                             // RTS
 
-        TestMachine.StepOne(cpu);
-        var cycles = TestMachine.StepOne(cpu);
+        cpu.Step();
+        var cycles = cpu.Step();
 
         Assert.Equal(0x0203, cpu.State.PC);
         Assert.Equal(6, cycles);
@@ -78,7 +78,7 @@ public class ControlFlowTests
         cpu.State.A = 0x3C;
         cpu.State.S = 0xFF;
 
-        var cycles = TestMachine.StepOne(cpu);
+        var cycles = cpu.Step();
 
         Assert.Equal(0x3C, ram[0x01FF]);
         Assert.Equal(0xFE, cpu.State.S);
@@ -92,7 +92,7 @@ public class ControlFlowTests
         cpu.State.S = 0xFE;
         ram[0x01FF] = 0x00;
 
-        var cycles = TestMachine.StepOne(cpu);
+        var cycles = cpu.Step();
 
         Assert.Equal(0x00, cpu.State.A);
         Assert.True(cpu.State.Z);
@@ -107,7 +107,7 @@ public class ControlFlowTests
         cpu.State.P = Flag.C | Flag.Z;
         cpu.State.S = 0xFF;
 
-        TestMachine.StepOne(cpu);
+        cpu.Step();
 
         Assert.Equal(Flag.C | Flag.Z | Flag.B | Flag.U, ram[0x01FF]);
     }
@@ -119,7 +119,7 @@ public class ControlFlowTests
         cpu.State.S = 0xFE;
         ram[0x01FF] = 0xFF;
 
-        TestMachine.StepOne(cpu);
+        cpu.Step();
 
         Assert.Equal(0xEF, cpu.State.P);   // B cleared, everything else including U retained
     }
@@ -127,17 +127,17 @@ public class ControlFlowTests
     [Fact]
     public void Brk_PushesPcPlusTwoAndVectorsThroughFffe()
     {
-        var (cpu, ram) = TestMachine.Flat(0x0200, 0x00);
+        var (cpu, ram) = TestMachine.Flat(0x0300, 0x00);
         cpu.State.S = 0xFD;
         cpu.State.P = Flag.U | Flag.C;
         ram[0xFFFE] = 0x00;
         ram[0xFFFF] = 0x90;
 
-        var cycles = TestMachine.StepOne(cpu);
+        var cycles = cpu.Step();
 
         Assert.Equal(0x9000, cpu.State.PC);
         Assert.Equal(7, cycles);
-        Assert.Equal(0x02, ram[0x01FD]);                             // PC high of $0202
+        Assert.Equal(0x03, ram[0x01FD]);                             // PC high of $0302
         Assert.Equal(0x02, ram[0x01FC]);                             // PC low
         Assert.Equal(Flag.U | Flag.C | Flag.B, ram[0x01FB]);         // pushed P has B set
         Assert.True(cpu.State.I);                                     // I is set on entry
@@ -153,7 +153,7 @@ public class ControlFlowTests
         ram[0x01FC] = 0x34;               // PCL
         ram[0x01FD] = 0x12;               // PCH
 
-        var cycles = TestMachine.StepOne(cpu);
+        var cycles = cpu.Step();
 
         Assert.Equal(0x1234, cpu.State.PC);
         Assert.Equal(Flag.C | Flag.U, cpu.State.P);   // B masked out, U forced on
@@ -168,7 +168,7 @@ public class ControlFlowTests
         cpu.State.A = 0x99;
         cpu.State.S = 0x00;
 
-        TestMachine.StepOne(cpu);
+        cpu.Step();
 
         Assert.Equal(0x99, ram[0x0100]);
         Assert.Equal(0xFF, cpu.State.S);

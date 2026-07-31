@@ -14,7 +14,7 @@ public class IndirectAddressingTests
         ram[0x0025] = 0x40;      // pointer high  → $4000
         ram[0x4000] = 0x6E;
 
-        var cycles = TestMachine.StepOne(cpu);
+        var cycles = cpu.Step();
 
         Assert.Equal(0x6E, cpu.State.A);
         Assert.Equal(6, cycles);
@@ -29,7 +29,7 @@ public class IndirectAddressingTests
         ram[0x0025] = 0x40;
         ram[0x4000] = 0x6E;
 
-        TestMachine.StepOne(cpu);
+        cpu.Step();
 
         Assert.Equal(
         [
@@ -52,7 +52,7 @@ public class IndirectAddressingTests
         ram[0x0100] = 0xEE;      // must NOT be used
         ram[0x1234] = 0x9D;
 
-        TestMachine.StepOne(cpu);
+        cpu.Step();
 
         Assert.Equal(0x9D, cpu.State.A);
     }
@@ -66,7 +66,7 @@ public class IndirectAddressingTests
         ram[0x0031] = 0x50;      // → $5000
         ram[0x5010] = 0x1F;
 
-        var cycles = TestMachine.StepOne(cpu);
+        var cycles = cpu.Step();
 
         Assert.Equal(0x1F, cpu.State.A);
         Assert.Equal(5, cycles);
@@ -82,7 +82,7 @@ public class IndirectAddressingTests
         ram[0x5008] = 0xAA;      // unfixed address
         ram[0x5108] = 0xBB;      // corrected address
 
-        var cycles = TestMachine.StepOne(cpu);
+        var cycles = cpu.Step();
 
         Assert.Equal(0xBB, cpu.State.A);
         Assert.Equal(6, cycles);
@@ -106,7 +106,7 @@ public class IndirectAddressingTests
         ram[0x0030] = 0x00;
         ram[0x0031] = 0x60;
 
-        var cycles = TestMachine.StepOne(cpu);
+        var cycles = cpu.Step();
 
         Assert.Equal(0x7C, ram[0x6001]);
         Assert.Equal(6, cycles);
@@ -122,7 +122,7 @@ public class IndirectAddressingTests
         ram[0x0100] = 0xEE;      // must NOT be used
         ram[0x5678] = 0x4B;
 
-        TestMachine.StepOne(cpu);
+        cpu.Step();
 
         Assert.Equal(0x4B, cpu.State.A);
     }

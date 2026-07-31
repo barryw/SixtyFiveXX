@@ -16,6 +16,8 @@ are not tabulated after the fact — they fall out of doing the work.
 | 6510 | Phase 5 | — |
 | 65816 | Phase 7 | — |
 
+IRQ, NMI, RDY and SO are Phase 2 — the core currently models `Reset()` and `BRK` only.
+
 See `docs/superpowers/specs/` for the design and `docs/superpowers/plans/` for the
 implementation plans.
 

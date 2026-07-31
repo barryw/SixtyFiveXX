@@ -49,12 +49,4 @@ public static class TestMachine
         cpu.State.P = Flag.U | Flag.I;
         return (cpu, ram, log);
     }
-
-    /// <summary>Runs one instruction to completion and returns the cycles it took.</summary>
-    public static long StepOne<TBus>(Cpu<TBus> cpu) where TBus : struct, IBus
-    {
-        var before = cpu.Cycles;
-        do { cpu.Tick(); } while (!cpu.AtInstructionBoundary);
-        return cpu.Cycles - before;
-    }
 }

@@ -14,7 +14,7 @@ public class AluTests
         var (cpu, _) = TestMachine.Flat(0x0200, 0x29, operand);   // AND #imm
         cpu.State.A = a;
 
-        TestMachine.StepOne(cpu);
+        cpu.Step();
 
         Assert.Equal(expected, cpu.State.A);
         Assert.Equal(z, cpu.State.Z);
@@ -27,7 +27,7 @@ public class AluTests
         var (cpu, _) = TestMachine.Flat(0x0200, 0x09, 0x0F);
         cpu.State.A = 0xF0;
 
-        TestMachine.StepOne(cpu);
+        cpu.Step();
 
         Assert.Equal(0xFF, cpu.State.A);
         Assert.True(cpu.State.N);
@@ -39,7 +39,7 @@ public class AluTests
         var (cpu, _) = TestMachine.Flat(0x0200, 0x49, 0xFF);
         cpu.State.A = 0xAA;
 
-        TestMachine.StepOne(cpu);
+        cpu.Step();
 
         Assert.Equal(0x55, cpu.State.A);
         Assert.False(cpu.State.N);
@@ -52,7 +52,7 @@ public class AluTests
         ram[0x0010] = 0xC0;                                       // bits 7 and 6 set
         cpu.State.A = 0x01;                                       // no overlap
 
-        TestMachine.StepOne(cpu);
+        cpu.Step();
 
         Assert.True(cpu.State.N);
         Assert.True(cpu.State.V);
@@ -69,7 +69,7 @@ public class AluTests
         var (cpu, _) = TestMachine.Flat(0x0200, 0xC9, operand);   // CMP #imm
         cpu.State.A = a;
 
-        TestMachine.StepOne(cpu);
+        cpu.Step();
 
         Assert.Equal(c, cpu.State.C);
         Assert.Equal(z, cpu.State.Z);
@@ -82,12 +82,12 @@ public class AluTests
     {
         var (cpuX, _) = TestMachine.Flat(0x0200, 0xE0, 0x10);   // CPX #$10
         cpuX.State.X = 0x10;
-        TestMachine.StepOne(cpuX);
+        cpuX.Step();
         Assert.True(cpuX.State.Z);
 
         var (cpuY, _) = TestMachine.Flat(0x0200, 0xC0, 0x10);   // CPY #$10
         cpuY.State.Y = 0x20;
-        TestMachine.StepOne(cpuY);
+        cpuY.Step();
         Assert.False(cpuY.State.Z);
         Assert.True(cpuY.State.C);
     }
@@ -98,7 +98,7 @@ public class AluTests
         var (cpu, _) = TestMachine.Flat(0x0200, 0x0A);
         cpu.State.A = 0x81;
 
-        var cycles = TestMachine.StepOne(cpu);
+        var cycles = cpu.Step();
 
         Assert.Equal(0x02, cpu.State.A);
         Assert.True(cpu.State.C);
@@ -111,7 +111,7 @@ public class AluTests
         var (cpu, _) = TestMachine.Flat(0x0200, 0x4A);
         cpu.State.A = 0x81;
 
-        TestMachine.StepOne(cpu);
+        cpu.Step();
 
         Assert.Equal(0x40, cpu.State.A);
         Assert.True(cpu.State.C);
@@ -125,7 +125,7 @@ public class AluTests
         cpu.State.A = 0x80;
         cpu.State.C = true;
 
-        TestMachine.StepOne(cpu);
+        cpu.Step();
 
         Assert.Equal(0x01, cpu.State.A);
         Assert.True(cpu.State.C);
@@ -138,7 +138,7 @@ public class AluTests
         cpu.State.A = 0x01;
         cpu.State.C = true;
 
-        TestMachine.StepOne(cpu);
+        cpu.Step();
 
         Assert.Equal(0x80, cpu.State.A);
         Assert.True(cpu.State.C);
@@ -151,7 +151,7 @@ public class AluTests
         var (cpu, ram) = TestMachine.Flat(0x0200, 0x0E, 0x00, 0x30);   // ASL $3000
         ram[0x3000] = 0xC0;
 
-        var cycles = TestMachine.StepOne(cpu);
+        var cycles = cpu.Step();
 
         Assert.Equal(0x80, ram[0x3000]);
         Assert.True(cpu.State.C);
@@ -173,7 +173,7 @@ public class AluTests
         cpu.State.A = a;
         cpu.State.C = carryIn;
 
-        TestMachine.StepOne(cpu);
+        cpu.Step();
 
         Assert.Equal(expected, cpu.State.A);
         Assert.Equal(c, cpu.State.C);
@@ -195,7 +195,7 @@ public class AluTests
         cpu.State.A = a;
         cpu.State.C = carryIn;
 
-        TestMachine.StepOne(cpu);
+        cpu.Step();
 
         Assert.Equal(expected, cpu.State.A);
         Assert.Equal(c, cpu.State.C);

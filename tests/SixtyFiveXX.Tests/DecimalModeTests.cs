@@ -11,7 +11,7 @@ public class DecimalModeTests
         cpu.State.A = a;
         cpu.State.C = carryIn;
         cpu.State.D = true;
-        TestMachine.StepOne(cpu);
+        cpu.Step();
         return cpu;
     }
 
@@ -21,7 +21,7 @@ public class DecimalModeTests
         cpu.State.A = a;
         cpu.State.C = carryIn;
         cpu.State.D = true;
-        TestMachine.StepOne(cpu);
+        cpu.Step();
         return cpu;
     }
 
@@ -98,7 +98,7 @@ public class DecimalModeTests
         cpu.State.A = 0x10;
         cpu.State.D = true;
 
-        TestMachine.StepOne(cpu);
+        cpu.Step();
 
         Assert.True(cpu.State.C);      // compare is always binary
         Assert.False(cpu.State.Z);

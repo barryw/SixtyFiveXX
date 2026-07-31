@@ -33,7 +33,6 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// <summary>Index into <see cref="_ops"/>; negative means the next tick fetches an opcode.</summary>
     private int _mpc = -1;
 
-    private byte _opcode;
     private Op _op;
 
     /// <summary>The value being read, written, or modified by the current instruction.</summary>
@@ -114,7 +113,6 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     {
         _s.I = true;
         _vector = ResetVector;
-        _pageCross = false;
         _mpc = _table.ResetEntry;
     }
 
@@ -136,9 +134,12 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// Runs for at least <paramref name="cycles"/> cycles, stopping mid-instruction if
     /// the budget runs out.
     /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="cycles"/> is negative.</exception>
     /// <returns>The total cycle count after running.</returns>
     public long Run(long cycles)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(cycles);
+
         var target = _cycles + cycles;
         while (_cycles < target) Tick();
         return _cycles;
@@ -168,13 +169,13 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     private void FetchOpcode()
     {
         var pc = _s.PC;
-        _opcode = _bus.Read(pc);
+        var opcode = _bus.Read(pc);
         _s.PC++;
 
-        var entry = _entry[_opcode];
-        if (_ops[entry] == MicroOp.End) throw new UndefinedOpcodeException(_opcode, pc);
+        var entry = _entry[opcode];
+        if (_ops[entry] == MicroOp.End) throw new UndefinedOpcodeException(opcode, pc);
 
-        _op = _table.Info[_opcode].Operation;
+        _op = _table.Info[opcode].Operation;
         _mpc = entry;
     }
 
@@ -425,6 +426,9 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
                 break;
 
             case MicroOp.PushPInt:
+                // Deliberately does not set _vector (unlike PushPBrk, which always uses
+                // IrqVector): IRQ needs IrqVector but NMI needs NmiVector, and only the
+                // Phase 2 dispatcher that invokes this sequence knows which one applies.
                 _bus.Write(0x0100 + _s.S, (byte)((_s.P | Flag.U) & ~Flag.B));
                 _s.S--;
                 _s.I = true;
