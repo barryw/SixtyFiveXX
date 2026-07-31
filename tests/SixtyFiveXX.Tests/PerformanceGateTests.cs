@@ -31,6 +31,11 @@ public class PerformanceGateTests(ITestOutputHelper output)
         var hz = MeasuredCycles / stopwatch.Elapsed.TotalSeconds;
         output.WriteLine($"{hz / 1_000_000:F1} MHz simulated ({stopwatch.ElapsedMilliseconds} ms).");
 
+        // A benchmark that has fallen out of its own program measures nothing useful.
+        // The workload occupies $0200-$021E; anything else means execution derailed.
+        Assert.True(cpu.State.PC >= 0x0200 && cpu.State.PC <= 0x021E,
+            $"Workload derailed to ${cpu.State.PC:X4} — the measurement is not of the intended program.");
+
         Assert.True(hz >= FloorHz,
             $"Throughput fell to {hz / 1_000_000:F1} MHz, below the {FloorHz / 1_000_000} MHz floor.");
     }
@@ -42,7 +47,7 @@ public class PerformanceGateTests(ITestOutputHelper output)
         [
             0xA9, 0x01, 0x85, 0x10, 0xA5, 0x10, 0xAD, 0x00, 0x30,
             0xBD, 0x00, 0x30, 0x9D, 0x00, 0x31, 0xA1, 0x20, 0xB1, 0x22,
-            0xEE, 0x00, 0x32, 0x69, 0x05, 0xE8, 0xC8, 0xD0, 0xE5,
+            0xEE, 0x00, 0x32, 0x69, 0x05, 0xE8, 0xC8, 0xD0, 0xE4, // BNE -28 back to the top
             0x4C, 0x00, 0x02,
         ];
         program.CopyTo(ram, 0x0200);

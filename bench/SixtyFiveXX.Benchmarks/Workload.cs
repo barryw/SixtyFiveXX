@@ -25,7 +25,7 @@ public static class Workload
             0x69, 0x05,        // ADC #$05
             0xE8,              // INX
             0xC8,              // INY
-            0xD0, 0xE5,        // BNE -27           back to the top
+            0xD0, 0xE4,        // BNE -28           back to the top
             0x4C, 0x00, 0x02,  // JMP $0200         restart when the branch falls through
         ];
         program.CopyTo(ram, 0x0200);
