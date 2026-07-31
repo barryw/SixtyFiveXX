@@ -97,6 +97,9 @@ internal enum MicroOp : byte
     /// <summary>Dummy read at $0100 + S, then S++.</summary>
     StackDummyReadInc,
 
+    /// <summary>Dummy read at $0100 + S, then S--. Used by the reset sequence.</summary>
+    StackDummyReadDec,
+
     /// <summary>Write(0x100 + S, PC high); S--.</summary>
     PushPch,
 

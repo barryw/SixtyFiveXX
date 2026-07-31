@@ -26,6 +26,9 @@ internal sealed class MicroOpTable
     /// <summary>Index of the hardware interrupt sequence in <see cref="Ops"/>.</summary>
     public readonly ushort IrqEntry;
 
+    /// <summary>Index of the reset sequence in <see cref="Ops"/>.</summary>
+    public readonly ushort ResetEntry;
+
     private MicroOpTable(OpcodeInfo[] info)
     {
         Info = info;
@@ -46,6 +49,23 @@ internal sealed class MicroOpTable
             MicroOp.PushPch,
             MicroOp.PushPcl,
             MicroOp.PushPInt,
+            MicroOp.VectorLo,
+            MicroOp.VectorHi,
+        ]);
+        ops.Add(MicroOp.End);
+
+        // Reset behaves like an interrupt whose pushes are replaced by reads: S still
+        // decrements three times, but nothing is written. Unlike IrqEntry, Reset() never
+        // goes through FetchOpcode (there is no opcode to fetch), so the sequence spells
+        // out both of the dummy PC reads hardware performs — FetchOpcode supplies the
+        // first one for free everywhere else.
+        ResetEntry = (ushort)ops.Count;
+        ops.AddRange([
+            MicroOp.IntDummy,
+            MicroOp.IntDummy,
+            MicroOp.StackDummyReadDec,
+            MicroOp.StackDummyReadDec,
+            MicroOp.StackDummyReadDec,
             MicroOp.VectorLo,
             MicroOp.VectorHi,
         ]);

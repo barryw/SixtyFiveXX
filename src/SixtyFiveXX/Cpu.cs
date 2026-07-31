@@ -102,6 +102,69 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
         if (_mpc >= 0 && _ops[_mpc] == MicroOp.End) _mpc = -1;
     }
 
+    /// <summary>
+    /// Begins a hardware reset. The sequence takes seven cycles; drive it with
+    /// <see cref="Step"/> or seven calls to <see cref="Tick"/>.
+    /// </summary>
+    /// <remarks>
+    /// Reset does not clear the registers. Real hardware leaves A, X, Y and most of P
+    /// undisturbed; it sets I, decrements S three times, and loads PC from $FFFC.
+    /// </remarks>
+    public void Reset()
+    {
+        _s.I = true;
+        _vector = ResetVector;
+        _pageCross = false;
+        _mpc = _table.ResetEntry;
+    }
+
+    /// <summary>Runs to the next instruction boundary.</summary>
+    /// <returns>The number of cycles consumed.</returns>
+    public long Step()
+    {
+        var before = _cycles;
+        do
+        {
+            Tick();
+        }
+        while (_mpc >= 0);
+
+        return _cycles - before;
+    }
+
+    /// <summary>
+    /// Runs for at least <paramref name="cycles"/> cycles, stopping mid-instruction if
+    /// the budget runs out.
+    /// </summary>
+    /// <returns>The total cycle count after running.</returns>
+    public long Run(long cycles)
+    {
+        var target = _cycles + cycles;
+        while (_cycles < target) Tick();
+        return _cycles;
+    }
+
+    /// <summary>
+    /// Runs whole instructions until <paramref name="stop"/> returns true at an
+    /// instruction boundary, or until <paramref name="maxCycles"/> is exhausted.
+    /// </summary>
+    /// <param name="stop">Evaluated at each instruction boundary, never mid-instruction.</param>
+    /// <param name="maxCycles">A ceiling, so a runaway program cannot hang the caller.</param>
+    /// <returns>The number of cycles consumed.</returns>
+    public long RunUntil(Func<Cpu<TBus>, bool> stop, long maxCycles = long.MaxValue)
+    {
+        ArgumentNullException.ThrowIfNull(stop);
+
+        var before = _cycles;
+        while (_cycles - before < maxCycles)
+        {
+            Step();
+            if (stop(this)) break;
+        }
+
+        return _cycles - before;
+    }
+
     private void FetchOpcode()
     {
         var pc = _s.PC;
@@ -373,6 +436,11 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
 
             case MicroOp.VectorHi:
                 _s.PC = (ushort)((_bus.Read(_vector + 1) << 8) | _tmp);
+                break;
+
+            case MicroOp.StackDummyReadDec:
+                _bus.Read(0x0100 + _s.S);
+                _s.S--;
                 break;
 
             default:
