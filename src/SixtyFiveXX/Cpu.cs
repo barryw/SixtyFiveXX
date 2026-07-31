@@ -51,6 +51,9 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// <summary>The indirect pointer address, for the (zp,X) and (zp),Y modes.</summary>
     private int _ptr;
 
+    /// <summary>+0x100 or -0x100, applied by <see cref="MicroOp.BranchFixup"/>.</summary>
+    private int _branchFix;
+
     /// <summary>Creates a core over the given bus.</summary>
     public Cpu(TBus bus)
     {
@@ -112,6 +115,20 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// <summary>Ends the current instruction; the next tick fetches an opcode.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void EndInstruction() => _mpc = -1;
+
+    /// <summary>Evaluates the current branch instruction's condition.</summary>
+    private bool IsBranchTaken() => _op switch
+    {
+        Op.Bcc => !_s.C,
+        Op.Bcs => _s.C,
+        Op.Bne => !_s.Z,
+        Op.Beq => _s.Z,
+        Op.Bpl => !_s.N,
+        Op.Bmi => _s.N,
+        Op.Bvc => !_s.V,
+        Op.Bvs => _s.V,
+        _ => throw new InvalidOperationException($"{_op} is not a branch."),
+    };
 
     private void Execute(MicroOp micro)
     {
@@ -235,6 +252,27 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
                 _addr = (hi << 8) | (lo & 0xFF);
                 break;
             }
+
+            case MicroOp.BranchFetch:
+                _data = _bus.Read(_s.PC);
+                _s.PC++;
+                if (!IsBranchTaken()) EndInstruction();
+                break;
+
+            case MicroOp.BranchTaken:
+            {
+                _bus.Read(_s.PC);                       // dummy read at the byte after the branch
+                var lo = (_s.PC & 0xFF) + (sbyte)_data;
+                _branchFix = lo < 0 ? -0x100 : lo > 0xFF ? 0x100 : 0;
+                _s.PC = (ushort)((_s.PC & 0xFF00) | (lo & 0xFF));
+                if (_branchFix == 0) EndInstruction();
+                break;
+            }
+
+            case MicroOp.BranchFixup:
+                _bus.Read(_s.PC);                       // dummy read at the un-fixed PC
+                _s.PC = (ushort)(_s.PC + _branchFix);
+                break;
 
             default:
                 throw new NotImplementedException($"Micro-op {micro} is not implemented yet.");
