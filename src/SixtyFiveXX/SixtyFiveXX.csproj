@@ -10,4 +10,10 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="SixtyFiveXX.Tests" />
+    <InternalsVisibleTo Include="SixtyFiveXX.Conformance" />
+    <InternalsVisibleTo Include="SixtyFiveXX.Benchmarks" />
+  </ItemGroup>
+
 </Project>
