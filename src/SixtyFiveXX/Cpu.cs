@@ -39,6 +39,9 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// <summary>The value being read, written, or modified by the current instruction.</summary>
     private byte _data;
 
+    /// <summary>The effective address.</summary>
+    private int _addr;
+
     /// <summary>Creates a core over the given bus.</summary>
     public Cpu(TBus bus)
     {
@@ -118,6 +121,40 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
 
             case MicroOp.ImpliedDummy:
                 _bus.Read(_s.PC);
+                break;
+
+            case MicroOp.FetchAddrLo:
+                _addr = _bus.Read(_s.PC);
+                _s.PC++;
+                break;
+
+            case MicroOp.FetchAddrHi:
+                _addr |= _bus.Read(_s.PC) << 8;
+                _s.PC++;
+                break;
+
+            case MicroOp.ReadExec:
+                _data = _bus.Read(_addr);
+                Exec();
+                break;
+
+            case MicroOp.ExecWrite:
+                Exec();
+                _bus.Write(_addr, _data);
+                break;
+
+            case MicroOp.RmwRead:
+                _data = _bus.Read(_addr);
+                break;
+
+            case MicroOp.RmwModifyWrite:
+                // NMOS parts write the unmodified value back before writing the result.
+                _bus.Write(_addr, _data);
+                Exec();
+                break;
+
+            case MicroOp.RmwWrite:
+                _bus.Write(_addr, _data);
                 break;
 
             default:

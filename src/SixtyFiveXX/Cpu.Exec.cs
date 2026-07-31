@@ -37,6 +37,21 @@ public sealed partial class Cpu<TBus>
             case Op.Sei: _s.I = true;  break;
             case Op.Clv: _s.V = false; break;
 
+            // Stores. The value lands in _data, which the writing micro-op then commits.
+            case Op.Sta: _data = _s.A; break;
+            case Op.Stx: _data = _s.X; break;
+            case Op.Sty: _data = _s.Y; break;
+
+            // Memory increment and decrement, operating on _data in place.
+            case Op.Inc: _data = (byte)(_data + 1); SetZN(_data); break;
+            case Op.Dec: _data = (byte)(_data - 1); SetZN(_data); break;
+
+            // Register increment and decrement.
+            case Op.Inx: _s.X = (byte)(_s.X + 1); SetZN(_s.X); break;
+            case Op.Dex: _s.X = (byte)(_s.X - 1); SetZN(_s.X); break;
+            case Op.Iny: _s.Y = (byte)(_s.Y + 1); SetZN(_s.Y); break;
+            case Op.Dey: _s.Y = (byte)(_s.Y - 1); SetZN(_s.Y); break;
+
             default:
                 throw new NotImplementedException($"Operation {_op} is not implemented yet.");
         }
