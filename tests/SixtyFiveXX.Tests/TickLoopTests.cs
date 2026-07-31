@@ -82,8 +82,9 @@ public class TickLoopTests
         cpu.State.PC = 0x0200;
 
         cpu.Tick();
-        cpu.Tick();
+        Assert.Equal([0x0200], reads);
 
+        cpu.Tick();
         Assert.Equal([0x0200, 0x0201], reads);
     }
 

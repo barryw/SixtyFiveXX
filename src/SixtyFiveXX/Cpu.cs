@@ -39,32 +39,6 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// <summary>The value being read, written, or modified by the current instruction.</summary>
     private byte _data;
 
-    // Scaffolding for the addressing-mode and control-flow micro-ops Tasks 6-12 add to
-    // Execute(MicroOp); unread until those micro-op cases exist, so the compiler's
-    // unused-field warnings are suppressed for just this block rather than deleting
-    // fields the brief specifies for a shell task.
-#pragma warning disable CS0169, CS0414
-
-    /// <summary>Scratch for the low byte of a 16-bit quantity assembled across two cycles.</summary>
-    private byte _tmp;
-
-    /// <summary>The effective address.</summary>
-    private int _addr;
-
-    /// <summary>The indirect pointer address, for the (zp,X) and (zp),Y modes.</summary>
-    private int _ptr;
-
-    /// <summary>Set when indexing carried out of the low byte of the effective address.</summary>
-    private bool _pageCross;
-
-    /// <summary>+0x100 or -0x100, applied by <see cref="MicroOp.BranchFixup"/>.</summary>
-    private int _branchFix;
-
-    /// <summary>The vector the in-progress interrupt or BRK sequence will read.</summary>
-    private int _vector = IrqVector;
-
-#pragma warning restore CS0169, CS0414
-
     /// <summary>Creates a core over the given bus.</summary>
     public Cpu(TBus bus)
     {
