@@ -52,6 +52,12 @@ public sealed partial class Cpu<TBus>
             case Op.Iny: _s.Y = (byte)(_s.Y + 1); SetZN(_s.Y); break;
             case Op.Dey: _s.Y = (byte)(_s.Y - 1); SetZN(_s.Y); break;
 
+            // Stack. PHP and BRK are the only ways the B flag reaches memory.
+            case Op.Pha: _data = _s.A; break;
+            case Op.Php: _data = (byte)(_s.P | Flag.B | Flag.U); break;
+            case Op.Pla: _s.A = _data; SetZN(_s.A); break;
+            case Op.Plp: _s.P = (byte)((_data & ~Flag.B) | Flag.U); break;
+
             default:
                 throw new NotImplementedException($"Operation {_op} is not implemented yet.");
         }

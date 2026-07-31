@@ -54,6 +54,9 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// <summary>+0x100 or -0x100, applied by <see cref="MicroOp.BranchFixup"/>.</summary>
     private int _branchFix;
 
+    /// <summary>The vector the in-progress interrupt or BRK sequence will read.</summary>
+    private int _vector = IrqVector;
+
     /// <summary>Creates a core over the given bus.</summary>
     public Cpu(TBus bus)
     {
@@ -272,6 +275,104 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
             case MicroOp.BranchFixup:
                 _bus.Read(_s.PC);                       // dummy read at the un-fixed PC
                 _s.PC = (ushort)(_s.PC + _branchFix);
+                break;
+
+            case MicroOp.StackDummyRead:
+                _bus.Read(0x0100 + _s.S);
+                break;
+
+            case MicroOp.StackDummyReadInc:
+                _bus.Read(0x0100 + _s.S);
+                _s.S++;
+                break;
+
+            case MicroOp.PushPch:
+                _bus.Write(0x0100 + _s.S, (byte)(_s.PC >> 8));
+                _s.S--;
+                break;
+
+            case MicroOp.PushPcl:
+                _bus.Write(0x0100 + _s.S, (byte)_s.PC);
+                _s.S--;
+                break;
+
+            // JMP absolute and JSR both finish by reading the high byte at PC and
+            // combining it with the low byte already in _addr.
+            case MicroOp.JmpAbs:
+            case MicroOp.JsrFinish:
+                _s.PC = (ushort)((_bus.Read(_s.PC) << 8) | _addr);
+                break;
+
+            case MicroOp.JmpIndLo:
+                _ptr = _addr;
+                _tmp = _bus.Read(_ptr);
+                break;
+
+            case MicroOp.JmpIndHi:
+                // NMOS bug: the vector's high byte is fetched from the same page, so
+                // JMP ($xxFF) reads its high byte from $xx00.
+                _s.PC = (ushort)((_bus.Read((_ptr & 0xFF00) | ((_ptr + 1) & 0xFF)) << 8) | _tmp);
+                break;
+
+            case MicroOp.PullPcl:
+                _tmp = _bus.Read(0x0100 + _s.S);
+                _s.S++;
+                break;
+
+            case MicroOp.PullPch:
+                _s.PC = (ushort)((_bus.Read(0x0100 + _s.S) << 8) | _tmp);
+                break;
+
+            case MicroOp.RtsFinish:
+                _bus.Read(_s.PC);
+                _s.PC++;
+                break;
+
+            case MicroOp.PullP:
+                // B exists only in pushed copies of P; U always reads as set.
+                _s.P = (byte)((_bus.Read(0x0100 + _s.S) & ~Flag.B) | Flag.U);
+                _s.S++;
+                break;
+
+            case MicroOp.Push:
+                Exec();
+                _bus.Write(0x0100 + _s.S, _data);
+                _s.S--;
+                break;
+
+            case MicroOp.Pull:
+                _data = _bus.Read(0x0100 + _s.S);
+                Exec();
+                break;
+
+            case MicroOp.BrkPad:
+                _bus.Read(_s.PC);      // BRK's signature byte, fetched and discarded
+                _s.PC++;
+                break;
+
+            case MicroOp.IntDummy:
+                _bus.Read(_s.PC);
+                break;
+
+            case MicroOp.PushPBrk:
+                _bus.Write(0x0100 + _s.S, (byte)(_s.P | Flag.B | Flag.U));
+                _s.S--;
+                _s.I = true;
+                _vector = IrqVector;
+                break;
+
+            case MicroOp.PushPInt:
+                _bus.Write(0x0100 + _s.S, (byte)((_s.P | Flag.U) & ~Flag.B));
+                _s.S--;
+                _s.I = true;
+                break;
+
+            case MicroOp.VectorLo:
+                _tmp = _bus.Read(_vector);
+                break;
+
+            case MicroOp.VectorHi:
+                _s.PC = (ushort)((_bus.Read(_vector + 1) << 8) | _tmp);
                 break;
 
             default:
