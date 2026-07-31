@@ -45,6 +45,12 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// <summary>Set when indexing carried out of the low byte of the effective address.</summary>
     private bool _pageCross;
 
+    /// <summary>Scratch for the low byte of a 16-bit quantity assembled across two cycles.</summary>
+    private byte _tmp;
+
+    /// <summary>The indirect pointer address, for the (zp,X) and (zp),Y modes.</summary>
+    private int _ptr;
+
     /// <summary>Creates a core over the given bus.</summary>
     public Cpu(TBus bus)
     {
@@ -210,6 +216,25 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
                 _bus.Read(_addr);
                 if (_pageCross) _addr = (_addr + 0x100) & 0xFFFF;
                 break;
+
+            case MicroOp.PtrReadLo:
+                _ptr = _addr;
+                _tmp = _bus.Read(_ptr);
+                break;
+
+            case MicroOp.PtrReadHi:
+                // The pointer's high byte wraps within page zero.
+                _addr = (_bus.Read((_ptr + 1) & 0xFF) << 8) | _tmp;
+                break;
+
+            case MicroOp.PtrReadHiY:
+            {
+                var hi = _bus.Read((_ptr + 1) & 0xFF);
+                var lo = _tmp + _s.Y;
+                _pageCross = lo > 0xFF;
+                _addr = (hi << 8) | (lo & 0xFF);
+                break;
+            }
 
             default:
                 throw new NotImplementedException($"Micro-op {micro} is not implemented yet.");
