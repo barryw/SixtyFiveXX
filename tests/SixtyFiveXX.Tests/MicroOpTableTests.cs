@@ -20,6 +20,15 @@ public class MicroOpTableTests
     [InlineData(0xA1, 5)]  // LDA (zp,X)             = 6
     [InlineData(0xB1, 5)]  // LDA (zp),Y             = 5 or 6
     [InlineData(0x91, 5)]  // STA (zp),Y             = 6 always
+    [InlineData(0x16, 5)]  // ASL zp,X               = 6
+    [InlineData(0x81, 5)]  // STA (zp,X)             = 6
+    [InlineData(0x85, 2)]  // STA zp                 = 3 cycles
+    [InlineData(0x8D, 3)]  // STA abs                = 4
+    [InlineData(0x95, 3)]  // STA zp,X               = 4
+    [InlineData(0x96, 3)]  // STX zp,Y               = 4
+    [InlineData(0x99, 4)]  // STA abs,Y              = 5 always
+    [InlineData(0xB6, 3)]  // LDX zp,Y               = 4
+    [InlineData(0xB9, 4)]  // LDA abs,Y              = 4 or 5
     [InlineData(0xE6, 4)]  // INC zp                 = 5
     [InlineData(0xEE, 5)]  // INC abs                = 6
     [InlineData(0xFE, 6)]  // INC abs,X              = 7 always
