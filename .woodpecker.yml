@@ -1,0 +1,19 @@
+when:
+  - event: [push, pull_request, manual]
+
+steps:
+  - name: build-and-test
+    image: mcr.microsoft.com/dotnet/sdk:10.0
+    commands:
+      - dotnet build -c Release
+      - dotnet test tests/SixtyFiveXX.Tests -c Release --filter "Category!=Performance"
+
+  - name: conformance
+    image: mcr.microsoft.com/dotnet/sdk:10.0
+    commands:
+      - dotnet test tests/SixtyFiveXX.Conformance -c Release
+
+  - name: performance
+    image: mcr.microsoft.com/dotnet/sdk:10.0
+    commands:
+      - dotnet test tests/SixtyFiveXX.Tests -c Release --filter "Category=Performance" -v n
