@@ -108,6 +108,32 @@ public sealed partial class Cpu<TBus>
             case Op.Lax: _s.A = _data; _s.X = _data; SetZN(_data); break;
             case Op.Sax: _data = (byte)(_s.A & _s.X); break;
 
+            // Undocumented immediate-mode instructions.
+            case Op.Anc:
+                _s.A &= _data;
+                SetZN(_s.A);
+                _s.C = _s.N;                    // carry mirrors bit 7 of the result
+                break;
+
+            case Op.Alr:
+                _s.A &= _data;
+                _s.A = Lsr(_s.A);               // Lsr sets C from bit 0 and Z/N from the result
+                break;
+
+            case Op.Arr:
+                Arr(_data);
+                break;
+
+            case Op.Sbx:
+            {
+                // X = (A & X) - imm, always binary, never affected by decimal mode.
+                var result = (_s.A & _s.X) - _data;
+                _s.C = result >= 0;
+                _s.X = (byte)result;
+                SetZN(_s.X);
+                break;
+            }
+
             default:
                 throw new NotImplementedException($"Operation {_op} is not implemented yet.");
         }
@@ -224,5 +250,51 @@ public sealed partial class Cpu<TBus>
         if ((hi & 0x10) != 0) hi -= 0x06;
 
         _s.A = (byte)((hi << 4) | (lo & 0x0F));
+    }
+
+    /// <summary>
+    /// Undocumented ARR: AND with the operand, then a rotate-right whose flags do not
+    /// match any documented instruction. Carry comes from bit 6 of the result and
+    /// overflow from bit 6 XOR bit 5.
+    /// </summary>
+    private void Arr(byte value)
+    {
+        var anded = (byte)(_s.A & value);
+
+        if (!_s.D)
+        {
+            var result = (byte)((anded >> 1) | (_s.C ? 0x80 : 0x00));
+            _s.A = result;
+            SetZN(result);
+            _s.C = (result & 0x40) != 0;
+            _s.V = (((result >> 6) ^ (result >> 5)) & 0x01) != 0;
+            return;
+        }
+
+        // Decimal mode. N comes from the carry that was shifted in, Z from the shifted
+        // result, and V from a comparison of the pre-shift and post-shift bit 6. The
+        // accumulator then gets the BCD nibble corrections applied independently.
+        var shifted = (byte)((anded >> 1) | (_s.C ? 0x80 : 0x00));
+        _s.N = _s.C;
+        _s.Z = shifted == 0;
+        _s.V = ((shifted ^ anded) & 0x40) != 0;
+
+        var lo = anded & 0x0F;
+        var hi = anded & 0xF0;
+        var adjusted = shifted;
+
+        if (lo + (lo & 0x01) > 0x05) adjusted = (byte)((adjusted & 0xF0) | ((adjusted + 0x06) & 0x0F));
+
+        if (hi + (hi & 0x10) > 0x50)
+        {
+            adjusted = (byte)((adjusted + 0x60) & 0xFF);
+            _s.C = true;
+        }
+        else
+        {
+            _s.C = false;
+        }
+
+        _s.A = adjusted;
     }
 }

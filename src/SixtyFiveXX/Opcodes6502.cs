@@ -269,6 +269,14 @@ internal static class Opcodes6502
         Set(0x8F, "SAX", AddrMode.Absolute,        Op.Sax, Access.Write);
         Set(0x97, "SAX", AddrMode.ZeroPageY,       Op.Sax, Access.Write);
 
+        // ---- Undocumented: immediate oddballs ----------------------------------
+        Set(0x0B, "ANC", AddrMode.Immediate, Op.Anc, Access.Read);
+        Set(0x2B, "ANC", AddrMode.Immediate, Op.Anc, Access.Read);
+        Set(0x4B, "ALR", AddrMode.Immediate, Op.Alr, Access.Read);
+        Set(0x6B, "ARR", AddrMode.Immediate, Op.Arr, Access.Read);
+        Set(0xCB, "SBX", AddrMode.Immediate, Op.Sbx, Access.Read);
+        Set(0xEB, "SBC", AddrMode.Immediate, Op.Sbc, Access.Read);   // duplicate of $E9
+
         return t;
     }
 }

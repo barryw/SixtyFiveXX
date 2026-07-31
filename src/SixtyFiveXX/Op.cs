@@ -51,4 +51,8 @@ internal enum Op : byte
 
     /// <summary>Undocumented. Stores the bitwise AND of the accumulator and X. Sets no flags.</summary>
     Sax,
+
+    // Undocumented immediate-mode instructions with flag behaviour unlike any
+    // documented opcode.
+    Anc, Alr, Arr, Sbx,
 }
