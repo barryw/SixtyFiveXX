@@ -103,6 +103,11 @@ public sealed partial class Cpu<TBus>
             case Op.Dcp: _data = (byte)(_data - 1); Compare(_s.A); break;
             case Op.Isc: _data = (byte)(_data + 1); Sbc(_data); break;
 
+            // Undocumented. LAX loads both registers from one read; SAX stores the
+            // AND of A and X and is the only store on the part that sets no flags.
+            case Op.Lax: _s.A = _data; _s.X = _data; SetZN(_data); break;
+            case Op.Sax: _data = (byte)(_s.A & _s.X); break;
+
             default:
                 throw new NotImplementedException($"Operation {_op} is not implemented yet.");
         }

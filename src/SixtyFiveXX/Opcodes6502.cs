@@ -256,6 +256,19 @@ internal static class Opcodes6502
         SetCombo("DCP", Op.Dcp, 0xC3, 0xC7, 0xCF, 0xD3, 0xD7, 0xDB, 0xDF);
         SetCombo("ISC", Op.Isc, 0xE3, 0xE7, 0xEF, 0xF3, 0xF7, 0xFB, 0xFF);
 
+        // ---- Undocumented: LAX and SAX -----------------------------------------
+        Set(0xA3, "LAX", AddrMode.IndexedIndirect, Op.Lax, Access.Read);
+        Set(0xA7, "LAX", AddrMode.ZeroPage,        Op.Lax, Access.Read);
+        Set(0xAF, "LAX", AddrMode.Absolute,        Op.Lax, Access.Read);
+        Set(0xB3, "LAX", AddrMode.IndirectIndexed, Op.Lax, Access.Read);
+        Set(0xB7, "LAX", AddrMode.ZeroPageY,       Op.Lax, Access.Read);
+        Set(0xBF, "LAX", AddrMode.AbsoluteY,       Op.Lax, Access.Read);
+
+        Set(0x83, "SAX", AddrMode.IndexedIndirect, Op.Sax, Access.Write);
+        Set(0x87, "SAX", AddrMode.ZeroPage,        Op.Sax, Access.Write);
+        Set(0x8F, "SAX", AddrMode.Absolute,        Op.Sax, Access.Write);
+        Set(0x97, "SAX", AddrMode.ZeroPageY,       Op.Sax, Access.Write);
+
         return t;
     }
 }

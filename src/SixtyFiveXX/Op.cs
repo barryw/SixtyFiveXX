@@ -45,4 +45,10 @@ internal enum Op : byte
 
     // Branch conditions
     Bcc, Bcs, Beq, Bmi, Bne, Bpl, Bvc, Bvs,
+
+    /// <summary>Undocumented. Loads both the accumulator and X from one read.</summary>
+    Lax,
+
+    /// <summary>Undocumented. Stores the bitwise AND of the accumulator and X. Sets no flags.</summary>
+    Sax,
 }

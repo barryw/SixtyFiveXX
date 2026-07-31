@@ -10,8 +10,9 @@ namespace SixtyFiveXX.Conformance;
 public class Harte6502Tests(ITestOutputHelper output)
 {
     /// <summary>
-    /// The 220 implemented opcodes: the 151 documented opcodes, the 27 undocumented
-    /// NOPs, and the 42 undocumented combination read-modify-writes.
+    /// The 230 implemented opcodes: the 151 documented opcodes, the 27 undocumented
+    /// NOPs, the 42 undocumented combination read-modify-writes, and the 10
+    /// undocumented LAX/SAX opcodes.
     /// </summary>
     public static TheoryData<byte> LegalOpcodes
     {
@@ -79,7 +80,7 @@ public class Harte6502Tests(ITestOutputHelper output)
         output.WriteLine($"This suite runs {legal} of 256 opcodes ({legal * 10_000:N0} vectors).");
         output.WriteLine($"{undefined} opcodes remain undocumented or unstable and are NOT covered.");
 
-        Assert.Equal(220, legal);
+        Assert.Equal(230, legal);
     }
 
     private static void AssertRegisters(HarteCase test, in CpuState actual)
