@@ -33,6 +33,12 @@ internal enum Op : byte
     // Control flow
     Jmp, Jsr, Rts, Rti, Brk, Nop,
 
+    /// <summary>
+    /// An undocumented NOP that still performs its addressing mode's read and discards
+    /// the result. Distinct from <see cref="Nop"/> so the discarded read is deliberate.
+    /// </summary>
+    NopRead,
+
     // Branch conditions
     Bcc, Bcs, Beq, Bmi, Bne, Bpl, Bvc, Bvs,
 }

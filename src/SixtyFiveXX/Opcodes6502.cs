@@ -212,6 +212,27 @@ internal static class Opcodes6502
         Set(0x9A, "TXS", AddrMode.Implied, Op.Txs, Access.None);
         Set(0x98, "TYA", AddrMode.Implied, Op.Tya, Access.None);
 
+        // ---- Undocumented: multi-byte NOPs -------------------------------------
+        // The implied forms match $EA exactly. The rest read their operand and throw
+        // it away, so they cost their addressing mode's cycles — including the
+        // page-cross penalty on the absolute,X forms.
+        foreach (var op in new[] { 0x1A, 0x3A, 0x5A, 0x7A, 0xDA, 0xFA })
+            Set(op, "NOP", AddrMode.Implied, Op.Nop, Access.None);
+
+        foreach (var op in new[] { 0x80, 0x82, 0x89, 0xC2, 0xE2 })
+            Set(op, "NOP", AddrMode.Immediate, Op.NopRead, Access.Read);
+
+        foreach (var op in new[] { 0x04, 0x44, 0x64 })
+            Set(op, "NOP", AddrMode.ZeroPage, Op.NopRead, Access.Read);
+
+        foreach (var op in new[] { 0x14, 0x34, 0x54, 0x74, 0xD4, 0xF4 })
+            Set(op, "NOP", AddrMode.ZeroPageX, Op.NopRead, Access.Read);
+
+        Set(0x0C, "NOP", AddrMode.Absolute, Op.NopRead, Access.Read);
+
+        foreach (var op in new[] { 0x1C, 0x3C, 0x5C, 0x7C, 0xDC, 0xFC })
+            Set(op, "NOP", AddrMode.AbsoluteX, Op.NopRead, Access.Read);
+
         return t;
     }
 }

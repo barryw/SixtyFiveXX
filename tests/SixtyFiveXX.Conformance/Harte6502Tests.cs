@@ -76,7 +76,7 @@ public class Harte6502Tests(ITestOutputHelper output)
         output.WriteLine($"Phase 1 runs {legal} of 256 opcodes ({legal * 10_000:N0} vectors).");
         output.WriteLine($"{undefined} undocumented opcodes are NOT covered and land in Phase 2.");
 
-        Assert.Equal(151, legal);
+        Assert.Equal(178, legal);
     }
 
     private static void AssertRegisters(HarteCase test, in CpuState actual)

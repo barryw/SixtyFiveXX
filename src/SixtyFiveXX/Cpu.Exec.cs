@@ -14,6 +14,7 @@ public sealed partial class Cpu<TBus>
         switch (_op)
         {
             case Op.Nop: break;
+            case Op.NopRead: break;   // the read already happened; the value is discarded
 
             // Loads
             case Op.Lda: _s.A = _data; SetZN(_s.A); break;

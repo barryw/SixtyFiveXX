@@ -12,10 +12,10 @@ public class Opcodes6502Tests
     }
 
     [Fact]
-    public void Table_DefinesExactlyOneHundredFiftyOneLegalOpcodes()
+    public void Table_DefinesTheExpectedNumberOfOpcodes()
     {
         var legal = Opcodes6502.Table.Count(e => e.Operation != Op.Undefined);
-        Assert.Equal(151, legal);
+        Assert.Equal(178, legal);
     }
 
     [Theory]
