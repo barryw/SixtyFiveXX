@@ -351,7 +351,8 @@ steps:
       - 'VERSION=$(cat /woodpecker/version.txt 2>/dev/null || echo "NONE")'
       - 'test "$VERSION" != "NONE" || { echo "No new version, nothing to finalize"; exit 0; }'
       - '. /plugin/lib/github_release.sh'
-      - 'github_release_upload "$VERSION" ./artifacts/*.nupkg ./artifacts/*.snupkg'
+      - 'ASSETS=$(ls ./artifacts/*.nupkg ./artifacts/*.snupkg 2>/dev/null | tr "\n" " " || true)'
+      - 'if [ -n "$ASSETS" ]; then github_release_upload "$VERSION" $ASSETS; fi'
       - 'github_release_publish "$VERSION"'
     depends_on: [nuget-publish]
 {{end}}
@@ -364,6 +365,8 @@ Three details that are load-bearing:
 **`finalize-release` runs on the plugin image, not `sdk_image`.** The `gh` CLI is **not** present in `mcr.microsoft.com/dotnet/sdk:10.0` — verified by running it — so calling `gh` from the publish step would fail with `command not found` for any repo using a stock SDK image. The plugin image carries `gh` 2.67.0 and exposes its helpers at `/plugin/lib/*.sh` (`plugin/Dockerfile:31`), so sourcing `github_release.sh` gives this step `github_release_upload` and `github_release_publish` — the same implementations the plugin itself uses, rather than a second hand-rolled copy of the same `gh` invocations.
 
 `github_release_publish` is the **last** command in the pipeline. Everything that can fail has already succeeded, so the Release only becomes public once the package is genuinely on nuget.org.
+
+**The asset list is built with `ls`, not passed as a bare glob.** A project that does not set `IncludeSymbols` produces no `.snupkg`, and an unmatched shell glob is passed through *literally* — `gh` would then fail on a nonexistent path, aborting the step before `github_release_publish` runs. The package would be on nuget.org while its Release stayed a draft forever. Guarding with `if [ -n "$ASSETS" ]` also covers the case where neither file exists, and keeps the step from failing under `set -e` when the test is false.
 
 - [ ] **Step 2: Verify the template renders**
 
