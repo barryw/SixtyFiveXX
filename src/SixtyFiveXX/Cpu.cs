@@ -230,10 +230,11 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
         {
             // Take the interrupt instead of an instruction. Hardware spends two cycles
             // reading (and discarding) PC before the pushes begin, mirroring BRK's opcode
-            // fetch plus its signature-byte pad; this read supplies the first of the two
-            // — the same "FetchOpcode supplies the first one for free" pattern Reset()
-            // relies on — and IrqEntry's own IntDummy supplies the second, so entry is at
-            // the sequence's start, not past it.
+            // fetch plus its signature-byte pad; this read supplies the first of the two,
+            // and IrqEntry's own IntDummy supplies the second, so entry is at the
+            // sequence's start, not past it. Reset() has no opcode to fetch and so cannot
+            // rely on this free read — see MicroOpTable.ResetEntry, which spells out both
+            // dummy reads itself.
             _bus.Read(_s.PC);
             _vector = IrqVector;
             _mpc = _table.IrqEntry;

@@ -89,12 +89,34 @@ public class InterruptTests
         cpu.Step();
         Assert.Equal(0x9000, cpu.State.PC);
 
+        // Clear I with the line still asserted. A level-sensitive interrupt is polled
+        // fresh every cycle and fires again even though nothing re-asserted the line;
+        // a latching SetIrq would not, since the earlier SetIrq(true) call is all that
+        // set it. The poll model costs two Step() calls to observe: the first runs the
+        // NOP (its fetch cycle still reads the stale poll left by the entry sequence),
+        // and the poll taken during that NOP's own cycle is what the second Step() acts on.
+        cpu.State.I = false;
+        cpu.State.PC = 0x0201;
+
+        cpu.Step();
+        Assert.Equal(0x0202, cpu.State.PC);    // the NOP ran; one-instruction delay
+
+        cpu.Step();
+        Assert.Equal(0x9000, cpu.State.PC);    // re-fired: the line, not a latch, drove this
+        Assert.True(cpu.State.I);
+
+        // Now release the line and repeat the same two-Step probe. This time the poll
+        // taken during the NOP's cycle sees the line low, so the following fetch runs
+        // the next instruction instead of dispatching again.
         cpu.SetIrq(false);
         cpu.State.I = false;
         cpu.State.PC = 0x0201;
 
         cpu.Step();
-        Assert.Equal(0x0202, cpu.State.PC);    // no second dispatch
+        Assert.Equal(0x0202, cpu.State.PC);
+
+        cpu.Step();
+        Assert.Equal(0x0203, cpu.State.PC);    // no second dispatch: the line is truly gone
     }
 
     [Fact]
