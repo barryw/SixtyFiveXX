@@ -80,6 +80,9 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// </summary>
     private bool _nmiPending;
 
+    /// <summary>Level on the RDY pin. Low halts the processor on read cycles.</summary>
+    private bool _rdy = true;
+
     /// <summary>
     /// Interrupt poll result, recomputed at the start of every cycle that continues an
     /// in-progress instruction — never on a fetch cycle itself, which only reads this. At
@@ -144,10 +147,39 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
         _nmiLine = asserted;
     }
 
-    /// <summary>Advances the core by one clock cycle.</summary>
+    /// <summary>The current level on the RDY pin. True means the processor runs freely.</summary>
+    public bool Ready => _rdy;
+
+    /// <summary>
+    /// Drives the RDY pin. Pulling it low halts the processor on its next read cycle; a
+    /// write already in progress completes. A halted processor keeps driving the address
+    /// bus, which is how a video chip steals cycles without disturbing the CPU's state.
+    /// </summary>
+    public void SetRdy(bool ready) => _rdy = ready;
+
+    /// <summary>
+    /// Pulses the SO pin, setting the overflow flag. Nothing clears it but an instruction
+    /// that writes P.
+    /// </summary>
+    public void SetSo() => _s.V = true;
+
+    /// <summary>
+    /// Advances the core by one clock cycle — or, while RDY is held low on a read cycle,
+    /// re-drives the address bus without otherwise advancing.
+    /// </summary>
     public void Tick()
     {
         _cycles++;
+
+        if (!_rdy && !IsWriteCycleNext())
+        {
+            // Halted: re-drive the address bus without advancing. One access, as always.
+            // A cycle skipped this way never reaches the poll below, so a halt mid-
+            // instruction leaves _intPoll holding whatever the last live cycle computed —
+            // exactly as if the clock itself had stopped, which is what RDY models.
+            _bus.Read(_mpc < 0 ? _s.PC : _addr);
+            return;
+        }
 
         if (_mpc < 0)
         {
@@ -175,6 +207,9 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
         // the next slot is the terminator.
         if (_mpc >= 0 && _ops[_mpc] == MicroOp.End) _mpc = -1;
     }
+
+    /// <summary>True when the cycle about to run is a write. RDY cannot halt a write.</summary>
+    private bool IsWriteCycleNext() => _mpc >= 0 && MicroOps.IsWriteCycle(_ops[_mpc]);
 
     /// <summary>
     /// Begins a hardware reset. The sequence takes seven cycles; drive it with

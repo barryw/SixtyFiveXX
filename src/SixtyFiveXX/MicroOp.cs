@@ -6,7 +6,9 @@ namespace SixtyFiveXX;
 /// </summary>
 /// <remarks>
 /// The opcode-fetch cycle is implicit: it is performed by the tick loop, not by a
-/// member of this enum. Sequences therefore describe cycle 2 onward.
+/// member of this enum. Sequences therefore describe cycle 2 onward. Likewise, a cycle
+/// halted by RDY is handled entirely by the tick loop and executes no member of this
+/// enum at all — it re-drives the bus without consulting the sequence.
 /// </remarks>
 internal enum MicroOp : byte
 {
@@ -164,4 +166,30 @@ internal enum MicroOp : byte
     /// held, so this micro-op repeats for as long as the clock runs.
     /// </summary>
     JamHold,
+}
+
+/// <summary>Classifies micro-ops by bus direction, for the RDY halt line.</summary>
+internal static class MicroOps
+{
+    private static readonly bool[] Writes = BuildWriteTable();
+
+    /// <summary>True when this micro-op drives a write. RDY does not halt a write cycle.</summary>
+    public static bool IsWriteCycle(MicroOp op) => Writes[(int)op];
+
+    private static bool[] BuildWriteTable()
+    {
+        var writes = new bool[Enum.GetValues<MicroOp>().Length];
+
+        foreach (var op in new[]
+                 {
+                     MicroOp.ExecWrite, MicroOp.RmwModifyWrite, MicroOp.RmwWrite,
+                     MicroOp.PushPch, MicroOp.PushPcl, MicroOp.Push,
+                     MicroOp.PushPBrk, MicroOp.PushPInt,
+                 })
+        {
+            writes[(int)op] = true;
+        }
+
+        return writes;
+    }
 }
