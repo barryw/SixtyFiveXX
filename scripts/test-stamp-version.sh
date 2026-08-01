@@ -59,6 +59,60 @@ else
     echo "ok   rejects missing props file"
 fi
 
+# A props file missing <AssemblyVersion> entirely must fail loudly, not
+# report success while leaving the element unwritten.
+tmp="$(mktemp)"
+cat > "$tmp" <<'EOF'
+<Project>
+  <PropertyGroup>
+    <Version>0.0.0</Version>
+    <FileVersion>0.0.0.0</FileVersion>
+  </PropertyGroup>
+</Project>
+EOF
+if "$here/stamp-version.sh" "1.0.0" "$tmp" 2>/dev/null; then
+    echo "FAIL rejects props file missing AssemblyVersion"; failures=$((failures + 1))
+else
+    echo "ok   rejects props file missing AssemblyVersion"
+fi
+rm -f "$tmp"
+
+# A <Version> element carrying an attribute (e.g. a Condition=) must not be
+# silently left untouched.
+tmp="$(mktemp)"
+cat > "$tmp" <<'EOF'
+<Project>
+  <PropertyGroup>
+    <Version Condition="'$(Foo)'=='bar'">0.0.0</Version>
+    <AssemblyVersion>0.0.0.0</AssemblyVersion>
+    <FileVersion>0.0.0.0</FileVersion>
+  </PropertyGroup>
+</Project>
+EOF
+if "$here/stamp-version.sh" "1.0.0" "$tmp" 2>/dev/null; then
+    echo "FAIL rejects Version element with an attribute"; failures=$((failures + 1))
+else
+    echo "ok   rejects Version element with an attribute"
+fi
+rm -f "$tmp"
+
+# A props file missing <FileVersion> entirely must fail loudly.
+tmp="$(mktemp)"
+cat > "$tmp" <<'EOF'
+<Project>
+  <PropertyGroup>
+    <Version>0.0.0</Version>
+    <AssemblyVersion>0.0.0.0</AssemblyVersion>
+  </PropertyGroup>
+</Project>
+EOF
+if "$here/stamp-version.sh" "1.0.0" "$tmp" 2>/dev/null; then
+    echo "FAIL rejects props file missing FileVersion"; failures=$((failures + 1))
+else
+    echo "ok   rejects props file missing FileVersion"
+fi
+rm -f "$tmp"
+
 if [ "$failures" -eq 0 ]; then
     echo "All stamp-version tests passed."
 else
