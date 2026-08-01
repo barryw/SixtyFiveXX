@@ -11,6 +11,8 @@ steps:
   - name: conformance
     image: mcr.microsoft.com/dotnet/sdk:10.0
     commands:
+      - apt-get update && apt-get install -y --no-install-recommends 64tass
+      - tests/SixtyFiveXX.Conformance/klaus/build.sh
       - dotnet test tests/SixtyFiveXX.Conformance -c Release
 
   - name: performance
