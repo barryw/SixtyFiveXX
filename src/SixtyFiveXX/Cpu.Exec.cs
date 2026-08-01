@@ -147,12 +147,15 @@ public sealed partial class Cpu<TBus>
 
             // The unstable stores set no flags. UnstableStoreFixup has already computed
             // the high byte these AND against.
-            case Op.Sha: _data = (byte)(_s.A & _s.X & _storeHigh); break;
-            case Op.Shx: _data = (byte)(_s.X & _storeHigh); break;
-            case Op.Shy: _data = (byte)(_s.Y & _storeHigh); break;
+            case Op.Sha:
+            case Op.Shx:
+            case Op.Shy:
+                _data = UnstableStoreValue();
+                break;
+
             case Op.Tas:
                 _s.S = (byte)(_s.A & _s.X);
-                _data = (byte)(_s.S & _storeHigh);
+                _data = UnstableStoreValue();
                 break;
 
             default:

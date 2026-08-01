@@ -25,6 +25,16 @@ public class DecimalModeTests
         return cpu;
     }
 
+    private static Cpu<FlatBus> Arr(byte a, byte operand, bool carryIn)
+    {
+        var (cpu, _) = TestMachine.Flat(0x0200, 0x6B, operand);
+        cpu.State.A = a;
+        cpu.State.C = carryIn;
+        cpu.State.D = true;
+        cpu.Step();
+        return cpu;
+    }
+
     [Theory]
     [InlineData(0x00, 0x00, false, 0x00, false)]
     [InlineData(0x09, 0x01, false, 0x10, false)]   // 9 + 1 = 10
@@ -89,6 +99,40 @@ public class DecimalModeTests
         Assert.False(cpu.State.Z);
         Assert.False(cpu.State.V);
         Assert.False(cpu.State.C);
+    }
+
+    // ARR ($6B) is the single hardest-to-verify block in the codebase: its decimal-mode
+    // flags do not correspond to any documented instruction (see Arr() in
+    // Cpu.Exec.cs). It is green under 10,000 Harte vectors, so the values below are
+    // pinned from running the vector-certified implementation, not derived
+    // independently — this is a regression guard, not a new correctness claim.
+    [Fact]
+    public void ArrDecimal_MatchesTheVectorCertifiedBehaviour()
+    {
+        // No correction: A & operand is $00, nothing to adjust.
+        var noCorrection = Arr(a: 0x00, operand: 0x00, carryIn: false);
+        Assert.Equal(0x00, noCorrection.State.A);
+        Assert.False(noCorrection.State.C);
+        Assert.False(noCorrection.State.N);
+        Assert.True(noCorrection.State.Z);
+        Assert.False(noCorrection.State.V);
+
+        // Low-nibble correction only: A & operand is $25, low nibble needs adjusting,
+        // high nibble does not.
+        var lowNibble = Arr(a: 0xFF, operand: 0x25, carryIn: false);
+        Assert.Equal(0x18, lowNibble.State.A);
+        Assert.False(lowNibble.State.C);
+        Assert.False(lowNibble.State.N);
+        Assert.False(lowNibble.State.Z);
+        Assert.False(lowNibble.State.V);
+
+        // Both nibbles correct and carry in: A & operand is $5F.
+        var bothNibbles = Arr(a: 0xFF, operand: 0x5F, carryIn: true);
+        Assert.Equal(0x05, bothNibbles.State.A);
+        Assert.True(bothNibbles.State.C);
+        Assert.True(bothNibbles.State.N);
+        Assert.False(bothNibbles.State.Z);
+        Assert.True(bothNibbles.State.V);
     }
 
     [Fact]

@@ -4,8 +4,8 @@ using Xunit.Abstractions;
 namespace SixtyFiveXX.Conformance;
 
 /// <summary>
-/// Runs every SingleStepTests vector for the documented 6502 opcodes, checking the
-/// final register file, the named RAM bytes, and the exact per-cycle bus activity.
+/// Runs every SingleStepTests vector for all 256 6502 opcodes, checking the final
+/// register file, the named RAM bytes, and the exact per-cycle bus activity.
 /// </summary>
 public class Harte6502Tests(ITestOutputHelper output)
 {

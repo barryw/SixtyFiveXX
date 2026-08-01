@@ -108,6 +108,44 @@ public class UnstableOpTests
     }
 
     [Fact]
+    public void Shx_PageCross_FoldsTheStoredValueIntoTheHighByte()
+    {
+        // SHX $30FF,Y with Y=1 crosses a page: indexing wraps the nominal address to
+        // $3000, and UnstableStoreFixup (the only new engine code path in Phase 2a)
+        // folds the ANDed value into the target's high byte on a page cross, so the
+        // write actually lands at $3100, not $3000. Pinned from the vector-certified
+        // implementation — this is a regression guard, not a new correctness claim.
+        var (cpu, ram) = TestMachine.Flat(0x0200, 0x9E, 0xFF, 0x30);   // SHX $30FF,Y
+        cpu.State.Y = 0x01;
+        cpu.State.X = 0xFF;
+
+        var cycles = cpu.Step();
+
+        Assert.Equal(0x31, ram[0x3100]);   // $FF & ($30 + 1), written to the folded address
+        Assert.Equal(0x00, ram[0x3000]);   // the nominal (unindexed-wrap) address is untouched
+        Assert.Equal(5, cycles);
+    }
+
+    [Fact]
+    public void Sha_IndirectIndexed_StoresAtThePointerTargetWithoutACross()
+    {
+        // $93 is the only IndirectIndexed unstable store and has its own emission
+        // prefix in MicroOpTable (FetchAddrLo, PtrReadLo, PtrReadHiY). Non-page-crossing
+        // case: pointer at zp $10/$11 resolves to $3000, +Y ($10) stays in the page.
+        var (cpu, ram) = TestMachine.Flat(0x0200, 0x93, 0x10);   // SHA ($10),Y
+        ram[0x10] = 0x00;
+        ram[0x11] = 0x30;
+        cpu.State.Y = 0x10;
+        cpu.State.A = 0xFF;
+        cpu.State.X = 0xFF;
+
+        var cycles = cpu.Step();
+
+        Assert.Equal(0x31, ram[0x3010]);   // $FF & $FF & ($30 + 1)
+        Assert.Equal(6, cycles);
+    }
+
+    [Fact]
     public void UnstableStores_DoNotAffectFlags()
     {
         var (cpu, _) = TestMachine.Flat(0x0200, 0x9E, 0x00, 0x30);

@@ -1,9 +1,12 @@
 namespace SixtyFiveXX;
 
 /// <summary>
-/// The MOS 6502 opcode table: the 151 documented opcodes, the 27 undocumented NOPs, and
-/// the 42 undocumented combination read-modify-write opcodes (SLO, RLA, SRE, RRA, DCP,
-/// ISC). Every remaining entry is <see cref="OpcodeInfo.Undefined"/>.
+/// The MOS 6502 opcode table: all 256 opcodes are defined — the 151 documented opcodes
+/// plus 105 undocumented NMOS opcodes. The undocumented set covers the 27 NOPs, the 42
+/// combination read-modify-writes (SLO, RLA, SRE, RRA, DCP, ISC), LAX and SAX, the
+/// immediate oddballs (ANC, ALR, ARR, SBX, and the $EB duplicate of SBC), the twelve JAM
+/// opcodes, and the unstable set (ANE, LXA, LAS, SHA, SHX, SHY, TAS) modelled as the
+/// values the SingleStepTests vectors encode.
 /// </summary>
 internal static class Opcodes6502
 {

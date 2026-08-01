@@ -154,6 +154,11 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// Runs for at least <paramref name="cycles"/> cycles, stopping mid-instruction if
     /// the budget runs out.
     /// </summary>
+    /// <remarks>
+    /// Unlike <see cref="Step"/> and <see cref="RunUntil"/>, this keeps ticking even
+    /// once the processor has jammed: a real clock keeps running, and the jammed core
+    /// keeps driving the address bus, so there is no early exit here.
+    /// </remarks>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="cycles"/> is negative.</exception>
     /// <returns>The total cycle count after running.</returns>
     public long Run(long cycles)
