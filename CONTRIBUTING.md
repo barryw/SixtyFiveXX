@@ -11,9 +11,13 @@ paperwork.
 | `feat:` | minor bump |
 | `fix:` | patch bump |
 | `feat!:` or a `BREAKING CHANGE:` footer | major bump |
-| `docs:` `test:` `refactor:` `perf:` `build:` `ci:` `style:` `chore:` | no bump |
+| `docs:` `test:` `refactor:` `perf:` `build:` `ci:` `style:` `chore:` `revert:` | no bump |
 
-Everything except `chore` and `style` still appears in the release notes.
+Everything except `chore` appears in the release notes. `chore` is omitted
+entirely (`cog.toml` sets `omit_from_changelog = true` for it) so cog's own
+version-bump commit — `chore(version): vX.Y.Z [skip ci]` — doesn't clutter
+every release with a "Miscellaneous" entry nobody needs. `style` is not
+suppressed and does show up.
 
 Install the hook that rejects a non-conforming message before it is written —
 git hooks do not survive a clone, so this is per-machine:
@@ -36,16 +40,20 @@ redirect for a compatible release. `scripts/stamp-version.sh` implements that;
 
 ## Before you push
 
-    dotnet build -c Release
-    dotnet test -c Release --filter "Category!=Performance"
-
 The conformance suite runs 2,560,000 SingleStepTests vectors plus Klaus
 Dormann's functional and interrupt tests. It needs `64tass` to assemble the
-interrupt test:
+interrupt test binary *before* anything runs it — including the solution-wide
+test command below. Skip this and the first test command fails outright on a
+fresh clone:
 
     brew install 64tass          # or: apt-get install 64tass
     tests/SixtyFiveXX.Conformance/klaus/build.sh
     dotnet test tests/SixtyFiveXX.Conformance -c Release
+
+Once that binary exists:
+
+    dotnet build -c Release
+    dotnet test -c Release --filter "Category!=Performance"
 
 `tests/SixtyFiveXX.Conformance/klaus/6502_interrupt_test.asm` is a byte-faithful
 port of Klaus Dormann's GPL-3.0 test, verified character-for-character against

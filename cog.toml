@@ -49,6 +49,13 @@ repository = "SixtyFiveXX"
 
 # House conventional-commit type set. Keep identical across repos so changelog
 # sections line up everywhere.
+#
+# >>> REPO-SPECIFIC DIVERGENCE (owner-approved, SixtyFiveXX only): chore carries
+# omit_from_changelog = true. Without it, cog's own version-bump commit
+# (`chore(version): vX.Y.Z [skip ci]`) lands in every GitHub Release under
+# "Miscellaneous" — noise, not a change a consumer needs to know about. `style`
+# is untouched. A future reconciliation against the canonical house file must
+# preserve this line, not silently revert it. <<<
 [commit_types]
 feat = { changelog_title = "Features" }
 fix = { changelog_title = "Bug Fixes" }
@@ -59,7 +66,7 @@ test = { changelog_title = "Tests" }
 build = { changelog_title = "Build" }
 ci = { changelog_title = "CI/CD" }
 style = { changelog_title = "Style" }
-chore = { changelog_title = "Miscellaneous" }
+chore = { changelog_title = "Miscellaneous", omit_from_changelog = true }
 revert = { changelog_title = "Reverts" }
 
 # Enforce conventional commits locally. `cog install-hook --all` writes this to
