@@ -85,11 +85,12 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
 
     /// <summary>
     /// Interrupt poll result, recomputed at the start of every cycle that continues an
-    /// in-progress instruction — never on a fetch cycle itself, which only reads this. At
-    /// an instruction boundary this therefore holds the value from the start of the final
-    /// cycle, the same instant a real 6502 samples during phase 2 of the penultimate cycle.
-    /// True when either an NMI is latched or IRQ is asserted with <c>I</c> clear; NMI is
-    /// never blocked by <c>I</c>.
+    /// in-progress instruction — except a fetch cycle, which only reads this, and a cycle
+    /// held by RDY, which returns before reaching the assignment; both leave the prior
+    /// value untouched. At an instruction boundary this therefore holds the value from the
+    /// start of the final cycle, the same instant a real 6502 samples during phase 2 of the
+    /// penultimate cycle. True when either an NMI is latched or IRQ is asserted with
+    /// <c>I</c> clear; NMI is never blocked by <c>I</c>.
     /// </summary>
     private bool _intPoll;
 
@@ -231,6 +232,11 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// <summary>
     /// Runs to the next instruction boundary, or returns early if the processor jams.
     /// </summary>
+    /// <remarks>
+    /// Nothing inside this loop can release a held RDY line, so it never returns while
+    /// RDY is expected to stay low on a read cycle. A caller driving RDY must step the
+    /// processor with <see cref="Tick"/> or <see cref="Run"/> instead.
+    /// </remarks>
     /// <returns>The number of cycles consumed.</returns>
     public long Step()
     {
@@ -271,6 +277,12 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// </summary>
     /// <param name="stop">Evaluated at each instruction boundary, never mid-instruction.</param>
     /// <param name="maxCycles">A ceiling, so a runaway program cannot hang the caller.</param>
+    /// <remarks>
+    /// Calls <see cref="Step"/> internally and so inherits the same hazard: nothing in
+    /// here can release a held RDY line, so it never returns while RDY is expected to
+    /// stay low on a read cycle. A caller driving RDY must step the processor with
+    /// <see cref="Tick"/> or <see cref="Run"/> instead.
+    /// </remarks>
     /// <returns>The number of cycles consumed.</returns>
     public long RunUntil(Func<Cpu<TBus>, bool> stop, long maxCycles = long.MaxValue)
     {
@@ -628,6 +640,11 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
 
             case MicroOp.JamHold:
                 // The address bus cycles $FFFF, $FFFE, $FFFE, then $FFFF forever.
+                // ponytail: RDY-low during a jam is unmodelled — JamHold isn't a write, so
+                // Tick's halt branch intercepts it first and re-reads _addr instead of
+                // advancing this pattern, freezing _jamPhase instead of continuing the real
+                // bus cycling. No test pins the halted address yet. If that ever matters,
+                // give the halt branch a jammed-aware read (or let JamHold run through RDY).
                 _jammed = true;
                 _bus.Read(_jamPhase switch
                 {

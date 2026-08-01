@@ -18,6 +18,7 @@ public class PinTests
         for (var i = 0; i < 10; i++) cpu.Tick();
 
         Assert.Equal(pcBefore, cpu.State.PC);      // no progress while halted
+        Assert.False(cpu.AtInstructionBoundary);   // still mid-instruction, not fast-forwarded
         Assert.False(cpu.State.A == 0x42);
 
         cpu.SetRdy(true);
