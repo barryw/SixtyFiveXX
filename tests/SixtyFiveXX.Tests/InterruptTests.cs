@@ -163,4 +163,101 @@ public class InterruptTests
         cpu.SetIrq(false);
         Assert.False(cpu.IrqLine);
     }
+
+    [Fact]
+    public void Nmi_IsTakenEvenWithInterruptsDisabled()
+    {
+        var (cpu, _) = Machine(0xEA, 0xEA);
+        cpu.State.I = true;
+        cpu.SetNmi(true);
+
+        cpu.Step();
+        var cycles = cpu.Step();
+
+        Assert.Equal(0x8000, cpu.State.PC);
+        Assert.Equal(7, cycles);
+    }
+
+    [Fact]
+    public void Nmi_IsEdgeTriggeredAndFiresOnlyOncePerTransition()
+    {
+        var (cpu, _) = Machine(0xEA, 0xEA, 0xEA, 0xEA);
+        cpu.SetNmi(true);
+
+        cpu.Step();
+        cpu.Step();
+        Assert.Equal(0x8000, cpu.State.PC);
+
+        // The line is still high, but there has been no new edge.
+        cpu.State.PC = 0x0201;
+        cpu.Step();
+        Assert.Equal(0x0202, cpu.State.PC);   // no second dispatch
+    }
+
+    [Fact]
+    public void Nmi_LatchesEvenIfTheLineIsReleasedBeforeTheBoundary()
+    {
+        var (cpu, _) = Machine(0xEA, 0xEA);
+        cpu.SetNmi(true);
+        cpu.SetNmi(false);                     // pulse: high then low
+
+        cpu.Step();
+        cpu.Step();
+
+        Assert.Equal(0x8000, cpu.State.PC);    // the latch survived the release
+    }
+
+    [Fact]
+    public void Nmi_FiresAgainAfterANewEdge()
+    {
+        var (cpu, _) = Machine(0xEA, 0xEA, 0xEA, 0xEA);
+        cpu.SetNmi(true);
+        cpu.Step();
+        cpu.Step();
+        Assert.Equal(0x8000, cpu.State.PC);
+
+        cpu.SetNmi(false);
+        cpu.SetNmi(true);                      // a fresh edge
+        cpu.State.PC = 0x0201;
+        cpu.Step();
+        cpu.Step();
+
+        Assert.Equal(0x8000, cpu.State.PC);
+    }
+
+    [Fact]
+    public void Nmi_TakesPriorityOverASimultaneousIrq()
+    {
+        var (cpu, _) = Machine(0xEA, 0xEA);
+        cpu.SetIrq(true);
+        cpu.SetNmi(true);
+
+        cpu.Step();
+        cpu.Step();
+
+        Assert.Equal(0x8000, cpu.State.PC);    // the NMI vector, not $9000
+    }
+
+    [Fact]
+    public void Nmi_PushesStatusWithTheBreakFlagClear()
+    {
+        var (cpu, ram) = Machine(0xEA);
+        cpu.State.S = 0xFD;
+        cpu.SetNmi(true);
+
+        cpu.Step();
+        cpu.Step();
+
+        Assert.Equal(0, ram[0x01FB] & Flag.B);
+    }
+
+    [Fact]
+    public void NmiLine_ReportsTheCurrentPinState()
+    {
+        var (cpu, _) = Machine(0xEA);
+
+        Assert.False(cpu.NmiLine);
+        cpu.SetNmi(true);
+        Assert.True(cpu.NmiLine);
+    }
 }

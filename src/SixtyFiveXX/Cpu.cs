@@ -68,11 +68,23 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// <summary>Current level on the IRQ pin. Level-sensitive, not latched.</summary>
     private bool _irqLine;
 
+    /// <summary>Current level on the NMI pin, tracked only to detect a rising edge.</summary>
+    private bool _nmiLine;
+
+    /// <summary>
+    /// Latched by a rising edge on NMI and cleared when the interrupt is serviced. NMI is
+    /// edge-triggered, so this survives the line going low again and holding it high does
+    /// not produce a second interrupt.
+    /// </summary>
+    private bool _nmiPending;
+
     /// <summary>
     /// Interrupt poll result, recomputed at the start of every cycle that continues an
     /// in-progress instruction — never on a fetch cycle itself, which only reads this. At
     /// an instruction boundary this therefore holds the value from the start of the final
     /// cycle, the same instant a real 6502 samples during phase 2 of the penultimate cycle.
+    /// True when either an NMI is latched or IRQ is asserted with <c>I</c> clear; NMI is
+    /// never blocked by <c>I</c>.
     /// </summary>
     private bool _intPoll;
 
@@ -116,6 +128,20 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// </summary>
     public void SetIrq(bool asserted) => _irqLine = asserted;
 
+    /// <summary>The current level on the NMI pin.</summary>
+    public bool NmiLine => _nmiLine;
+
+    /// <summary>
+    /// Drives the NMI pin. NMI is edge-triggered: only a low-to-high transition latches an
+    /// interrupt, and that latch survives the line being released. Holding the line high
+    /// produces exactly one interrupt, not a stream of them.
+    /// </summary>
+    public void SetNmi(bool asserted)
+    {
+        if (asserted && !_nmiLine) _nmiPending = true;
+        _nmiLine = asserted;
+    }
+
     /// <summary>Advances the core by one clock cycle.</summary>
     public void Tick()
     {
@@ -135,8 +161,8 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
         // cycle's Execute — is what the next fetch cycle above will act on. This is what
         // makes CLI delay a pending IRQ by one instruction while SEI fails to block one,
         // with no special case for either: the flag write and the poll simply land in the
-        // same cycle for CLI/SEI, and the poll happens first.
-        _intPoll = _irqLine && !_s.I;
+        // same cycle for CLI/SEI, and the poll happens first. NMI is never blocked by I.
+        _intPoll = _nmiPending || (_irqLine && !_s.I);
 
         var micro = _ops[_mpc];
         _mpc++;
@@ -236,7 +262,17 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
             // rely on this free read — see MicroOpTable.ResetEntry, which spells out both
             // dummy reads itself.
             _bus.Read(_s.PC);
-            _vector = IrqVector;
+            // NMI outranks IRQ, and servicing it consumes the latch. IRQ is level-sensitive
+            // and so needs no clearing — it fires again next boundary if still asserted.
+            if (_nmiPending)
+            {
+                _nmiPending = false;
+                _vector = NmiVector;
+            }
+            else
+            {
+                _vector = IrqVector;
+            }
             _mpc = _table.IrqEntry;
             return;
         }
