@@ -1,0 +1,144 @@
+using SixtyFiveXX;
+using Xunit;
+
+namespace SixtyFiveXX.Tests;
+
+public class InterruptTests
+{
+    /// <summary>A CPU with an IRQ handler vector at $9000 and NOPs to execute.</summary>
+    private static (Cpu<FlatBus> Cpu, byte[] Ram) Machine(params byte[] program)
+    {
+        var (cpu, ram) = TestMachine.Flat(0x0200, program);
+        ram[0xFFFE] = 0x00;
+        ram[0xFFFF] = 0x90;   // IRQ/BRK vector -> $9000
+        ram[0xFFFA] = 0x00;
+        ram[0xFFFB] = 0x80;   // NMI vector -> $8000
+        cpu.State.P = Flag.U; // I clear, interrupts enabled
+        return (cpu, ram);
+    }
+
+    [Fact]
+    public void Irq_IsNotTakenWhileTheInterruptDisableFlagIsSet()
+    {
+        var (cpu, _) = Machine(0xEA, 0xEA, 0xEA);
+        cpu.State.I = true;
+        cpu.SetIrq(true);
+
+        cpu.Step();
+        cpu.Step();
+
+        Assert.Equal(0x0202, cpu.State.PC);   // both NOPs ran, no vector taken
+    }
+
+    [Fact]
+    public void Irq_IsTakenAtTheNextInstructionBoundary()
+    {
+        var (cpu, ram) = Machine(0xEA, 0xEA);
+        cpu.State.S = 0xFD;
+        cpu.SetIrq(true);
+
+        cpu.Step();                            // the NOP completes first
+        Assert.Equal(0x0201, cpu.State.PC);
+
+        var cycles = cpu.Step();               // then the interrupt sequence
+
+        Assert.Equal(0x9000, cpu.State.PC);
+        Assert.Equal(7, cycles);
+        Assert.True(cpu.State.I);              // I is set on entry
+        Assert.Equal(0xFA, cpu.State.S);       // three pushes
+        Assert.Equal(0x02, ram[0x01FD]);       // PCH of the return address
+        Assert.Equal(0x01, ram[0x01FC]);       // PCL
+    }
+
+    [Fact]
+    public void Irq_PushesStatusWithTheBreakFlagClear()
+    {
+        var (cpu, ram) = Machine(0xEA);
+        cpu.State.S = 0xFD;
+        cpu.State.C = true;
+        cpu.SetIrq(true);
+
+        cpu.Step();
+        cpu.Step();
+
+        var pushed = ram[0x01FB];
+        Assert.Equal(0, pushed & Flag.B);      // B clear distinguishes IRQ from BRK
+        Assert.Equal(Flag.U, pushed & Flag.U); // U always set
+        Assert.Equal(Flag.C, pushed & Flag.C);
+    }
+
+    [Fact]
+    public void Irq_DoesNotClearDecimalModeOnNmos()
+    {
+        var (cpu, _) = Machine(0xEA);
+        cpu.State.D = true;
+        cpu.SetIrq(true);
+
+        cpu.Step();
+        cpu.Step();
+
+        Assert.True(cpu.State.D);              // NMOS leaves D alone; the 65C02 clears it
+    }
+
+    [Fact]
+    public void Irq_IsLevelSensitiveAndStopsFiringWhenTheLineIsReleased()
+    {
+        var (cpu, _) = Machine(0xEA, 0xEA, 0xEA);
+        cpu.SetIrq(true);
+        cpu.Step();
+        cpu.Step();
+        Assert.Equal(0x9000, cpu.State.PC);
+
+        cpu.SetIrq(false);
+        cpu.State.I = false;
+        cpu.State.PC = 0x0201;
+
+        cpu.Step();
+        Assert.Equal(0x0202, cpu.State.PC);    // no second dispatch
+    }
+
+    [Fact]
+    public void Cli_DelaysAPendingIrqByOneInstruction()
+    {
+        // CLI polls before its own effect, so the IRQ is taken after the NEXT instruction.
+        var (cpu, _) = Machine(0x58, 0xEA, 0xEA);   // CLI, NOP, NOP
+        cpu.State.I = true;
+        cpu.SetIrq(true);
+
+        cpu.Step();                                  // CLI
+        Assert.Equal(0x0201, cpu.State.PC);
+        Assert.False(cpu.State.I);
+
+        cpu.Step();                                  // the NOP runs, not the handler
+        Assert.Equal(0x0202, cpu.State.PC);
+
+        cpu.Step();                                  // now the handler
+        Assert.Equal(0x9000, cpu.State.PC);
+    }
+
+    [Fact]
+    public void Sei_DoesNotPreventAnAlreadyPendingIrq()
+    {
+        // SEI polls before its own effect, so an IRQ asserted beforehand still lands.
+        var (cpu, _) = Machine(0x78, 0xEA);          // SEI, NOP
+        cpu.SetIrq(true);
+
+        cpu.Step();                                  // SEI
+        Assert.True(cpu.State.I);
+
+        cpu.Step();
+        Assert.Equal(0x9000, cpu.State.PC);          // taken anyway
+    }
+
+    [Fact]
+    public void IrqLine_ReportsTheCurrentPinState()
+    {
+        var (cpu, _) = Machine(0xEA);
+
+        Assert.False(cpu.IrqLine);
+        cpu.SetIrq(true);
+        Assert.True(cpu.IrqLine);
+        cpu.SetIrq(false);
+        Assert.False(cpu.IrqLine);
+    }
+}

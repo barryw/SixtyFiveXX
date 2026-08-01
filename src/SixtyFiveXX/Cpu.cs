@@ -65,6 +65,17 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// <summary>Set by <c>JamHold</c>; cleared only by <see cref="Reset"/>.</summary>
     private bool _jammed;
 
+    /// <summary>Current level on the IRQ pin. Level-sensitive, not latched.</summary>
+    private bool _irqLine;
+
+    /// <summary>
+    /// Interrupt poll result, recomputed at the start of every cycle that continues an
+    /// in-progress instruction — never on a fetch cycle itself, which only reads this. At
+    /// an instruction boundary this therefore holds the value from the start of the final
+    /// cycle, the same instant a real 6502 samples during phase 2 of the penultimate cycle.
+    /// </summary>
+    private bool _intPoll;
+
     /// <summary>Creates a core over the given bus.</summary>
     public Cpu(TBus bus)
     {
@@ -96,6 +107,15 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// <summary>The bus. Exposed so a caller holding only the CPU can reach its memory.</summary>
     public ref TBus Bus => ref _bus;
 
+    /// <summary>The current level on the IRQ pin.</summary>
+    public bool IrqLine => _irqLine;
+
+    /// <summary>
+    /// Drives the IRQ pin. The line is level-sensitive: while it is held asserted and the
+    /// interrupt-disable flag is clear, an interrupt is taken at each instruction boundary.
+    /// </summary>
+    public void SetIrq(bool asserted) => _irqLine = asserted;
+
     /// <summary>Advances the core by one clock cycle.</summary>
     public void Tick()
     {
@@ -103,9 +123,20 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
 
         if (_mpc < 0)
         {
+            // A fetch cycle does no polling of its own: it consults whatever _intPoll
+            // was left holding by the instruction that just finished (see below), the
+            // same instant real hardware samples during phase 2 of the penultimate cycle.
             FetchOpcode();
             return;
         }
+
+        // Poll before this cycle's own work. When this is the last cycle of the
+        // instruction, the value computed here — using register state from before this
+        // cycle's Execute — is what the next fetch cycle above will act on. This is what
+        // makes CLI delay a pending IRQ by one instruction while SEI fails to block one,
+        // with no special case for either: the flag write and the poll simply land in the
+        // same cycle for CLI/SEI, and the poll happens first.
+        _intPoll = _irqLine && !_s.I;
 
         var micro = _ops[_mpc];
         _mpc++;
@@ -195,6 +226,20 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
 
     private void FetchOpcode()
     {
+        if (_intPoll)
+        {
+            // Take the interrupt instead of an instruction. Hardware spends two cycles
+            // reading (and discarding) PC before the pushes begin, mirroring BRK's opcode
+            // fetch plus its signature-byte pad; this read supplies the first of the two
+            // — the same "FetchOpcode supplies the first one for free" pattern Reset()
+            // relies on — and IrqEntry's own IntDummy supplies the second, so entry is at
+            // the sequence's start, not past it.
+            _bus.Read(_s.PC);
+            _vector = IrqVector;
+            _mpc = _table.IrqEntry;
+            return;
+        }
+
         var pc = _s.PC;
         var opcode = _bus.Read(pc);
         _s.PC++;
@@ -475,9 +520,9 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
                 break;
 
             case MicroOp.PushPInt:
-                // Deliberately does not set _vector (unlike PushPBrk, which always uses
-                // IrqVector): IRQ needs IrqVector but NMI needs NmiVector, and only the
-                // Phase 2 dispatcher that invokes this sequence knows which one applies.
+                // Deliberately does not set _vector: only the dispatcher knows whether
+                // this is an IRQ or an NMI, and they use different vectors. FetchOpcode
+                // sets it before entering this sequence.
                 _bus.Write(0x0100 + _s.S, (byte)((_s.P | Flag.U) & ~Flag.B));
                 _s.S--;
                 _s.I = true;

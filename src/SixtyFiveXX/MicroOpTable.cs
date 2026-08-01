@@ -24,7 +24,7 @@ internal sealed class MicroOpTable
     public readonly OpcodeInfo[] Info;
 
     /// <summary>
-    /// Index of the hardware interrupt sequence in <see cref="Ops"/>. The caller must set
+    /// Index of the hardware interrupt sequence in <see cref="Ops"/>. The dispatcher sets
     /// the CPU's vector field to <c>NmiVector</c> or <c>IrqVector</c> before entering this
     /// sequence — the sequence itself never sets it, since only the dispatcher knows
     /// which interrupt is being serviced.
