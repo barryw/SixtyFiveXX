@@ -1,0 +1,20 @@
+# SixtyFiveXX - .NET library published to NuGet.
+# The config service (woodpecker-release) expands this into the full pipeline.
+#
+# sdk_image carries 64tass (to assemble Klaus Dormann's interrupt test, which
+# upstream ships as source only) and the .NET 8 runtime (the SDK 10 image can
+# build net8.0 but not run it). Built from docker/ci.Dockerfile.
+#
+# The performance gate is excluded from the unit run: it asserts a 50 MHz
+# throughput floor and is sensitive to runner contention, so as a blocking step
+# it would go red for reasons unrelated to the code.
+template: release-dotnet-library
+data:
+  sdk_image: "ghcr.io/barryw/sixtyfivexx-ci:1"
+  test_project: "tests/SixtyFiveXX.Tests"
+  test_filter: "Category!=Performance"
+  conformance_project: "tests/SixtyFiveXX.Conformance"
+  conformance_setup:
+    - "tests/SixtyFiveXX.Conformance/klaus/build.sh"
+  pack_project: "src/SixtyFiveXX"
+  nuget_publish: true
