@@ -9,28 +9,19 @@ namespace SixtyFiveXX.Conformance;
 /// </summary>
 public class Harte6502Tests(ITestOutputHelper output)
 {
-    /// <summary>
-    /// The 244 implemented opcodes: the 151 documented opcodes, the 27 undocumented
-    /// NOPs, the 42 undocumented combination read-modify-writes, the 10 undocumented
-    /// LAX/SAX opcodes, the 6 undocumented immediate oddballs (ANC x2, ALR, ARR,
-    /// SBX, and the duplicate SBC at $EB), and the 8 undocumented unstable opcodes
-    /// (ANE, LXA, LAS, SHA x2, SHX, SHY, TAS).
-    /// </summary>
-    public static TheoryData<byte> LegalOpcodes
+    /// <summary>Every opcode. All 256 are implemented as of Phase 2a.</summary>
+    public static TheoryData<byte> AllOpcodes
     {
         get
         {
             var data = new TheoryData<byte>();
-            for (var opcode = 0; opcode < 256; opcode++)
-            {
-                if (Opcodes6502.Table[opcode].Operation != Op.Undefined) data.Add((byte)opcode);
-            }
+            for (var opcode = 0; opcode < 256; opcode++) data.Add((byte)opcode);
             return data;
         }
     }
 
     [Theory]
-    [MemberData(nameof(LegalOpcodes))]
+    [MemberData(nameof(AllOpcodes))]
     public void Opcode_MatchesEveryVector(byte opcode)
     {
         var cases = HarteCache.Load("6502", opcode);
@@ -40,7 +31,7 @@ public class Harte6502Tests(ITestOutputHelper output)
         // mean 10,000 64 KB arrays per opcode, which dominates the suite's runtime.
         var ram = new byte[0x10000];
         var log = new List<Cycle>(16);
-        var cpu = new Cpu<HarteBus>(new HarteBus(ram, log));
+        Cpu<HarteBus> cpu = new(new HarteBus(ram, log));
 
         foreach (var test in cases)
         {
@@ -59,11 +50,24 @@ public class Harte6502Tests(ITestOutputHelper output)
                 P = test.Initial.P,
             };
 
-            cpu.Step();
+            // A JAM opcode never reaches an instruction boundary, so Step() cannot drive
+            // it. Tick exactly as many cycles as the vector records instead.
+            if (Opcodes6502.Table[opcode].Operation == Op.Jam)
+            {
+                for (var i = 0; i < test.Cycles.Length; i++) cpu.Tick();
+            }
+            else
+            {
+                cpu.Step();
+            }
 
             AssertRegisters(test, cpu.State);
             AssertMemory(test, ram);
             AssertCycles(test, log);
+
+            // A jammed core never executes again. Replace it so the next vector starts
+            // from a working CPU. Only the twelve JAM opcodes ever take this path.
+            if (cpu.IsJammed) cpu = new Cpu<HarteBus>(new HarteBus(ram, log));
         }
 
         output.WriteLine($"${opcode:X2} {Opcodes6502.Table[opcode].Mnemonic}: {cases.Length} vectors passed.");
@@ -76,13 +80,12 @@ public class Harte6502Tests(ITestOutputHelper output)
     [Fact]
     public void Coverage_IsReportedHonestly()
     {
-        var legal = LegalOpcodes.Count;
-        var undefined = 256 - legal;
+        var implemented = Opcodes6502.Table.Count(e => e.Operation != Op.Undefined);
 
-        output.WriteLine($"This suite runs {legal} of 256 opcodes ({legal * 10_000:N0} vectors).");
-        output.WriteLine($"{undefined} opcodes remain undocumented or unstable and are NOT covered.");
+        output.WriteLine($"Phase 2a runs all 256 opcodes ({256 * 10_000:N0} vectors).");
+        output.WriteLine($"{implemented} of 256 opcodes are implemented.");
 
-        Assert.Equal(256, legal);
+        Assert.Equal(256, implemented);
     }
 
     private static void AssertRegisters(HarteCase test, in CpuState actual)
