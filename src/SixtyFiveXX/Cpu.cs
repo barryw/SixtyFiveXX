@@ -68,7 +68,7 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// <summary>Current level on the IRQ pin. Level-sensitive, not latched.</summary>
     private bool _irqLine;
 
-    /// <summary>Current level on the NMI pin, tracked only to detect a rising edge.</summary>
+    /// <summary>Current level on the NMI pin. Tracked to detect a rising edge and for the public <see cref="NmiLine"/> readback.</summary>
     private bool _nmiLine;
 
     /// <summary>
@@ -153,14 +153,17 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
 
     /// <summary>
     /// Drives the RDY pin. Pulling it low halts the processor on its next read cycle; a
-    /// write already in progress completes. A halted processor keeps driving the address
-    /// bus, which is how a video chip steals cycles without disturbing the CPU's state.
+    /// write already in progress completes. A halted processor keeps performing one bus
+    /// read per cycle rather than going silent, which is the basic shape of how a video
+    /// chip steals cycles without disturbing the CPU's state — but the address driven on a
+    /// halted cycle is not guaranteed to be the address the pending micro-op would have
+    /// used; see the <c>ponytail:</c> note at the halted read in <see cref="Tick"/>.
     /// </summary>
     public void SetRdy(bool ready) => _rdy = ready;
 
     /// <summary>
     /// Pulses the SO pin, setting the overflow flag. Nothing clears it but an instruction
-    /// that writes P.
+    /// that writes V.
     /// </summary>
     public void SetSo() => _s.V = true;
 
@@ -178,6 +181,13 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
             // A cycle skipped this way never reaches the poll below, so a halt mid-
             // instruction leaves _intPoll holding whatever the last live cycle computed —
             // exactly as if the clock itself had stopped, which is what RDY models.
+            // ponytail: _addr is only the right address for the minority of read micro-ops
+            // that actually read it (ReadExec, RmwRead, ReadPageCross, DummyReadFixup,
+            // UnstableStoreFixup, ZpIndex*). Every other read micro-op — PC, stack, pointer
+            // or vector reads — gets _addr's stale value here instead of its own, which is
+            // a real hazard on a bus with read side effects. No test pins the halted
+            // address yet. Upgrade path: derive the pending micro-op's true read address
+            // (a switch mirroring Execute) instead of hard-coding _addr.
             _bus.Read(_mpc < 0 ? _s.PC : _addr);
             return;
         }

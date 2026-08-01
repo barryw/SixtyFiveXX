@@ -58,6 +58,25 @@ public class PinTests
     }
 
     [Fact]
+    public void Rdy_DoesNotHaltAPushWriteCycle()
+    {
+        // ExecWrite is covered above; the push family (PHA/PHP/PushPch/PushPcl/PushPBrk/
+        // PushPInt) reaches the bus through a different micro-op, MicroOp.Push. A future
+        // write micro-op could be added to the RDY write table without exercising ExecWrite
+        // at all, so this pins the push family separately.
+        var (cpu, ram) = TestMachine.Flat(0x0200, 0x48);   // PHA
+        cpu.State.A = 0x5A;
+        cpu.State.S = 0xFD;
+
+        cpu.Tick();   // opcode
+        cpu.Tick();   // ImpliedDummy
+        cpu.SetRdy(false);
+        cpu.Tick();   // the push must complete despite RDY being low
+
+        Assert.Equal(0x5A, ram[0x01FD]);
+    }
+
+    [Fact]
     public void Rdy_CountsHaltedCyclesAgainstTheCycleCounter()
     {
         var (cpu, _) = TestMachine.Flat(0x0200, 0xEA);

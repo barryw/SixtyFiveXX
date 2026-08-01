@@ -220,9 +220,25 @@ public class InterruptTests
         cpu.SetNmi(true);                      // a fresh edge
         cpu.State.PC = 0x0201;
         cpu.Step();
+        Assert.Equal(0x0202, cpu.State.PC);    // intermediate: the NOP ran, not a dispatch
         cpu.Step();
+        Assert.Equal(0x8000, cpu.State.PC);    // re-fired: exactly one dispatch, from the edge
 
-        Assert.Equal(0x8000, cpu.State.PC);
+        // Holding the line high and re-asserting it while it is already high must not
+        // latch again — the poll model's edge check is `asserted && !_nmiLine`. A latching
+        // SetNmi (dropping that check) would re-arm on every one of these calls, and the
+        // driver pattern a host actually uses is exactly this: calling SetNmi(cia.Active)
+        // once per tick while the line is held. Assert exactly one dispatch happened above
+        // and none happen below, or an NMI storm would pass this suite silently.
+        cpu.SetNmi(true);
+        cpu.SetNmi(true);
+        cpu.SetNmi(true);
+        cpu.State.PC = 0x0201;
+
+        cpu.Step();
+        Assert.Equal(0x0202, cpu.State.PC);    // one instruction ran...
+        cpu.Step();
+        Assert.Equal(0x0203, cpu.State.PC);    // ...and the next — no second dispatch
     }
 
     [Fact]
@@ -259,5 +275,7 @@ public class InterruptTests
         Assert.False(cpu.NmiLine);
         cpu.SetNmi(true);
         Assert.True(cpu.NmiLine);
+        cpu.SetNmi(false);
+        Assert.False(cpu.NmiLine);
     }
 }

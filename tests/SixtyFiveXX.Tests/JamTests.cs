@@ -85,4 +85,27 @@ public class JamTests
 
         Assert.False(cpu.IsJammed);
     }
+
+    [Fact]
+    public void JammedCpu_IgnoresIrqAndNmi()
+    {
+        // A jam holds _mpc >= 0 forever, so FetchOpcode — the only place either interrupt
+        // is dispatched — never runs again. Nothing pins that interaction directly; this
+        // does. IRQ/BRK and NMI vectors are set to distinct, recognisable targets so a
+        // dispatch that slipped through would move PC somewhere identifiable.
+        var (cpu, ram) = TestMachine.Flat(0x0200, 0x02);   // JAM
+        ram[0xFFFE] = 0x00; ram[0xFFFF] = 0x90;             // IRQ/BRK -> $9000
+        ram[0xFFFA] = 0x00; ram[0xFFFB] = 0x80;             // NMI     -> $8000
+        cpu.State.P = Flag.U;                               // I clear: only the jam should block IRQ
+
+        cpu.Run(11);
+        Assert.True(cpu.IsJammed);
+
+        cpu.SetIrq(true);
+        cpu.SetNmi(true);
+        cpu.Run(20);
+
+        Assert.True(cpu.IsJammed);
+        Assert.Equal(0x0201, cpu.State.PC);   // unmoved: no dispatch to either vector
+    }
 }
