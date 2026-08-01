@@ -11,7 +11,7 @@ are not tabulated after the fact — they fall out of doing the work.
 | Variant | State | Certified against |
 | --- | --- | --- |
 | 6502, documented opcodes | Complete | Harte SingleStepTests, per-cycle |
-| 6502, undocumented opcodes | Phase 2 | — |
+| 6502, undocumented opcodes | Complete | Harte SingleStepTests, per-cycle |
 | 65C02 (Rockwell, Synertek, WDC) | Phase 4 | — |
 | 6510 | Phase 5 | — |
 | 65816 | Phase 7 | — |

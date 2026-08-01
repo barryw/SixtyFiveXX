@@ -33,6 +33,33 @@ internal enum Op : byte
     // Control flow
     Jmp, Jsr, Rts, Rti, Brk, Nop,
 
+    /// <summary>
+    /// An undocumented NOP that still performs its addressing mode's read and discards
+    /// the result. Distinct from <see cref="Nop"/> so the discarded read is deliberate.
+    /// </summary>
+    NopRead,
+
+    // Undocumented combination read-modify-writes: a shift or increment on memory,
+    // followed by an ALU operation against the accumulator, sharing one operand.
+    Slo, Rla, Sre, Rra, Dcp, Isc,
+
     // Branch conditions
     Bcc, Bcs, Beq, Bmi, Bne, Bpl, Bvc, Bvs,
+
+    /// <summary>Undocumented. Loads both the accumulator and X from one read.</summary>
+    Lax,
+
+    /// <summary>Undocumented. Stores the bitwise AND of the accumulator and X. Sets no flags.</summary>
+    Sax,
+
+    // Undocumented immediate-mode instructions with flag behaviour unlike any
+    // documented opcode.
+    Anc, Alr, Arr, Sbx,
+
+    // Undocumented and genuinely unstable on real silicon. Modelled as the
+    // deterministic values the SingleStepTests vectors encode.
+    Ane, Lxa, Las, Sha, Shx, Shy, Tas,
+
+    /// <summary>Undocumented. Halts the processor until reset.</summary>
+    Jam,
 }

@@ -1,8 +1,12 @@
 namespace SixtyFiveXX;
 
 /// <summary>
-/// The MOS 6502 opcode table. Phase 1 covers the 151 documented opcodes; every other
-/// entry is <see cref="OpcodeInfo.Undefined"/> until undocumented opcodes land.
+/// The MOS 6502 opcode table: all 256 opcodes are defined — the 151 documented opcodes
+/// plus 105 undocumented NMOS opcodes. The undocumented set covers the 27 NOPs, the 42
+/// combination read-modify-writes (SLO, RLA, SRE, RRA, DCP, ISC), LAX and SAX, the
+/// immediate oddballs (ANC, ALR, ARR, SBX, and the $EB duplicate of SBC), the twelve JAM
+/// opcodes, and the unstable set (ANE, LXA, LAS, SHA, SHX, SHY, TAS) modelled as the
+/// values the SingleStepTests vectors encode.
 /// </summary>
 internal static class Opcodes6502
 {
@@ -211,6 +215,86 @@ internal static class Opcodes6502
         Set(0x8A, "TXA", AddrMode.Implied, Op.Txa, Access.None);
         Set(0x9A, "TXS", AddrMode.Implied, Op.Txs, Access.None);
         Set(0x98, "TYA", AddrMode.Implied, Op.Tya, Access.None);
+
+        // ---- Undocumented: multi-byte NOPs -------------------------------------
+        // The implied forms match $EA exactly. The rest read their operand and throw
+        // it away, so they cost their addressing mode's cycles — including the
+        // page-cross penalty on the absolute,X forms.
+        foreach (var op in new[] { 0x1A, 0x3A, 0x5A, 0x7A, 0xDA, 0xFA })
+            Set(op, "NOP", AddrMode.Implied, Op.Nop, Access.None);
+
+        foreach (var op in new[] { 0x80, 0x82, 0x89, 0xC2, 0xE2 })
+            Set(op, "NOP", AddrMode.Immediate, Op.NopRead, Access.Read);
+
+        foreach (var op in new[] { 0x04, 0x44, 0x64 })
+            Set(op, "NOP", AddrMode.ZeroPage, Op.NopRead, Access.Read);
+
+        foreach (var op in new[] { 0x14, 0x34, 0x54, 0x74, 0xD4, 0xF4 })
+            Set(op, "NOP", AddrMode.ZeroPageX, Op.NopRead, Access.Read);
+
+        Set(0x0C, "NOP", AddrMode.Absolute, Op.NopRead, Access.Read);
+
+        foreach (var op in new[] { 0x1C, 0x3C, 0x5C, 0x7C, 0xDC, 0xFC })
+            Set(op, "NOP", AddrMode.AbsoluteX, Op.NopRead, Access.Read);
+
+        // ---- Undocumented: combination read-modify-writes -----------------------
+        // All six share one addressing set. Every indexed form pays the page-cross
+        // fixup unconditionally, because read-modify-write always does.
+        void SetCombo(string mnemonic, Op operation, int zpX, int zp, int abs,
+                      int zpYIndirect, int zeroPageX, int absY, int absX)
+        {
+            Set(zpX,         mnemonic, AddrMode.IndexedIndirect, operation, Access.ReadModifyWrite);
+            Set(zp,          mnemonic, AddrMode.ZeroPage,        operation, Access.ReadModifyWrite);
+            Set(abs,         mnemonic, AddrMode.Absolute,        operation, Access.ReadModifyWrite);
+            Set(zpYIndirect, mnemonic, AddrMode.IndirectIndexed, operation, Access.ReadModifyWrite);
+            Set(zeroPageX,   mnemonic, AddrMode.ZeroPageX,       operation, Access.ReadModifyWrite);
+            Set(absY,        mnemonic, AddrMode.AbsoluteY,       operation, Access.ReadModifyWrite);
+            Set(absX,        mnemonic, AddrMode.AbsoluteX,       operation, Access.ReadModifyWrite);
+        }
+
+        SetCombo("SLO", Op.Slo, 0x03, 0x07, 0x0F, 0x13, 0x17, 0x1B, 0x1F);
+        SetCombo("RLA", Op.Rla, 0x23, 0x27, 0x2F, 0x33, 0x37, 0x3B, 0x3F);
+        SetCombo("SRE", Op.Sre, 0x43, 0x47, 0x4F, 0x53, 0x57, 0x5B, 0x5F);
+        SetCombo("RRA", Op.Rra, 0x63, 0x67, 0x6F, 0x73, 0x77, 0x7B, 0x7F);
+        SetCombo("DCP", Op.Dcp, 0xC3, 0xC7, 0xCF, 0xD3, 0xD7, 0xDB, 0xDF);
+        SetCombo("ISC", Op.Isc, 0xE3, 0xE7, 0xEF, 0xF3, 0xF7, 0xFB, 0xFF);
+
+        // ---- Undocumented: LAX and SAX -----------------------------------------
+        Set(0xA3, "LAX", AddrMode.IndexedIndirect, Op.Lax, Access.Read);
+        Set(0xA7, "LAX", AddrMode.ZeroPage,        Op.Lax, Access.Read);
+        Set(0xAF, "LAX", AddrMode.Absolute,        Op.Lax, Access.Read);
+        Set(0xB3, "LAX", AddrMode.IndirectIndexed, Op.Lax, Access.Read);
+        Set(0xB7, "LAX", AddrMode.ZeroPageY,       Op.Lax, Access.Read);
+        Set(0xBF, "LAX", AddrMode.AbsoluteY,       Op.Lax, Access.Read);
+
+        Set(0x83, "SAX", AddrMode.IndexedIndirect, Op.Sax, Access.Write);
+        Set(0x87, "SAX", AddrMode.ZeroPage,        Op.Sax, Access.Write);
+        Set(0x8F, "SAX", AddrMode.Absolute,        Op.Sax, Access.Write);
+        Set(0x97, "SAX", AddrMode.ZeroPageY,       Op.Sax, Access.Write);
+
+        // ---- Undocumented: immediate oddballs ----------------------------------
+        Set(0x0B, "ANC", AddrMode.Immediate, Op.Anc, Access.Read);
+        Set(0x2B, "ANC", AddrMode.Immediate, Op.Anc, Access.Read);
+        Set(0x4B, "ALR", AddrMode.Immediate, Op.Alr, Access.Read);
+        Set(0x6B, "ARR", AddrMode.Immediate, Op.Arr, Access.Read);
+        Set(0xCB, "SBX", AddrMode.Immediate, Op.Sbx, Access.Read);
+        Set(0xEB, "SBC", AddrMode.Immediate, Op.Sbc, Access.Read);   // duplicate of $E9
+
+        // ---- Undocumented: unstable -------------------------------------------
+        Set(0x8B, "ANE", AddrMode.Immediate,       Op.Ane, Access.Read);
+        Set(0xAB, "LXA", AddrMode.Immediate,       Op.Lxa, Access.Read);
+        Set(0xBB, "LAS", AddrMode.AbsoluteY,       Op.Las, Access.Read);
+        Set(0x93, "SHA", AddrMode.IndirectIndexed, Op.Sha, Access.Write);
+        Set(0x9F, "SHA", AddrMode.AbsoluteY,       Op.Sha, Access.Write);
+        Set(0x9B, "TAS", AddrMode.AbsoluteY,       Op.Tas, Access.Write);
+        Set(0x9C, "SHY", AddrMode.AbsoluteX,       Op.Shy, Access.Write);
+        Set(0x9E, "SHX", AddrMode.AbsoluteY,       Op.Shx, Access.Write);
+
+        // ---- Undocumented: JAM ------------------------------------------------
+        // These halt the processor until reset.
+        foreach (var op in new[] { 0x02, 0x12, 0x22, 0x32, 0x42, 0x52,
+                                   0x62, 0x72, 0x92, 0xB2, 0xD2, 0xF2 })
+            Set(op, "JAM", AddrMode.Implied, Op.Jam, Access.None);
 
         return t;
     }

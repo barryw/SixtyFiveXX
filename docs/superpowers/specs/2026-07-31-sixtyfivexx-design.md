@@ -55,7 +55,9 @@ removes the notice.
 | --- | --- | --- |
 | Accuracy model | Bus-accurate, cycle-stepped | Superset of cycle counting; the only design that passes per-cycle suites or can later drive a real machine |
 | Dispatch | Micro-op table, interpreted | One declarative source of truth per variant; no codegen; JIT compiles the tick switch to a jump table |
-| Bus abstraction | `Cpu<TBus> where TBus : struct, IBus` | JIT specializes and inlines every bus access — no virtual call on the hottest path |
+| Bus abstraction | `Cpu<TBus, TVariant> where TBus : struct, IBus` | JIT specializes and inlines every bus access — no virtual call on the hottest path |
+| Variant dispatch | `TVariant : struct, ICpuVariant` with static abstract members | `if (TVariant.CmosDecimal)` folds to a compile-time constant, so the dead branch is eliminated — a 6502 pays nothing for the 65C02's differences, and one engine serves every core |
+| Optimization timing | After all cores land | One shared engine means each optimization is written once and benefits every variant. Optimizing against a 6502-only shape risks choices the 65816 cannot use |
 | Licence | MIT | GPL-3.0 sim6502 can consume it; so can anyone else |
 | Packaging | Own repo, NuGet package | Independently versioned and testable; reusable |
 | Variant order | 6502 → 65C02 → 6510 → 65816 | Each certified before the next begins |
@@ -91,11 +93,33 @@ public interface IBus
     void Write(int address, byte value);
 }
 
-public sealed class Cpu<TBus> where TBus : struct, IBus
+public interface ICpuVariant
+{
+    static abstract bool CmosDecimal { get; }        // 65C02 corrects N/Z and costs a cycle
+    static abstract bool FixedJmpIndirect { get; }   // 65C02 fixes the NMOS JMP ($xxFF) bug
+    static abstract bool ClearsDecimalOnInterrupt { get; }
+    static abstract bool HasIoPort { get; }          // 6510's on-chip $00/$01 registers
+    static abstract bool SixteenBit { get; }         // 65816 native mode
+}
+
+public sealed class Cpu<TBus, TVariant>
+    where TBus : struct, IBus
+    where TVariant : struct, ICpuVariant
 ```
 
-A `struct` type parameter makes the JIT emit a specialized `Cpu<TBus>` per bus type, so
-bus accesses inline to direct array indexing. Consumers name their bus type.
+A `struct` type parameter makes the JIT emit a specialized `Cpu<TBus, TVariant>` per
+combination, so bus accesses inline to direct array indexing **and** every
+variant-dependent branch folds to a compile-time constant. `if (TVariant.CmosDecimal)`
+costs an NMOS 6502 nothing at all — the branch and its body are eliminated before the
+code ever runs.
+
+This is what makes a single engine viable across five cores. Every optimization in the
+performance pass (§10, phase 7) is written once against this engine and benefits all of
+them, which is the whole reason variant selection is a type parameter rather than a
+field.
+
+Consumers who choose a core at runtime go through a non-generic facade; the facade's
+methods are per-*run*, never per-cycle, so the hot loop stays inside the generic type.
 
 Shipped buses:
 
@@ -149,7 +173,15 @@ vectors check every one:
 | `Mos6502` | NMOS baseline. All 105 undocumented opcodes, including the unstable `ANE`/`LXA`/`TAS`/`SHA`/`SHX`/`SHY` magic-constant behaviour. BCD `ADC`/`SBC` with real, undefined N/V/Z. |
 | `Mos6510` | 6502 plus the on-chip `$00` DDR and `$01` port registers. These are CPU registers, so they live in the **core**, not in a bus. |
 | `Wdc65C02` | New opcodes; `JMP ($xxFF)` page-wrap bug fixed; `D` cleared on interrupt; corrected BCD flags at the cost of one cycle; per-opcode NOP timing table. Sub-flags: `Rockwell` (`RMB`/`SMB`/`BBR`/`BBS`), `Wdc` (adds `WAI`/`STP`), `Synertek`. Harte tests these three separately. |
-| `W65C816` | 16-bit `A`/`X`/`Y`, `M`/`X`/`E` mode bits, 24-bit addressing, `DBR`/`PBR`/`DP`, `MVN`/`MVP` block moves, `COP`, and the extra cycle when the direct-page low byte is non-zero. A near-separate opcode table on the same engine. |
+| `W65C816` | 16-bit `A`/`X`/`Y`, `M`/`X`/`E` mode bits, 24-bit addressing, `DBR`/`PBR`/`DP`, `MVN`/`MVP` block moves, `COP`, and the extra cycle when the direct-page low byte is non-zero. Its own opcode table on the **same** engine and the same tick loop. |
+
+`CpuState` carries 16-bit `A`/`X`/`Y` plus the bank and direct-page registers for every
+variant; the 8-bit cores use only the low bytes, and `TVariant.SixteenBit` folds away the
+mode checks they never take. This costs the 8-bit cores a slightly larger state struct in
+exchange for one engine, one tick loop, and one place to optimize. Whether that trade
+holds is a measurement for phase 7, not an assumption — if the wider state measurably
+hurts the 8-bit cores, the fallback is a separate `Cpu816` sharing the same building
+blocks.
 
 ### 5.5 Public API surface
 
@@ -306,21 +338,33 @@ our source.
 
 Each phase is gated by green suites, not by a subjective sense of completion.
 
-| # | Deliverable | Gate |
-| --- | --- | --- |
-| 1 | Micro-op engine, `IBus`, `FlatBus`, 6502 legal opcodes | Harte 6502 legal-opcode subset |
-| 2 | Undocumented opcodes; interrupts, RDY, SO | **Full** Harte 6502; Klaus functional; Bruce Clark |
-| 3 | Disassembler; sim6502 adapter | **sim6502 swaps over.** Its own suite green; `sim6502/Proc/` deleted |
-| 4 | 65C02, three sub-variants | Harte 65c02 ×3; Klaus 65C02 extended |
-| 5 | 6510 core (`$00`/`$01` port) | Wolfgang Lorenz suite |
-| 6 | Personality contract; C64 personality | Differential vs VICE and Ultimate64 |
-| 7 | 65816 | Harte 65816 |
+| # | Deliverable | Gate | Status |
+| --- | --- | --- | --- |
+| 1 | Micro-op engine, `IBus`, `FlatBus`, 6502 legal opcodes | Harte 6502 legal-opcode subset | **Complete** — 1,510,000 vectors |
+| 2 | `ICpuVariant` refactor; undocumented opcodes; interrupts, RDY, SO | **Full** Harte 6502 (all 256); Klaus functional; Bruce Clark | |
+| 3 | Disassembler; sim6502 adapter | **sim6502 swaps over.** Its own suite green; `sim6502/Proc/` deleted | |
+| 4 | 65C02, three sub-variants | Harte 65c02 ×3; Klaus 65C02 extended | |
+| 5 | 6510 core (`$00`/`$01` port) | Wolfgang Lorenz suite | |
+| 6 | 65816 | Harte 65816 | |
+| 7 | **Performance pass across all cores** | Every optimization: a measured delta **and** every Harte suite still green | |
+| 8 | Personality contract; C64 personality | Differential vs VICE and Ultimate64 | |
 
-Phase 3 is the point at which the current emulator is replaced. Nothing before it depends
-on personalities, and nothing in phases 1–5 is blocked by them.
+**Why the performance pass is phase 7 and not earlier.** All five cores share one engine,
+so an optimization written against that engine benefits every variant at once. Optimizing
+before the cores exist risks shapes the 65816 cannot use, and would mean re-validating
+each change against test suites that do not exist yet. Correctness first, across every
+core, then one pass that lifts all of them.
+
+The phase 7 rule is absolute: **no optimization ships without both a measured improvement
+and a green run of every conformance suite the project has by then.** A change that is
+faster and wrong is a regression.
+
+Phase 3 is the point at which the current emulator is replaced. It stays early
+deliberately — it puts a real consumer against the public API before four more cores are
+built on top of it, so API problems surface while they are still cheap.
 
 Apple IIe, NES, and Apple IIgs personalities are follow-on work against the contract
-frozen in phase 6, and are out of scope for this spec.
+frozen in phase 8, and are out of scope for this spec.
 
 ## 11. Risks
 
@@ -330,4 +374,6 @@ frozen in phase 6, and are out of scope for this spec.
 | Unstable NMOS opcodes (`ANE`, `LXA`, `TAS`) are genuinely analogue and vary by chip | Match the magic constants Harte's vectors encode; document that these are undefined on real silicon. |
 | Harte data size (~1 GB) makes CI slow | Cached between runs; conformance is a separate CI stage from unit tests. |
 | VIC-II timing is deep enough to become its own project | Fidelity is capped at what the CPU can observe (§8.1). Differential testing against VICE bounds the work: match, or find the specific divergence. |
-| 65816 diverges enough to strain the shared engine | It is last, deliberately. If the engine cannot carry it cleanly, it gets its own opcode table on the same micro-op loop — which the flat table design already permits. |
+| 65816 diverges enough to strain the shared engine | It is the last core, deliberately. It gets its own opcode table on the same micro-op loop, which the flat table design already permits, and `CpuState` is widened for every variant so the tick loop needs no special case. If the wider state measurably costs the 8-bit cores in phase 7, the fallback is a separate `Cpu816` sharing the same building blocks. |
+| Deferring optimization until phase 7 leaves a slow core in front of a real consumer (phase 3) | The phase 1 baseline is already ~230 MHz simulated with zero allocations — roughly 230× a real C64. sim6502 measures cycle counts, not wall time, so speed is a convenience there, not a requirement. Nothing is blocked by waiting. |
+| A phase 7 optimization silently breaks a core whose suite is slower to run | The rule is a green run of *every* suite per change, not a sampled subset. The suites are already wired as separate CI stages precisely so this stays affordable. |

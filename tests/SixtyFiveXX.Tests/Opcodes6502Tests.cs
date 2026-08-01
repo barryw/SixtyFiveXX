@@ -12,10 +12,10 @@ public class Opcodes6502Tests
     }
 
     [Fact]
-    public void Table_DefinesExactlyOneHundredFiftyOneLegalOpcodes()
+    public void Table_DefinesTheExpectedNumberOfOpcodes()
     {
         var legal = Opcodes6502.Table.Count(e => e.Operation != Op.Undefined);
-        Assert.Equal(151, legal);
+        Assert.Equal(256, legal);
     }
 
     [Theory]
@@ -41,10 +41,12 @@ public class Opcodes6502Tests
     }
 
     [Fact]
-    public void Table_MarksUndocumentedOpcodesAsUndefined()
+    public void Table_DefinesEveryOpcode()
     {
-        // $02 is one of the NMOS JAM opcodes; Phase 1 does not implement it.
-        Assert.Equal(Op.Undefined, Opcodes6502.Table[0x02].Operation);
-        Assert.Equal(AddrMode.Undefined, Opcodes6502.Table[0x02].Mode);
+        for (var opcode = 0; opcode < 256; opcode++)
+        {
+            Assert.True(Opcodes6502.Table[opcode].Operation != Op.Undefined,
+                $"Opcode ${opcode:X2} is still undefined.");
+        }
     }
 }

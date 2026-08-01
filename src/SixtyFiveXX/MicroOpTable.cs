@@ -113,6 +113,14 @@ internal sealed class MicroOpTable
             return;
         }
 
+        if (info.Operation == Op.Jam)
+        {
+            // Cycle 2 is a dummy read at PC; every cycle after that is held by JamHold,
+            // which never advances the sequence position.
+            ops.AddRange([MicroOp.ImpliedDummy, MicroOp.JamHold]);
+            return;
+        }
+
         if (info.Mode is AddrMode.Implied or AddrMode.Accumulator)
         {
             ops.Add(MicroOp.ImpliedExec);
@@ -122,6 +130,23 @@ internal sealed class MicroOpTable
         if (info.Mode == AddrMode.Immediate)
         {
             ops.Add(MicroOp.ImmExec);
+            return;
+        }
+
+        // The unstable stores form their address like a normal indexed write, but the
+        // fixup cycle also folds the stored value into the address's high byte on a
+        // page cross. Each addressing mode builds its own prefix; note that $93 is
+        // (zp),Y and so fetches a pointer first, while the rest are absolute-indexed.
+        if (info.Operation is Op.Sha or Op.Shx or Op.Shy or Op.Tas)
+        {
+            if (info.Mode == AddrMode.IndirectIndexed)
+                ops.AddRange([MicroOp.FetchAddrLo, MicroOp.PtrReadLo, MicroOp.PtrReadHiY]);
+            else if (info.Mode == AddrMode.AbsoluteX)
+                ops.AddRange([MicroOp.FetchAddrLo, MicroOp.FetchAddrHiX]);
+            else
+                ops.AddRange([MicroOp.FetchAddrLo, MicroOp.FetchAddrHiY]);
+
+            ops.AddRange([MicroOp.UnstableStoreFixup, MicroOp.ExecWrite]);
             return;
         }
 
