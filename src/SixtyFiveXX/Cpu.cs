@@ -568,10 +568,13 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
                 break;
 
             case MicroOp.VectorLo:
-                // An NMI that arrives before the vector is read hijacks the sequence in
-                // progress: the pushes already happened with whatever B flag the original
-                // interrupt used, but control lands in the NMI handler.
-                if (_nmiPending && _vector != NmiVector)
+                // An NMI that arrives before the vector is read hijacks the BRK or IRQ
+                // sequence in progress: the pushes already happened with whatever B flag
+                // the original interrupt used, but control lands in the NMI handler. Only
+                // an IRQ-vectored sequence can be hijacked — reset outranks NMI on real
+                // hardware, and an NMI already in progress must leave a later latch alone
+                // so it can fire again.
+                if (_nmiPending && _vector == IrqVector)
                 {
                     _nmiPending = false;
                     _vector = NmiVector;

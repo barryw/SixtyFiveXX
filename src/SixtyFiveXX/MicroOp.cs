@@ -146,7 +146,11 @@ internal enum MicroOp : byte
     /// <summary>Write(0x100 + S, P) with B clear; S--; set I.</summary>
     PushPInt,
 
-    /// <summary>tmp = Read(vector).</summary>
+    /// <summary>
+    /// If a pending NMI can hijack this sequence (vector is currently the IRQ/BRK
+    /// vector), redirect vector to the NMI vector and consume the latch. Then
+    /// tmp = Read(vector).
+    /// </summary>
     VectorLo,
 
     /// <summary>PC = (Read(vector + 1) &lt;&lt; 8) | tmp.</summary>
