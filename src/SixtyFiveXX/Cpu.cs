@@ -65,6 +65,38 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// <summary>Set by <c>JamHold</c>; cleared only by <see cref="Reset"/>.</summary>
     private bool _jammed;
 
+    /// <summary>Current level on the IRQ pin. Level-sensitive, not latched.</summary>
+    private bool _irqLine;
+
+    /// <summary>Current level on the NMI pin. Tracked to detect a rising edge and for the public <see cref="NmiAsserted"/> readback.</summary>
+    private bool _nmiLine;
+
+    /// <summary>
+    /// Latched by a rising edge on NMI and cleared when the interrupt is serviced — by
+    /// <see cref="FetchOpcode"/> dispatching it at an instruction boundary, by
+    /// <c>MicroOp.PushPBrk</c> or <c>MicroOp.PushPInt</c> hijacking a BRK or IRQ sequence
+    /// already in flight, or by <see cref="Reset"/>. NMI is edge-triggered, so this
+    /// survives the line going low again and holding it high does not produce a second
+    /// interrupt.
+    /// </summary>
+    private bool _nmiPending;
+
+    /// <summary>Level on the RDY pin. Low halts the processor on read cycles.</summary>
+    private bool _rdy = true;
+
+    /// <summary>
+    /// Interrupt poll result, recomputed at the start of every cycle that continues an
+    /// in-progress instruction — except a fetch cycle, which only reads this, and a cycle
+    /// held by RDY, which returns before reaching the assignment; both leave the prior
+    /// value untouched. At an instruction boundary this therefore holds the value from the
+    /// start of the final cycle, the same instant a real 6502 samples during phase 2 of the
+    /// penultimate cycle. True when either an NMI is latched or IRQ is asserted with
+    /// <c>I</c> clear; NMI is never blocked by <c>I</c>. Forced false on
+    /// <c>MicroOp.VectorHi</c>, which is the recognition blackout at the end of an
+    /// interrupt sequence — see <see cref="Tick"/>.
+    /// </summary>
+    private bool _intPoll;
+
     /// <summary>Creates a core over the given bus.</summary>
     public Cpu(TBus bus)
     {
@@ -96,18 +128,104 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// <summary>The bus. Exposed so a caller holding only the CPU can reach its memory.</summary>
     public ref TBus Bus => ref _bus;
 
-    /// <summary>Advances the core by one clock cycle.</summary>
+    /// <summary>True while the IRQ pin is asserted. Level-sensitive: reflects the current pin level.</summary>
+    public bool IrqAsserted => _irqLine;
+
+    /// <summary>
+    /// Drives the IRQ pin. The line is level-sensitive: while it is held asserted and the
+    /// interrupt-disable flag is clear, an interrupt is taken at each instruction boundary.
+    /// </summary>
+    public void SetIrq(bool asserted) => _irqLine = asserted;
+
+    /// <summary>
+    /// True while the NMI pin is asserted. This reflects the current line level, not the
+    /// edge-triggered pending latch — <see cref="NmiAsserted"/> returning <c>false</c> does
+    /// not mean no NMI is pending.
+    /// </summary>
+    public bool NmiAsserted => _nmiLine;
+
+    /// <summary>
+    /// Drives the NMI pin. NMI is edge-triggered: only a low-to-high transition latches an
+    /// interrupt, and that latch survives the line being released. Holding the line high
+    /// produces exactly one interrupt, not a stream of them.
+    /// </summary>
+    public void SetNmi(bool asserted)
+    {
+        if (asserted && !_nmiLine) _nmiPending = true;
+        _nmiLine = asserted;
+    }
+
+    /// <summary>The current level on the RDY pin. True means the processor runs freely.</summary>
+    public bool Ready => _rdy;
+
+    /// <summary>
+    /// Drives the RDY pin. Pulling it low halts the processor on its next read cycle; a
+    /// write already in progress completes. A halted processor keeps performing one bus
+    /// read per cycle rather than going silent, which is the basic shape of how a video
+    /// chip steals cycles without disturbing the CPU's state — but the address driven on a
+    /// halted cycle is not guaranteed to be the address the pending micro-op would have
+    /// used; see the <c>ponytail:</c> note at the halted read in <see cref="Tick"/>.
+    /// </summary>
+    public void SetRdy(bool ready) => _rdy = ready;
+
+    /// <summary>
+    /// Pulses the SO pin, setting the overflow flag. Nothing clears it but an instruction
+    /// that writes V.
+    /// </summary>
+    public void SetSo() => _s.V = true;
+
+    /// <summary>
+    /// Advances the core by one clock cycle — or, while RDY is held low on a read cycle,
+    /// re-drives the address bus without otherwise advancing.
+    /// </summary>
     public void Tick()
     {
         _cycles++;
 
+        if (!_rdy && !IsWriteCycleNext())
+        {
+            // Halted: re-drive the address bus without advancing. One access, as always.
+            // A cycle skipped this way never reaches the poll below, so a halt mid-
+            // instruction leaves _intPoll holding whatever the last live cycle computed —
+            // exactly as if the clock itself had stopped, which is what RDY models.
+            // ponytail: _addr is only the right address for the minority of read micro-ops
+            // that actually read it (ReadExec, RmwRead, ReadPageCross, DummyReadFixup,
+            // UnstableStoreFixup, ZpIndex*). Every other read micro-op — PC, stack, pointer
+            // or vector reads — gets _addr's stale value here instead of its own, which is
+            // a real hazard on a bus with read side effects. No test pins the halted
+            // address yet. Upgrade path: derive the pending micro-op's true read address
+            // (a switch mirroring Execute) instead of hard-coding _addr.
+            _bus.Read(_mpc < 0 ? _s.PC : _addr);
+            return;
+        }
+
         if (_mpc < 0)
         {
+            // A fetch cycle does no polling of its own: it consults whatever _intPoll
+            // was left holding by the instruction that just finished (see below), the
+            // same instant real hardware samples during phase 2 of the penultimate cycle.
             FetchOpcode();
             return;
         }
 
         var micro = _ops[_mpc];
+
+        // Poll before this cycle's own work. When this is the last cycle of the
+        // instruction, the value computed here — using register state from before this
+        // cycle's Execute — is what the next fetch cycle above will act on. This is what
+        // makes CLI delay a pending IRQ by one instruction while SEI fails to block one,
+        // with no special case for either: the flag write and the poll simply land in the
+        // same cycle for CLI/SEI, and the poll happens first. NMI is never blocked by I.
+        _intPoll = _nmiPending || (_irqLine && !_s.I);
+
+        // Interrupt-recognition blackout. VectorHi is the final cycle of every BRK,
+        // IRQ, NMI and reset sequence, and hardware cannot recognise a new interrupt
+        // there: node 1368 is held grounded from T5 phase 2 through T0 phase 1, so
+        // stage-1 recognition is deferred to T1 phase 1 of the handler's first
+        // instruction. The guarantee that falls out of it is the visible one — at least
+        // one handler instruction always executes before another interrupt is serviced.
+        if (micro == MicroOp.VectorHi) _intPoll = false;
+
         _mpc++;
         Execute(micro);
 
@@ -117,6 +235,9 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
         if (_mpc >= 0 && _ops[_mpc] == MicroOp.End) _mpc = -1;
     }
 
+    /// <summary>True when the cycle about to run is a write. RDY cannot halt a write.</summary>
+    private bool IsWriteCycleNext() => _mpc >= 0 && MicroOps.IsWriteCycle(_ops[_mpc]);
+
     /// <summary>
     /// Begins a hardware reset. The sequence takes seven cycles; drive it with
     /// <see cref="Step"/> or seven calls to <see cref="Tick"/>.
@@ -124,10 +245,30 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// <remarks>
     /// Reset does not clear the registers. Real hardware leaves A, X, Y and most of P
     /// undisturbed; it sets I, decrements S three times, and loads PC from $FFFC.
+    /// <para>
+    /// It does discard a pending NMI. A reset runs a BRK on this die — RESG high
+    /// substitutes BRK into the instruction register — and that BRK clears NMI stage 1
+    /// (<c>~NMIG</c>) at T0 phase 1 unconditionally. The NMI <em>line level</em> is left
+    /// alone: the edge detector compares against it, so clearing it would re-arm on a pin
+    /// that never moved and manufacture a phantom interrupt.
+    /// </para>
+    /// <para>
+    /// This implementation clears the latch at the moment <c>Reset()</c> is called, not at
+    /// the reset sequence's seventh cycle where hardware actually clears it. The two differ
+    /// only for an NMI edge the host asserts during the seven cycles the reset sequence is
+    /// running.
+    /// </para>
     /// </remarks>
     public void Reset()
     {
         _s.I = true;
+        // ponytail: hardware clears ~NMIG at T0 phase 1 — the reset's seventh cycle — not
+        // when RES is first pulled. The two differ only for an NMI edge the host asserts
+        // during those seven cycles: hardware discards or defers it, this keeps it. That
+        // needs a reset-only micro-op to model, since VectorHi is shared with BRK/IRQ/NMI
+        // where an unconditional clear would change other behaviour. Not worth it for a
+        // seven-cycle window that requires moving the NMI pin mid-reset.
+        _nmiPending = false;
         _vector = ResetVector;
         _mpc = _table.ResetEntry;
         _jammed = false;
@@ -137,6 +278,11 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// <summary>
     /// Runs to the next instruction boundary, or returns early if the processor jams.
     /// </summary>
+    /// <remarks>
+    /// Nothing inside this loop can release a held RDY line, so it never returns while
+    /// RDY is expected to stay low on a read cycle. A caller driving RDY must step the
+    /// processor with <see cref="Tick"/> or <see cref="Run"/> instead.
+    /// </remarks>
     /// <returns>The number of cycles consumed.</returns>
     public long Step()
     {
@@ -177,6 +323,12 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// </summary>
     /// <param name="stop">Evaluated at each instruction boundary, never mid-instruction.</param>
     /// <param name="maxCycles">A ceiling, so a runaway program cannot hang the caller.</param>
+    /// <remarks>
+    /// Calls <see cref="Step"/> internally and so inherits the same hazard: nothing in
+    /// here can release a held RDY line, so it never returns while RDY is expected to
+    /// stay low on a read cycle. A caller driving RDY must step the processor with
+    /// <see cref="Tick"/> or <see cref="Run"/> instead.
+    /// </remarks>
     /// <returns>The number of cycles consumed.</returns>
     public long RunUntil(Func<Cpu<TBus>, bool> stop, long maxCycles = long.MaxValue)
     {
@@ -195,6 +347,31 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
 
     private void FetchOpcode()
     {
+        if (_intPoll)
+        {
+            // Take the interrupt instead of an instruction. Hardware spends two cycles
+            // reading (and discarding) PC before the pushes begin, mirroring BRK's opcode
+            // fetch plus its signature-byte pad; this read supplies the first of the two,
+            // and IrqEntry's own IntDummy supplies the second, so entry is at the
+            // sequence's start, not past it. Reset() has no opcode to fetch and so cannot
+            // rely on this free read — see MicroOpTable.ResetEntry, which spells out both
+            // dummy reads itself.
+            _bus.Read(_s.PC);
+            // NMI outranks IRQ, and servicing it consumes the latch. IRQ is level-sensitive
+            // and so needs no clearing — it fires again next boundary if still asserted.
+            if (_nmiPending)
+            {
+                _nmiPending = false;
+                _vector = NmiVector;
+            }
+            else
+            {
+                _vector = IrqVector;
+            }
+            _mpc = _table.IrqEntry;
+            return;
+        }
+
         var pc = _s.PC;
         var opcode = _bus.Read(pc);
         _s.PC++;
@@ -468,22 +645,61 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
                 break;
 
             case MicroOp.PushPBrk:
+                // BRK's own vector, chosen before the hijack test below can override it.
+                _vector = IrqVector;
+                // The vector is committed here, on cycle 5 of the sequence — real silicon
+                // decides at T5 phase 1, because this cycle *forms* the vector-low address
+                // that appears on the pins in cycle 6, and a dedicated transistor chain
+                // (~VEC, pipe~VEC, 1578, 1368) then blocks NMI recognition through the rest
+                // of the sequence so no mixed $FFFE/$FFFA vector can occur. A latched NMI
+                // therefore hijacks the BRK in progress: the pushes already happened with
+                // BRK's own B flag set, but control lands in the NMI handler.
+                //
+                // No vector guard is needed here, unlike PushPInt: this micro-op is emitted
+                // only by BRK, so _vector was just set to IrqVector above, and neither the
+                // reset sequence nor a hardware-interrupt sequence ever executes it.
+                //
+                // Testing before the write matters: it reads the latch as of the start of
+                // the cycle, so a bus-side-effect NMI raised by this very write cannot be
+                // seen — the same reason _intPoll is computed before Execute.
+                //
+                // CMOS note (for the future CpuVariant work): the 65C02 family removed this
+                // anomaly entirely — no hijack at all. Keeping the decision inside the
+                // P-push micro-op lets a CMOS table emit a different one without touching
+                // Tick, VectorLo or the sequence layout.
+                if (_nmiPending)
+                {
+                    _nmiPending = false;
+                    _vector = NmiVector;
+                }
                 _bus.Write(0x0100 + _s.S, (byte)(_s.P | Flag.B | Flag.U));
                 _s.S--;
                 _s.I = true;
-                _vector = IrqVector;
                 break;
 
             case MicroOp.PushPInt:
-                // Deliberately does not set _vector (unlike PushPBrk, which always uses
-                // IrqVector): IRQ needs IrqVector but NMI needs NmiVector, and only the
-                // Phase 2 dispatcher that invokes this sequence knows which one applies.
+                // Deliberately does not set _vector: only the dispatcher knows whether
+                // this is an IRQ or an NMI, and they use different vectors. FetchOpcode
+                // sets it before entering this sequence.
+                //
+                // Same cycle-5 vector commit as PushPBrk — see there for the timing and the
+                // CMOS note. Only an IRQ-vectored sequence can be hijacked: the guard keeps
+                // an NMI sequence from consuming a second latch that arrived during its own
+                // run, and refuses a reset sequence for the same reason it always did,
+                // should one ever be routed through this micro-op.
+                if (_nmiPending && _vector == IrqVector)
+                {
+                    _nmiPending = false;
+                    _vector = NmiVector;
+                }
                 _bus.Write(0x0100 + _s.S, (byte)((_s.P | Flag.U) & ~Flag.B));
                 _s.S--;
                 _s.I = true;
                 break;
 
             case MicroOp.VectorLo:
+                // No hijack test here: by this cycle the vector-low address has already
+                // been formed (see PushPBrk). This is the plain read.
                 _tmp = _bus.Read(_vector);
                 break;
 
@@ -498,6 +714,11 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
 
             case MicroOp.JamHold:
                 // The address bus cycles $FFFF, $FFFE, $FFFE, then $FFFF forever.
+                // ponytail: RDY-low during a jam is unmodelled — JamHold isn't a write, so
+                // Tick's halt branch intercepts it first and re-reads _addr instead of
+                // advancing this pattern, freezing _jamPhase instead of continuing the real
+                // bus cycling. No test pins the halted address yet. If that ever matters,
+                // give the halt branch a jammed-aware read (or let JamHold run through RDY).
                 _jammed = true;
                 _bus.Read(_jamPhase switch
                 {

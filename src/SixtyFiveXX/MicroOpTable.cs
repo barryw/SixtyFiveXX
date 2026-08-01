@@ -24,10 +24,12 @@ internal sealed class MicroOpTable
     public readonly OpcodeInfo[] Info;
 
     /// <summary>
-    /// Index of the hardware interrupt sequence in <see cref="Ops"/>. The caller must set
+    /// Index of the hardware interrupt sequence in <see cref="Ops"/>. The dispatcher sets
     /// the CPU's vector field to <c>NmiVector</c> or <c>IrqVector</c> before entering this
-    /// sequence — the sequence itself never sets it, since only the dispatcher knows
-    /// which interrupt is being serviced.
+    /// sequence. The sequence's own <c>PushPInt</c> micro-op may still redirect it once
+    /// more, from <c>IrqVector</c> to <c>NmiVector</c>, if an NMI is latched before that
+    /// cycle — a hijack of the IRQ dispatch already in progress. BRK's own sequence does
+    /// the same in <c>PushPBrk</c>.
     /// </summary>
     public readonly ushort IrqEntry;
 

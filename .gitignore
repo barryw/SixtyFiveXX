@@ -7,3 +7,5 @@ obj/
 BenchmarkDotNet.Artifacts/
 tests/SixtyFiveXX.Conformance/.harte-cache/
 tests/SixtyFiveXX.Conformance/.klaus-cache/
+tests/SixtyFiveXX.Conformance/klaus/*.bin
+tests/SixtyFiveXX.Conformance/klaus/*.lst

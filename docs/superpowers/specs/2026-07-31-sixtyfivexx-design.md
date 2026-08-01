@@ -161,7 +161,8 @@ vectors check every one:
   dummy read instead).
 - IRQ and NMI sampled on the penultimate cycle of an instruction, not at its boundary.
 - NMI edge-latched; IRQ level-sensitive.
-- NMI hijacking a BRK or IRQ sequence when it arrives during vector fetch.
+- NMI hijacking a BRK or IRQ sequence when it is latched before that sequence's fifth
+  cycle, the P push — the cycle on which silicon commits the vector address.
 - `RDY` halting the CPU on read cycles only — writes complete regardless. This is the
   mechanism personalities use for bus stealing.
 - `SO` pin setting the overflow flag.

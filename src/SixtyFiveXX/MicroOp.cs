@@ -6,7 +6,9 @@ namespace SixtyFiveXX;
 /// </summary>
 /// <remarks>
 /// The opcode-fetch cycle is implicit: it is performed by the tick loop, not by a
-/// member of this enum. Sequences therefore describe cycle 2 onward.
+/// member of this enum. Sequences therefore describe cycle 2 onward. Likewise, a cycle
+/// halted by RDY is handled entirely by the tick loop and executes no member of this
+/// enum at all — it re-drives the bus without consulting the sequence.
 /// </remarks>
 internal enum MicroOp : byte
 {
@@ -140,16 +142,32 @@ internal enum MicroOp : byte
     /// <summary>Dummy read at PC. Filler for the hardware interrupt sequence and, twice over, for reset.</summary>
     IntDummy,
 
-    /// <summary>Write(0x100 + S, P) with B set for BRK and clear for IRQ/NMI; S--; set I.</summary>
+    /// <summary>
+    /// BRK's P push. Sets vector to the IRQ/BRK vector, then lets a pending NMI hijack it
+    /// — this is the cycle on which the vector is committed. Write(0x100 + S, P) with B
+    /// set; S--; set I.
+    /// </summary>
     PushPBrk,
 
-    /// <summary>Write(0x100 + S, P) with B clear; S--; set I.</summary>
+    /// <summary>
+    /// A hardware interrupt's P push. Commits the vector on the same cycle as
+    /// <see cref="PushPBrk"/>, but only redirects an IRQ-vectored sequence.
+    /// Write(0x100 + S, P) with B clear; S--; set I.
+    /// </summary>
     PushPInt,
 
-    /// <summary>tmp = Read(vector).</summary>
+    /// <summary>
+    /// tmp = Read(vector). On the BRK/interrupt path the vector was committed on the
+    /// preceding <see cref="PushPBrk"/> or <see cref="PushPInt"/>. The reset sequence has no
+    /// P push — it reaches this micro-op straight from <c>StackDummyReadDec</c> — so there
+    /// the vector was committed directly by <c>Reset()</c> instead.
+    /// </summary>
     VectorLo,
 
-    /// <summary>PC = (Read(vector + 1) &lt;&lt; 8) | tmp.</summary>
+    /// <summary>
+    /// PC = (Read(vector + 1) &lt;&lt; 8) | tmp. The final cycle of every interrupt
+    /// sequence, and the one on which interrupt recognition is blacked out.
+    /// </summary>
     VectorHi,
 
     /// <summary>Sequence terminator. Consumes no cycle.</summary>
@@ -160,4 +178,30 @@ internal enum MicroOp : byte
     /// held, so this micro-op repeats for as long as the clock runs.
     /// </summary>
     JamHold,
+}
+
+/// <summary>Classifies micro-ops by bus direction, for the RDY halt line.</summary>
+internal static class MicroOps
+{
+    private static readonly bool[] Writes = BuildWriteTable();
+
+    /// <summary>True when this micro-op drives a write. RDY does not halt a write cycle.</summary>
+    public static bool IsWriteCycle(MicroOp op) => Writes[(int)op];
+
+    private static bool[] BuildWriteTable()
+    {
+        var writes = new bool[Enum.GetValues<MicroOp>().Length];
+
+        foreach (var op in new[]
+                 {
+                     MicroOp.ExecWrite, MicroOp.RmwModifyWrite, MicroOp.RmwWrite,
+                     MicroOp.PushPch, MicroOp.PushPcl, MicroOp.Push,
+                     MicroOp.PushPBrk, MicroOp.PushPInt,
+                 })
+        {
+            writes[(int)op] = true;
+        }
+
+        return writes;
+    }
 }
