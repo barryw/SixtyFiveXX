@@ -24,7 +24,10 @@ git hooks do not survive a clone, so this is per-machine:
 
     cog install-hook --all
 
-CI runs `cog check` on every push, so a bad message cannot reach `main`.
+This hook is the only real gate. CI's `validate-commits` step runs `cog check`
+too, but falls back to an `echo` on any failure so the step always exits 0 —
+it cannot fail the pipeline. A non-conforming commit will not be caught by CI;
+skip `cog install-hook --all` and a bad message reaches `main` unopposed.
 
 ## Versioning
 

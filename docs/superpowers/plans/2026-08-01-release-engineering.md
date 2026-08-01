@@ -1171,6 +1171,24 @@ These cannot be done from the plan; they need UI access or credentials.
 6. **Land Part B.** The first merge to `main` carrying a `feat:` or `fix:` releases `v0.1.0` — cog's clean-start value for a repo with no tags.
 7. **Watch the first release end to end** and confirm: the tag exists; `Directory.Build.props` on `main` shows the released version; the GitHub Release is public with grouped notes; nuget.org lists the package with both TFMs; and the `.nupkg`/`.snupkg` are attached to the Release.
 
+### Recovering a half-completed release
+
+**Re-running the pipeline is a silent no-op, not a recovery.** `cog bump` finds the
+tag already exists, writes `NONE` to `/woodpecker/version.txt`, and every downstream
+step exits 0 early on that guard — the pipeline goes green while the Release may
+still be an unpublished draft and no package exists. Diagnose the actual state by
+hand before re-running anything:
+
+- **Tag pushed, package published, Release still a draft** — the publish succeeded
+  but `finalize-release` didn't run or didn't complete. Publish it by hand:
+  `gh release edit vX.Y.Z --draft=false --repo barryw/SixtyFiveXX`.
+- **Tag pushed, package never published** — the version number is burned: nuget.org
+  will accept it later, but the tag already claims it, and a re-run will not retry
+  the publish. Either publish the package manually from that tag
+  (`git checkout vX.Y.Z && dotnet pack ... && dotnet nuget push ...`), or delete the
+  tag and the draft Release and let the next merge to `main` redo the release from
+  scratch.
+
 ## Self-review notes
 
 Checked against `docs/superpowers/specs/2026-08-01-ci-and-nuget-design.md`:

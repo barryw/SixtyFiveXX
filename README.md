@@ -6,21 +6,11 @@ Every `Tick()` advances the core by exactly one clock cycle and performs at most
 access, including the dummy reads and dummy writes real silicon performs. Cycle counts
 are not tabulated after the fact — they fall out of doing the work.
 
-## Status
+## Install
 
-| Variant | State | Certified against |
-| --- | --- | --- |
-| 6502, documented opcodes | Complete | Harte SingleStepTests, per-cycle |
-| 6502, undocumented opcodes | Complete | Harte SingleStepTests, per-cycle |
-| 65C02 (Rockwell, Synertek, WDC) | Phase 4 | — |
-| 6510 | Phase 5 | — |
-| 65816 | Phase 7 | — |
+    dotnet add package SixtyFiveXX
 
-IRQ and NMI (hardware-correct sampling, edge latching, and BRK/NMI hijacking), the RDY
-halt line, and the SO pin are complete, alongside `Reset()` and `BRK`.
-
-See `docs/superpowers/specs/` for the design and `docs/superpowers/plans/` for the
-implementation plans.
+Targets `net8.0` and `net10.0`. Zero dependencies.
 
 ## Use
 
@@ -40,6 +30,24 @@ cpu.RunUntil(c => c.State.PC == 0xC000, maxCycles: 50_000);
 memory access. Implement your own `struct` bus for address decoding, or wrap an
 existing `IBus` reference in `RefBus` and pay one virtual call per access.
 
+## Status
+
+| Variant | State | Certified against |
+| --- | --- | --- |
+| 6502, documented opcodes | Complete | Harte SingleStepTests, per-cycle |
+| 6502, undocumented opcodes | Complete | Harte SingleStepTests, per-cycle |
+| 65C02 (Rockwell, Synertek, WDC) | Phase 4 | — |
+| 6510 | Phase 5 | — |
+| 65816 | Phase 7 | — |
+
+IRQ and NMI (hardware-correct sampling, edge latching, and BRK/NMI hijacking), the RDY
+halt line, and the SO pin are complete, alongside `Reset()` and `BRK`.
+
+See [`docs/superpowers/specs/`](https://github.com/barryw/SixtyFiveXX/tree/main/docs/superpowers/specs)
+for the design and
+[`docs/superpowers/plans/`](https://github.com/barryw/SixtyFiveXX/tree/main/docs/superpowers/plans)
+for the implementation plans.
+
 ## Conformance vectors
 
 Vectors from [SingleStepTests/65x02](https://github.com/SingleStepTests/65x02) (MIT) are
@@ -57,4 +65,5 @@ MIT. No ROM images, PLA dumps, or emulator source from other projects are includ
 distributed. A GPL-3.0 **test program** — Klaus Dormann's interrupt test — is committed
 under `tests/SixtyFiveXX.Conformance/klaus/`; it is assembled and executed, not linked
 against or derived from, so its licence does not reach this project's code. See
-`tests/SixtyFiveXX.Conformance/klaus/README.md` for the full argument.
+[`tests/SixtyFiveXX.Conformance/klaus/README.md`](https://github.com/barryw/SixtyFiveXX/blob/main/tests/SixtyFiveXX.Conformance/klaus/README.md)
+for the full argument.
