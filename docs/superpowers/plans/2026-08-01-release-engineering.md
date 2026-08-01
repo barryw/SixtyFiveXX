@@ -328,8 +328,6 @@ steps:
     environment:
       NUGET_KEY:
         from_secret: nuget_api_key
-      GH_TOKEN:
-        from_secret: github_token
     commands:
       - 'VERSION=$(cat /woodpecker/version.txt 2>/dev/null || echo "NONE")'
       - 'test "$VERSION" != "NONE" || { echo "No new version, skipping publish"; exit 0; }'
@@ -338,17 +336,34 @@ steps:
       - 'git checkout "$VERSION"'
       - 'dotnet pack {{.pack_project}} -c Release -o ./artifacts -p:ContinuousIntegrationBuild=true'
       - 'dotnet nuget push "./artifacts/*.nupkg" -k $NUGET_KEY -s https://api.nuget.org/v3/index.json --skip-duplicate'
-      - 'gh release upload "$VERSION" ./artifacts/*.nupkg ./artifacts/*.snupkg --repo "$CI_REPO" --clobber'
-      - 'gh release edit "$VERSION" --draft=false --repo "$CI_REPO"'
     depends_on: [release]
+
+  - name: finalize-release
+    image: ghcr.io/barryw/woodpecker-release:latest
+    pull: true
+    when:
+      - event: push
+        branch: main
+    environment:
+      GH_TOKEN:
+        from_secret: github_token
+    commands:
+      - 'VERSION=$(cat /woodpecker/version.txt 2>/dev/null || echo "NONE")'
+      - 'test "$VERSION" != "NONE" || { echo "No new version, nothing to finalize"; exit 0; }'
+      - '. /plugin/lib/github_release.sh'
+      - 'github_release_upload "$VERSION" ./artifacts/*.nupkg ./artifacts/*.snupkg'
+      - 'github_release_publish "$VERSION"'
+    depends_on: [nuget-publish]
 {{end}}
 ```
 
-Two details that are load-bearing:
+Three details that are load-bearing:
 
 `git checkout "$VERSION"` — the release step created a commit (the stamped `Directory.Build.props`) and a tag. The workspace is still on the pre-bump commit, so packing without checking out the tag would build the *previous* version's files. This is how the tag, the project files and the package are guaranteed to carry the same version.
 
-`gh release edit --draft=false` is the **last** command. Everything that can fail has already succeeded.
+**`finalize-release` runs on the plugin image, not `sdk_image`.** The `gh` CLI is **not** present in `mcr.microsoft.com/dotnet/sdk:10.0` — verified by running it — so calling `gh` from the publish step would fail with `command not found` for any repo using a stock SDK image. The plugin image carries `gh` 2.67.0 and exposes its helpers at `/plugin/lib/*.sh` (`plugin/Dockerfile:31`), so sourcing `github_release.sh` gives this step `github_release_upload` and `github_release_publish` — the same implementations the plugin itself uses, rather than a second hand-rolled copy of the same `gh` invocations.
+
+`github_release_publish` is the **last** command in the pipeline. Everything that can fail has already succeeded, so the Release only becomes public once the package is genuinely on nuget.org.
 
 - [ ] **Step 2: Verify the template renders**
 
@@ -379,7 +394,7 @@ EOF
 go run /tmp/render_test.go
 ```
 
-Expected: both render. **Check by eye:** the minimal output has no `conformance` step and no `nuget-publish` step, and its `release` step has `PLUGIN_DRAFT: "false"`; the maximal output has both steps, `PLUGIN_DRAFT: "true"`, and `depends_on: [validate-commits, test, conformance]`.
+Expected: both render. **Check by eye:** the minimal output has no `conformance`, `nuget-publish` or `finalize-release` step, and its `release` step has `PLUGIN_DRAFT: "false"`; the maximal output has all three, `PLUGIN_DRAFT: "true"`, `depends_on: [validate-commits, test, conformance]` on `release`, and a `finalize-release` step running on `ghcr.io/barryw/woodpecker-release:latest` rather than on `sdk_image`.
 
 - [ ] **Step 3: Verify both renderings are valid YAML**
 
@@ -451,7 +466,7 @@ data:
 In the "Available Templates" table, after the `release-docker` row:
 
 ```markdown
-| `release-dotnet-library` | validate-commits → build → test → [conformance] → release (draft) → nuget-publish | .NET libraries published to NuGet |
+| `release-dotnet-library` | validate-commits → build → test → [conformance] → release (draft) → nuget-publish → finalize-release | .NET libraries published to NuGet |
 ```
 
 - [ ] **Step 3: Add `nuget_api_key` to the secrets table**
@@ -1099,10 +1114,11 @@ python3 -c "import yaml; yaml.safe_load(open('/tmp/rendered.yaml')); print('vali
 
 Then read `/tmp/rendered.yaml` and confirm, by eye:
 
-- `release` and `nuget-publish` both carry `when: event: push, branch: main`.
-- `nuget-publish` has `depends_on: [release]`.
+- `release`, `nuget-publish` and `finalize-release` all carry `when: event: push, branch: main`.
+- `nuget-publish` has `depends_on: [release]`; `finalize-release` has `depends_on: [nuget-publish]`.
 - `release` has `PLUGIN_DRAFT: "true"`.
-- The last command in `nuget-publish` is `gh release edit ... --draft=false`.
+- `finalize-release` runs on `ghcr.io/barryw/woodpecker-release:latest`, **not** on `sdk_image` — the SDK image has no `gh` CLI.
+- The last command in `finalize-release` is `github_release_publish "$VERSION"`.
 - The conformance step runs `klaus/build.sh` before `dotnet test`.
 
 ```bash
