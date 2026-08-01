@@ -68,7 +68,7 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// <summary>Current level on the IRQ pin. Level-sensitive, not latched.</summary>
     private bool _irqLine;
 
-    /// <summary>Current level on the NMI pin. Tracked to detect a rising edge and for the public <see cref="NmiLine"/> readback.</summary>
+    /// <summary>Current level on the NMI pin. Tracked to detect a rising edge and for the public <see cref="NmiAsserted"/> readback.</summary>
     private bool _nmiLine;
 
     /// <summary>
@@ -125,8 +125,8 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// <summary>The bus. Exposed so a caller holding only the CPU can reach its memory.</summary>
     public ref TBus Bus => ref _bus;
 
-    /// <summary>The current level on the IRQ pin.</summary>
-    public bool IrqLine => _irqLine;
+    /// <summary>True while the IRQ pin is asserted. Level-sensitive: reflects the current pin level.</summary>
+    public bool IrqAsserted => _irqLine;
 
     /// <summary>
     /// Drives the IRQ pin. The line is level-sensitive: while it is held asserted and the
@@ -134,8 +134,12 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// </summary>
     public void SetIrq(bool asserted) => _irqLine = asserted;
 
-    /// <summary>The current level on the NMI pin.</summary>
-    public bool NmiLine => _nmiLine;
+    /// <summary>
+    /// True while the NMI pin is asserted. This reflects the current line level, not the
+    /// edge-triggered pending latch — <see cref="NmiAsserted"/> returning <c>false</c> does
+    /// not mean no NMI is pending.
+    /// </summary>
+    public bool NmiAsserted => _nmiLine;
 
     /// <summary>
     /// Drives the NMI pin. NMI is edge-triggered: only a low-to-high transition latches an

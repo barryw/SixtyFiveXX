@@ -153,15 +153,15 @@ public class InterruptTests
     }
 
     [Fact]
-    public void IrqLine_ReportsTheCurrentPinState()
+    public void IrqAsserted_ReportsTheCurrentPinState()
     {
         var (cpu, _) = Machine(0xEA);
 
-        Assert.False(cpu.IrqLine);
+        Assert.False(cpu.IrqAsserted);
         cpu.SetIrq(true);
-        Assert.True(cpu.IrqLine);
+        Assert.True(cpu.IrqAsserted);
         cpu.SetIrq(false);
-        Assert.False(cpu.IrqLine);
+        Assert.False(cpu.IrqAsserted);
     }
 
     [Fact]
@@ -268,14 +268,14 @@ public class InterruptTests
     }
 
     [Fact]
-    public void NmiLine_ReportsTheCurrentPinState()
+    public void NmiAsserted_ReportsTheCurrentPinState()
     {
         var (cpu, _) = Machine(0xEA);
 
-        Assert.False(cpu.NmiLine);
+        Assert.False(cpu.NmiAsserted);
         cpu.SetNmi(true);
-        Assert.True(cpu.NmiLine);
+        Assert.True(cpu.NmiAsserted);
         cpu.SetNmi(false);
-        Assert.False(cpu.NmiLine);
+        Assert.False(cpu.NmiAsserted);
     }
 }
