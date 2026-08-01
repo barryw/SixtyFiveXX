@@ -252,6 +252,12 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// alone: the edge detector compares against it, so clearing it would re-arm on a pin
     /// that never moved and manufacture a phantom interrupt.
     /// </para>
+    /// <para>
+    /// This implementation clears the latch at the moment <c>Reset()</c> is called, not at
+    /// the reset sequence's seventh cycle where hardware actually clears it. The two differ
+    /// only for an NMI edge the host asserts during the seven cycles the reset sequence is
+    /// running.
+    /// </para>
     /// </remarks>
     public void Reset()
     {

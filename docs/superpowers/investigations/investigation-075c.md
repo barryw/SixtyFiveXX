@@ -1,5 +1,16 @@
 # Investigation: Klaus interrupt test traps at `$075C`
 
+> **Superseded in part.** The verdict below still stands — the NMI edge in this sub-test
+> lands before BRK tick 1, at shift 0 in §4's sweep, comfortably inside both the old and
+> the new hijack window, which is why the `$075C` @ 2,721 gate does not move. But §2's
+> cycle trace and §4's timing-sweep table describe `MicroOp.VectorLo` as the hijack site
+> and cite `Cpu.cs` line numbers from before a later fix. The hijack test has since moved
+> one tick earlier, into `MicroOp.PushPBrk` / `MicroOp.PushPInt` (the P-push cycle, before
+> the stack write) — see
+> `docs/superpowers/investigations/investigation-window-and-reset.md` for the evidence and
+> the current site. This file's analysis is not rewritten below; read it as a historical
+> trace of the core as it stood at the time.
+
 **Question.** Is the trap at `$075C` after 2,721 cycles correct behaviour for a faithful
 NMOS 6502 core, or a defect in this core's interrupt timing?
 

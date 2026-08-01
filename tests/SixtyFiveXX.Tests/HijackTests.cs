@@ -108,10 +108,13 @@ public class HijackTests
     }
 
     [Fact]
-    public void NmiArrivingAfterTheVectorReadDoesNotHijack()
+    public void NmiArrivingAfterVectorLowStillDoesNotHijack()
     {
         var (cpu, _) = Machine(0x00, 0xEA);
 
+        // One tick further out than the actual cutoff: NmiArrivingAfterThePushOfPDoesNotHijack
+        // already pins the discriminating edge (the P push, cycle 5). This just confirms the
+        // far side stays put once VectorLo has run too.
         for (var i = 0; i < 6; i++) cpu.Tick();   // through the vector-low read
         cpu.SetNmi(true);
         cpu.Tick();                                // vector high

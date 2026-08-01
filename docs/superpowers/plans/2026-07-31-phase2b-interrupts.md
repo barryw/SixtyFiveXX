@@ -6,8 +6,26 @@
 > (`_mpc >= 0`), not "immediately after `_cycles++`" as Tasks 1 and 4 show it. (2) Dispatch
 > enters at `_table.IrqEntry` with no `+1`, not `IrqEntry + 1` as Tasks 1 and 2 show it. (3)
 > The hijack guard shipped as `_nmiPending && _vector == IrqVector` (Task 3 proposed
-> `_vector != NmiVector`). (4) The feedback port is written-1-asserts, not written-0-asserts
-> as Task 6's `FeedbackBus.Write` snippet has it — see `FeedbackBus.cs`'s own remarks for why.
+> `_vector != NmiVector`) — and a later fix moved it again: that guard now lives only at
+> `MicroOp.PushPInt`; `MicroOp.PushPBrk` needs no guard at all, because it is the only site
+> that assigns `_vector = IrqVector`, so `_vector == IrqVector` would be a tautology there.
+> (4) The feedback port is written-1-asserts, not written-0-asserts as Task 6's
+> `FeedbackBus.Write` snippet has it — see `FeedbackBus.cs`'s own remarks for why.
+>
+> **Errata 2 (the hijack window moved one tick earlier).** Two more statements above no
+> longer describe the shipped hijack test, for the same reason as (3). "The interrupt
+> model" section (line ~57) says NMI hijacks a BRK/IRQ sequence "before the vector is
+> read"; the File Structure table (line ~68) describes the `MicroOpTable.cs` change as an
+> "NMI re-check before the vector read". Both described the window as Task 3 shipped it —
+> the hijack test at `MicroOp.VectorLo`. A later hardware-fidelity fix moved that test one
+> cycle earlier, out of `VectorLo` and into `MicroOp.PushPBrk` and `MicroOp.PushPInt` (the
+> P-push cycle, before the stack write), because real NMOS silicon commits the vector at
+> T5 φ1: the P-push cycle *forms* the vector-low address that the following cycle only
+> reads off the pins. `MicroOp.VectorHi` now also forces `_intPoll = false`, modelling the
+> interrupt-recognition blackout that keeps a late NMI from being recognised until the
+> handler's first instruction. See
+> `docs/superpowers/investigations/investigation-window-and-reset.md` for the evidence and
+> `tests/SixtyFiveXX.Tests/HijackTests.cs` for the tests pinning both edges of the window.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

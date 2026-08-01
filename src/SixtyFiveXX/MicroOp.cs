@@ -156,7 +156,12 @@ internal enum MicroOp : byte
     /// </summary>
     PushPInt,
 
-    /// <summary>tmp = Read(vector). The vector was committed on the preceding P push.</summary>
+    /// <summary>
+    /// tmp = Read(vector). On the BRK/interrupt path the vector was committed on the
+    /// preceding <see cref="PushPBrk"/> or <see cref="PushPInt"/>. The reset sequence has no
+    /// P push — it reaches this micro-op straight from <c>StackDummyReadDec</c> — so there
+    /// the vector was committed directly by <c>Reset()</c> instead.
+    /// </summary>
     VectorLo,
 
     /// <summary>

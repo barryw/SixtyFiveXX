@@ -73,10 +73,10 @@ public class KlausInterruptTests(ITestOutputHelper output)
         // that asserts it — so BRK always starts normally, with the latch already set well
         // before its cycle 5. PushPBrk pushes the status byte with B set and, on that same
         // cycle, hijacks the vector to the NMI handler, leaving B set on the stack. That is
-        // the documented
-        // NMOS BRK/NMI hijack (see docs/superpowers/investigations/investigation-075c.md
-        // for the cycle-level trace and the physically-reachable-timing sweep that rules
-        // out an off-by-one). Klaus's own source calls it out on the trapping line itself
+        // the documented NMOS BRK/NMI hijack (see
+        // docs/superpowers/investigations/investigation-075c.md for the cycle-level trace
+        // and the physically-reachable-timing sweep that rules out an off-by-one).
+        // Klaus's own source calls it out on the trapping line itself
         // (asm 936-937: "unexpected B-flag! - this may fail on a real 6502 / due to a
         // hardware bug on concurrent BRK & NMI") and again eleven lines later, at the
         // very next check the same hijack event trips once this one is neutralised
