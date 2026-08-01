@@ -75,8 +75,9 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// Latched by a rising edge on NMI and cleared when the interrupt is serviced — by
     /// <see cref="FetchOpcode"/> dispatching it at an instruction boundary, by
     /// <c>MicroOp.PushPBrk</c> or <c>MicroOp.PushPInt</c> hijacking a BRK or IRQ sequence
-    /// already in flight. NMI is edge-triggered, so this survives the line going low again
-    /// and holding it high does not produce a second interrupt.
+    /// already in flight, or by <see cref="Reset"/>. NMI is edge-triggered, so this
+    /// survives the line going low again and holding it high does not produce a second
+    /// interrupt.
     /// </summary>
     private bool _nmiPending;
 
@@ -244,10 +245,24 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// <remarks>
     /// Reset does not clear the registers. Real hardware leaves A, X, Y and most of P
     /// undisturbed; it sets I, decrements S three times, and loads PC from $FFFC.
+    /// <para>
+    /// It does discard a pending NMI. A reset runs a BRK on this die — RESG high
+    /// substitutes BRK into the instruction register — and that BRK clears NMI stage 1
+    /// (<c>~NMIG</c>) at T0 phase 1 unconditionally. The NMI <em>line level</em> is left
+    /// alone: the edge detector compares against it, so clearing it would re-arm on a pin
+    /// that never moved and manufacture a phantom interrupt.
+    /// </para>
     /// </remarks>
     public void Reset()
     {
         _s.I = true;
+        // ponytail: hardware clears ~NMIG at T0 phase 1 — the reset's seventh cycle — not
+        // when RES is first pulled. The two differ only for an NMI edge the host asserts
+        // during those seven cycles: hardware discards or defers it, this keeps it. That
+        // needs a reset-only micro-op to model, since VectorHi is shared with BRK/IRQ/NMI
+        // where an unconditional clear would change other behaviour. Not worth it for a
+        // seven-cycle window that requires moving the NMI pin mid-reset.
+        _nmiPending = false;
         _vector = ResetVector;
         _mpc = _table.ResetEntry;
         _jammed = false;

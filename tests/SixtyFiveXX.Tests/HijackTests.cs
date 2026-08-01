@@ -165,10 +165,57 @@ public class HijackTests
         var cycles = cpu.Step();
 
         // RESET outranks NMI on real hardware: PC must load from $FFFC, not get hijacked
-        // to $FFFA. Whether the latch itself survives a reset is a separate question this
-        // project has not settled, so that is deliberately not asserted here.
+        // to $FFFA. Reset_ClearsAPendingNmi covers the latch's own fate.
         Assert.Equal(0x7000, cpu.State.PC);
         Assert.Equal(7, cycles);
+    }
+
+    [Fact]
+    public void Reset_ClearsAPendingNmi()
+    {
+        var (cpu, ram) = Machine(0xEA);
+        ram[0xFFFC] = 0x00; ram[0xFFFD] = 0x70;   // RESET -> $7000
+        ram[0x7000] = 0xEA; ram[0x7001] = 0xEA;   // two instructions at the reset vector
+        cpu.SetNmi(true);                          // latch an NMI before the reset
+
+        cpu.Reset();
+        cpu.Step();                                // the seven-cycle reset sequence
+        Assert.Equal(0x7000, cpu.State.PC);
+
+        // A reset runs a BRK on this die, and that BRK clears NMI stage 1 (~NMIG) at T0
+        // phase 1 unconditionally, so the pre-reset latch is gone. Two instructions must
+        // therefore run untouched: one would prove nothing, because the sequence's own
+        // final-cycle poll blackout defers even a surviving latch by exactly one.
+        cpu.Step();
+        Assert.Equal(0x7001, cpu.State.PC);
+
+        cpu.Step();
+        Assert.Equal(0x7002, cpu.State.PC);
+    }
+
+    [Fact]
+    public void Reset_LeavesTheNmiLineLevelAlone()
+    {
+        var (cpu, ram) = Machine(0xEA);
+        ram[0xFFFC] = 0x00; ram[0xFFFD] = 0x70;
+        ram[0x7000] = 0xEA; ram[0x7001] = 0xEA; ram[0x7002] = 0xEA;
+        cpu.SetNmi(true);
+
+        cpu.Reset();
+
+        // Reset clears the pending latch, never the pin level: the edge detector compares
+        // against this, so clearing it would re-arm on a pin that never moved.
+        Assert.True(cpu.NmiAsserted);
+
+        cpu.Step();                    // reset sequence -> $7000
+        cpu.SetNmi(true);              // the host re-reports the same, still-asserted level
+        cpu.Step(); cpu.Step();
+        Assert.Equal(0x7002, cpu.State.PC);   // no phantom edge, so no dispatch
+
+        cpu.SetNmi(false); cpu.SetNmi(true);  // a genuine new edge
+        cpu.Step();                            // the NOP at $7002; its poll latches
+        cpu.Step();
+        Assert.Equal(0x8000, cpu.State.PC);
     }
 
     [Fact]
