@@ -28,7 +28,7 @@ public class KlausInterruptTests(ITestOutputHelper output)
         AppContext.BaseDirectory, "..", "..", "..", "klaus", "6502_interrupt_test.bin"));
 
     [Fact]
-    public void InterruptTest_RunsToTheSuccessTrap()
+    public void InterruptTest_RunsToTheNmosHijackTrap()
     {
         Assert.True(File.Exists(BinaryPath),
             $"{BinaryPath} is missing. Build it with " +
@@ -73,14 +73,14 @@ public class KlausInterruptTests(ITestOutputHelper output)
         // that asserts it — so BRK always starts normally: PushPBrk pushes the status
         // byte with B set, and only then does VectorLo see the pending NMI and hijack the
         // vector to the NMI handler, leaving B set on the stack. That is the documented
-        // NMOS BRK/NMI hijack (see .superpowers/sdd/investigation-075c.md for the
-        // cycle-level trace and the physically-reachable-timing sweep that rules out an
-        // off-by-one). Klaus's own source calls it out on the trapping line itself
+        // NMOS BRK/NMI hijack (see docs/superpowers/investigations/investigation-075c.md
+        // for the cycle-level trace and the physically-reachable-timing sweep that rules
+        // out an off-by-one). Klaus's own source calls it out on the trapping line itself
         // (asm 936-937: "unexpected B-flag! - this may fail on a real 6502 / due to a
         // hardware bug on concurrent BRK & NMI") and again eleven lines later, at the
         // very next check the same hijack event trips once this one is neutralised
         // (asm 830: "may fail due to a bug on a real NMOS 6502 - NMI could mask BRK"; see
-        // .superpowers/sdd/experiment-past-075c.md). So this trap is not a gap in
+        // docs/superpowers/investigations/experiment-past-075c.md). So this trap is not a gap in
         // coverage: it is the true edge of what a faithful NMOS core can satisfy, and it
         // covers 2,720 of the program's ~2,915 cycles — about 93%. Pinning both the
         // address and the exact cycle count turns that whole prefix into a regression
@@ -88,8 +88,10 @@ public class KlausInterruptTests(ITestOutputHelper output)
         // of these two numbers.
         Assert.True(cpu.State.PC == NmosTrapAddress,
             $"Trapped at ${cpu.State.PC:X4}, expected the NMOS BRK/NMI hijack trap at " +
-            $"${NmosTrapAddress:X4}. The trap address identifies the failing sub-test — " +
-            $"look it up in 6502_interrupt_test.lst.");
+            $"${NmosTrapAddress:X4}, not the nominal success trap at ${SuccessAddress:X4} " +
+            $"— see SuccessAddress's doc comment for why that one is unreachable here. The " +
+            $"trap address identifies the failing sub-test — look it up in " +
+            $"6502_interrupt_test.lst.");
 
         Assert.True(cpu.Cycles == NmosTrapCycles,
             $"Trapped at ${cpu.State.PC:X4} after {cpu.Cycles:N0} cycles, expected " +

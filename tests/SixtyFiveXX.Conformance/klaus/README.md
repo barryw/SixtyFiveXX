@@ -68,11 +68,12 @@ reaches either:
 
 `KlausInterruptTests.cs` asserts the `$075C` trap together with its exact cycle
 count (2,721), so the whole 2,720-cycle prefix — every sub-test before this one —
-remains an exact regression gate. See `.superpowers/sdd/investigation-075c.md` for
-the cycle-level trace and timing sweep behind this, and
-`.superpowers/sdd/experiment-past-075c.md` for confirmation that neutralising just
-the `$075C` check only buys 192 more cycles before the asm-830 check above traps in
-turn.
+remains an exact regression gate. See
+`docs/superpowers/investigations/investigation-075c.md` for the cycle-level trace and
+timing sweep behind this, and
+`docs/superpowers/investigations/experiment-past-075c.md` for confirmation that
+neutralising just the `$075C` check only buys 192 more cycles before the asm-830 check
+above traps in turn.
 
 ## Port notes
 

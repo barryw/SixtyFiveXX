@@ -1,5 +1,14 @@
 # SixtyFiveXX Phase 2b — Interrupts, RDY and SO
 
+> **Errata (post-merge).** Four code snippets below were superseded during implementation
+> or final review; the shipped code, not this plan, is the source of truth. (1) The poll
+> placement: `_intPoll` is assigned only on cycles that continue an in-progress instruction
+> (`_mpc >= 0`), not "immediately after `_cycles++`" as Tasks 1 and 4 show it. (2) Dispatch
+> enters at `_table.IrqEntry` with no `+1`, not `IrqEntry + 1` as Tasks 1 and 2 show it. (3)
+> The hijack guard shipped as `_nmiPending && _vector == IrqVector` (Task 3 proposed
+> `_vector != NmiVector`). (4) The feedback port is written-1-asserts, not written-0-asserts
+> as Task 6's `FeedbackBus.Write` snippet has it — see `FeedbackBus.cs`'s own remarks for why.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Complete the NMOS 6502 as a chip — IRQ and NMI with hardware-correct sampling and edge latching, BRK/NMI hijacking, the RDY halt line, and the SO pin — validated by cycle-exact unit tests and by Klaus Dormann's interrupt test.

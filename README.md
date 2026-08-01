@@ -16,7 +16,8 @@ are not tabulated after the fact — they fall out of doing the work.
 | 6510 | Phase 5 | — |
 | 65816 | Phase 7 | — |
 
-IRQ, NMI, RDY and SO are Phase 2 — the core currently models `Reset()` and `BRK` only.
+IRQ and NMI (hardware-correct sampling, edge latching, and BRK/NMI hijacking), the RDY
+halt line, and the SO pin are complete, alongside `Reset()` and `BRK`.
 
 See `docs/superpowers/specs/` for the design and `docs/superpowers/plans/` for the
 implementation plans.
@@ -46,7 +47,14 @@ downloaded on first use and cached under `tests/SixtyFiveXX.Conformance/.harte-c
 They are never committed. To run offline, clone that repository and set
 `SIXTYFIVEXX_HARTE_DIR` to point at it.
 
+Klaus Dormann's interrupt test also needs `64tass` installed and
+`tests/SixtyFiveXX.Conformance/klaus/build.sh` run once to produce its binary; without
+that, `dotnet test tests/SixtyFiveXX.Conformance` fails outright on a fresh clone.
+
 ## Licence
 
 MIT. No ROM images, PLA dumps, or emulator source from other projects are included or
-distributed.
+distributed. A GPL-3.0 **test program** — Klaus Dormann's interrupt test — is committed
+under `tests/SixtyFiveXX.Conformance/klaus/`; it is assembled and executed, not linked
+against or derived from, so its licence does not reach this project's code. See
+`tests/SixtyFiveXX.Conformance/klaus/README.md` for the full argument.
