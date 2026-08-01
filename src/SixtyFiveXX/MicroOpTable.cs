@@ -26,9 +26,10 @@ internal sealed class MicroOpTable
     /// <summary>
     /// Index of the hardware interrupt sequence in <see cref="Ops"/>. The dispatcher sets
     /// the CPU's vector field to <c>NmiVector</c> or <c>IrqVector</c> before entering this
-    /// sequence. The sequence's own <c>VectorLo</c> micro-op may still redirect it once
-    /// more, from <c>IrqVector</c> to <c>NmiVector</c>, if an NMI arrives before the vector
-    /// is read — a hijack of the BRK or IRQ dispatch already in progress.
+    /// sequence. The sequence's own <c>PushPInt</c> micro-op may still redirect it once
+    /// more, from <c>IrqVector</c> to <c>NmiVector</c>, if an NMI is latched before that
+    /// cycle — a hijack of the IRQ dispatch already in progress. BRK's own sequence does
+    /// the same in <c>PushPBrk</c>.
     /// </summary>
     public readonly ushort IrqEntry;
 

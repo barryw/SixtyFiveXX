@@ -72,11 +72,11 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     private bool _nmiLine;
 
     /// <summary>
-    /// Latched by a rising edge on NMI and cleared when the interrupt is serviced — either
-    /// by <see cref="FetchOpcode"/> dispatching it at an instruction boundary, or by
-    /// <c>MicroOp.VectorLo</c> hijacking a BRK or IRQ sequence already in flight. NMI is
-    /// edge-triggered, so this survives the line going low again and holding it high does
-    /// not produce a second interrupt.
+    /// Latched by a rising edge on NMI and cleared when the interrupt is serviced — by
+    /// <see cref="FetchOpcode"/> dispatching it at an instruction boundary, by
+    /// <c>MicroOp.PushPBrk</c> or <c>MicroOp.PushPInt</c> hijacking a BRK or IRQ sequence
+    /// already in flight. NMI is edge-triggered, so this survives the line going low again
+    /// and holding it high does not produce a second interrupt.
     /// </summary>
     private bool _nmiPending;
 
@@ -90,7 +90,9 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// value untouched. At an instruction boundary this therefore holds the value from the
     /// start of the final cycle, the same instant a real 6502 samples during phase 2 of the
     /// penultimate cycle. True when either an NMI is latched or IRQ is asserted with
-    /// <c>I</c> clear; NMI is never blocked by <c>I</c>.
+    /// <c>I</c> clear; NMI is never blocked by <c>I</c>. Forced false on
+    /// <c>MicroOp.VectorHi</c>, which is the recognition blackout at the end of an
+    /// interrupt sequence — see <see cref="Tick"/>.
     /// </summary>
     private bool _intPoll;
 
@@ -205,6 +207,8 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
             return;
         }
 
+        var micro = _ops[_mpc];
+
         // Poll before this cycle's own work. When this is the last cycle of the
         // instruction, the value computed here — using register state from before this
         // cycle's Execute — is what the next fetch cycle above will act on. This is what
@@ -213,7 +217,14 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
         // same cycle for CLI/SEI, and the poll happens first. NMI is never blocked by I.
         _intPoll = _nmiPending || (_irqLine && !_s.I);
 
-        var micro = _ops[_mpc];
+        // Interrupt-recognition blackout. VectorHi is the final cycle of every BRK,
+        // IRQ, NMI and reset sequence, and hardware cannot recognise a new interrupt
+        // there: node 1368 is held grounded from T5 phase 2 through T0 phase 1, so
+        // stage-1 recognition is deferred to T1 phase 1 of the handler's first
+        // instruction. The guarantee that falls out of it is the visible one — at least
+        // one handler instruction always executes before another interrupt is serviced.
+        if (micro == MicroOp.VectorHi) _intPoll = false;
+
         _mpc++;
         Execute(micro);
 
@@ -613,33 +624,61 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
                 break;
 
             case MicroOp.PushPBrk:
+                // BRK's own vector, chosen before the hijack test below can override it.
+                _vector = IrqVector;
+                // The vector is committed here, on cycle 5 of the sequence — real silicon
+                // decides at T5 phase 1, because this cycle *forms* the vector-low address
+                // that appears on the pins in cycle 6, and a dedicated transistor chain
+                // (~VEC, pipe~VEC, 1578, 1368) then blocks NMI recognition through the rest
+                // of the sequence so no mixed $FFFE/$FFFA vector can occur. A latched NMI
+                // therefore hijacks the BRK in progress: the pushes already happened with
+                // BRK's own B flag set, but control lands in the NMI handler.
+                //
+                // No vector guard is needed here, unlike PushPInt: this micro-op is emitted
+                // only by BRK, so _vector was just set to IrqVector above, and neither the
+                // reset sequence nor a hardware-interrupt sequence ever executes it.
+                //
+                // Testing before the write matters: it reads the latch as of the start of
+                // the cycle, so a bus-side-effect NMI raised by this very write cannot be
+                // seen — the same reason _intPoll is computed before Execute.
+                //
+                // CMOS note (for the future CpuVariant work): the 65C02 family removed this
+                // anomaly entirely — no hijack at all. Keeping the decision inside the
+                // P-push micro-op lets a CMOS table emit a different one without touching
+                // Tick, VectorLo or the sequence layout.
+                if (_nmiPending)
+                {
+                    _nmiPending = false;
+                    _vector = NmiVector;
+                }
                 _bus.Write(0x0100 + _s.S, (byte)(_s.P | Flag.B | Flag.U));
                 _s.S--;
                 _s.I = true;
-                _vector = IrqVector;
                 break;
 
             case MicroOp.PushPInt:
                 // Deliberately does not set _vector: only the dispatcher knows whether
                 // this is an IRQ or an NMI, and they use different vectors. FetchOpcode
                 // sets it before entering this sequence.
+                //
+                // Same cycle-5 vector commit as PushPBrk — see there for the timing and the
+                // CMOS note. Only an IRQ-vectored sequence can be hijacked: the guard keeps
+                // an NMI sequence from consuming a second latch that arrived during its own
+                // run, and refuses a reset sequence for the same reason it always did,
+                // should one ever be routed through this micro-op.
+                if (_nmiPending && _vector == IrqVector)
+                {
+                    _nmiPending = false;
+                    _vector = NmiVector;
+                }
                 _bus.Write(0x0100 + _s.S, (byte)((_s.P | Flag.U) & ~Flag.B));
                 _s.S--;
                 _s.I = true;
                 break;
 
             case MicroOp.VectorLo:
-                // An NMI that arrives before the vector is read hijacks the BRK or IRQ
-                // sequence in progress: the pushes already happened with whatever B flag
-                // the original interrupt used, but control lands in the NMI handler. Only
-                // an IRQ-vectored sequence can be hijacked — reset outranks NMI on real
-                // hardware, and an NMI already in progress must leave a later latch alone
-                // so it can fire again.
-                if (_nmiPending && _vector == IrqVector)
-                {
-                    _nmiPending = false;
-                    _vector = NmiVector;
-                }
+                // No hijack test here: by this cycle the vector-low address has already
+                // been formed (see PushPBrk). This is the plain read.
                 _tmp = _bus.Read(_vector);
                 break;
 

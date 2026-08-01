@@ -31,19 +31,64 @@ public class HijackTests
     {
         var (cpu, ram) = Machine(0x00);   // BRK
 
-        // Drive BRK's first four cycles, then assert NMI before the vector read.
-        cpu.Tick();   // opcode fetch
-        cpu.Tick();   // BrkPad
-        cpu.Tick();   // push PCH
-        cpu.Tick();   // push PCL
+        // The late edge of the window. Silicon commits the vector at T5 phase 1 — the edge
+        // that begins cycle 5, the P push, because cycle 5 forms the vector-low address that
+        // appears on the pins in cycle 6. Latching here, after four ticks, is the last edge
+        // that still redirects the vector; NmiArrivingAfterThePushOfPDoesNotHijack pins the
+        // other side. Narrowing the window by one tick breaks this test.
+        cpu.Tick();   // 1: opcode fetch
+        cpu.Tick();   // 2: BrkPad
+        cpu.Tick();   // 3: push PCH
+        cpu.Tick();   // 4: push PCL
         cpu.SetNmi(true);
-        cpu.Tick();   // push P
-        cpu.Tick();   // vector low
-        cpu.Tick();   // vector high
+        cpu.Tick();   // 5: push P — the vector is committed here
+        cpu.Tick();   // 6: vector low
+        cpu.Tick();   // 7: vector high
 
         Assert.Equal(0x8000, cpu.State.PC);          // NMI's vector, not BRK's
         Assert.Equal(Flag.B, ram[0x01FB] & Flag.B);  // but BRK's pushed B is still set
         Assert.True(cpu.AtInstructionBoundary);
+    }
+
+    [Fact]
+    public void NmiArrivingAfterThePushOfPDoesNotHijack()
+    {
+        var (cpu, ram) = Machine(0x00);   // BRK
+
+        // The early edge of the window: one tick later than Nmi_HijacksABrkInProgress. The
+        // P push has already run, so the vector-low address is formed and the ~VEC chain
+        // holds NMI recognition off until the handler's first fetch. Widening the window by
+        // one tick — deciding at the vector read instead of the P push — breaks this test.
+        for (var i = 0; i < 5; i++) cpu.Tick();   // through the P push
+        cpu.SetNmi(true);
+        cpu.Tick();   // 6: vector low
+        cpu.Tick();   // 7: vector high
+
+        Assert.Equal(0x9000, cpu.State.PC);          // BRK's own vector stood
+        Assert.Equal(Flag.B, ram[0x01FB] & Flag.B);  // and its pushed B is untouched
+        Assert.True(cpu.AtInstructionBoundary);
+    }
+
+    [Fact]
+    public void ABlockedNmiStillRunsOneHandlerInstructionBeforeFiring()
+    {
+        var (cpu, ram) = Machine(0x00);   // BRK
+        ram[0x9000] = 0xEA;               // the BRK handler's first instruction
+
+        for (var i = 0; i < 5; i++) cpu.Tick();   // through the P push
+        cpu.SetNmi(true);
+        cpu.Tick(); cpu.Tick();
+        Assert.Equal(0x9000, cpu.State.PC);
+
+        // The NMI is not lost, only blocked. Hardware keeps node 1368 grounded from T5
+        // phase 2 through T0 phase 1, so the sequence's own final cycle cannot recognise
+        // it; the earliest recognition is T1 phase 1 of the handler's first instruction.
+        // That instruction therefore always runs.
+        cpu.Step();
+        Assert.Equal(0x9001, cpu.State.PC);
+
+        cpu.Step();
+        Assert.Equal(0x8000, cpu.State.PC);   // only now the NMI
     }
 
     [Fact]
@@ -81,31 +126,32 @@ public class HijackTests
         cpu.SetNmi(true);
 
         // Drive a genuine NMI dispatch (not a hijack) up to its own PushPInt, then latch a
-        // second edge before this sequence's own VectorLo runs.
+        // second edge after that cycle has already committed this sequence's vector.
         cpu.Tick();   // NOP opcode fetch
         cpu.Tick();   // NOP ImpliedExec; poll sees the pending NMI
         cpu.Tick();   // interrupt dispatch's dummy PC read; enters IrqEntry, vector = NmiVector
         cpu.Tick();   // IntDummy
         cpu.Tick();   // PushPch
         cpu.Tick();   // PushPcl
-        cpu.Tick();   // PushPInt
+        cpu.Tick();   // PushPInt — this sequence's vector commit; it must not hijack itself
         cpu.SetNmi(false);
-        cpu.SetNmi(true);   // a fresh edge, latched while this NMI's own sequence is still running
+        cpu.SetNmi(true);   // a fresh edge, latched after this NMI's own vector was committed
 
-        cpu.Step();   // let the sequence finish: VectorLo must not "hijack" itself and must
-                       // not consume the new latch, since _vector is already NmiVector
+        cpu.Step();   // let the sequence finish
 
         Assert.Equal(0x8000, cpu.State.PC);   // the first NMI dispatched normally
         Assert.True(cpu.AtInstructionBoundary);
 
-        // The re-latched edge must survive to fire again. Finishing the first sequence above
-        // is one Step() call; the poll it leaves behind is already hot (VectorHi's own poll
-        // saw the still-pending latch), so the second dispatch fires on the very next fetch —
-        // a second, distinct Step() call, not folded into the first.
+        // The re-latched edge must survive to fire again — but not immediately. An interrupt
+        // sequence does not poll on its own final cycle, so exactly one handler instruction
+        // runs first. Here that is the NOP at $0201, and only the Step() after it dispatches.
         cpu.State.PC = 0x0201;
-        cpu.Step();
 
-        Assert.Equal(0x8000, cpu.State.PC);   // second NMI dispatch, not the NOP at $0201
+        cpu.Step();
+        Assert.Equal(0x0202, cpu.State.PC);   // the handler instruction, not a second dispatch
+
+        cpu.Step();
+        Assert.Equal(0x8000, cpu.State.PC);   // second NMI dispatch
     }
 
     [Fact]
@@ -132,7 +178,8 @@ public class HijackTests
         cpu.SetIrq(true);
 
         // Drive a genuine hardware IRQ dispatch (PushPInt, not BRK's PushPBrk) up to its
-        // PushPcl, then assert NMI before the vector read.
+        // PushPcl, then latch NMI before its P push — cycle 5 of the sequence, the last
+        // edge that still redirects the vector. Same window as BRK; same silicon sequence.
         cpu.Tick();   // NOP opcode fetch
         cpu.Tick();   // NOP ImpliedExec; poll sees the asserted IRQ
         cpu.Tick();   // interrupt dispatch's dummy PC read; enters IrqEntry, vector = IrqVector

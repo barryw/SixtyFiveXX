@@ -70,9 +70,10 @@ public class KlausInterruptTests(ITestOutputHelper output)
         // final sub-test's #I_set macro asserts IRQ and NMI on the write cycle of a
         // STA $BFFC that is immediately followed by BRK. The interrupt poll for that
         // STA-to-BRK boundary samples the pin state one cycle earlier — before the write
-        // that asserts it — so BRK always starts normally: PushPBrk pushes the status
-        // byte with B set, and only then does VectorLo see the pending NMI and hijack the
-        // vector to the NMI handler, leaving B set on the stack. That is the documented
+        // that asserts it — so BRK always starts normally, with the latch already set well
+        // before its cycle 5. PushPBrk pushes the status byte with B set and, on that same
+        // cycle, hijacks the vector to the NMI handler, leaving B set on the stack. That is
+        // the documented
         // NMOS BRK/NMI hijack (see docs/superpowers/investigations/investigation-075c.md
         // for the cycle-level trace and the physically-reachable-timing sweep that rules
         // out an off-by-one). Klaus's own source calls it out on the trapping line itself

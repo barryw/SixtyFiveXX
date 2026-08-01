@@ -142,20 +142,27 @@ internal enum MicroOp : byte
     /// <summary>Dummy read at PC. Filler for the hardware interrupt sequence and, twice over, for reset.</summary>
     IntDummy,
 
-    /// <summary>Write(0x100 + S, P) with B set for BRK and clear for IRQ/NMI; S--; set I.</summary>
+    /// <summary>
+    /// BRK's P push. Sets vector to the IRQ/BRK vector, then lets a pending NMI hijack it
+    /// — this is the cycle on which the vector is committed. Write(0x100 + S, P) with B
+    /// set; S--; set I.
+    /// </summary>
     PushPBrk,
 
-    /// <summary>Write(0x100 + S, P) with B clear; S--; set I.</summary>
+    /// <summary>
+    /// A hardware interrupt's P push. Commits the vector on the same cycle as
+    /// <see cref="PushPBrk"/>, but only redirects an IRQ-vectored sequence.
+    /// Write(0x100 + S, P) with B clear; S--; set I.
+    /// </summary>
     PushPInt,
 
-    /// <summary>
-    /// If a pending NMI can hijack this sequence (vector is currently the IRQ/BRK
-    /// vector), redirect vector to the NMI vector and consume the latch. Then
-    /// tmp = Read(vector).
-    /// </summary>
+    /// <summary>tmp = Read(vector). The vector was committed on the preceding P push.</summary>
     VectorLo,
 
-    /// <summary>PC = (Read(vector + 1) &lt;&lt; 8) | tmp.</summary>
+    /// <summary>
+    /// PC = (Read(vector + 1) &lt;&lt; 8) | tmp. The final cycle of every interrupt
+    /// sequence, and the one on which interrupt recognition is blacked out.
+    /// </summary>
     VectorHi,
 
     /// <summary>Sequence terminator. Consumes no cycle.</summary>
