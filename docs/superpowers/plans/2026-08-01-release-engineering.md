@@ -47,6 +47,7 @@
 - **The plugin has a bats test suite** at `plugin/test/*.bats` covering `changelog`, `cog`, `git`, `github_release`.
 - **`cog changelog --at <tag>` emits exactly one version's section.** The tag argument must include the `v` prefix, matching `tag_prefix = "v"`.
 - **SixtyFiveXX compiles clean on `net8.0`** — proven by building both TFMs under `TreatWarningsAsErrors`: zero warnings, no `#if`.
+- **Both test projects are multi-targeted, so `net8.0` is genuinely certified.** Multi-targeting only the library would have published a target nothing executed: a test project keeps its own TFM, and its `ProjectReference` resolves whichever TFM the *test* project targets. Measured after the change — unit 307/307 and conformance 259/259 on **each** TFM, with no behavioural difference between them. The benchmarks stay single-targeted; running them twice measures nothing extra.
 - **SixtyFiveXX has no git tags**, so cog starts clean at `v0.1.0` per `woodpecker-release/README.md` Step 2.
 - **`apt-get install -y --no-install-recommends 64tass` works** in `mcr.microsoft.com/dotnet/sdk:10.0`, verified end-to-end in Docker.
 - **The SDK 10 image has no .NET 8 runtime**, so `dotnet test` against the `net8.0` TFM fails without one being installed.
@@ -87,6 +88,8 @@ NovaVM has moved to short-lived **GitHub App installation tokens** (`/plugin/min
 | `scripts/test-stamp-version.sh` | Create: its test |
 | `Directory.Build.props` | Modify: version block, fix `RepositoryUrl`, drop `TargetFramework` |
 | `src/SixtyFiveXX/SixtyFiveXX.csproj` | Modify: multi-target, package metadata |
+| `tests/SixtyFiveXX.Tests/SixtyFiveXX.Tests.csproj` | Modify: multi-target, so the net8.0 binary is actually tested |
+| `tests/SixtyFiveXX.Conformance/SixtyFiveXX.Conformance.csproj` | Modify: same, so the certification claim holds for both TFMs |
 | `cog.toml` | Create: house file + this repo's stamp hook |
 | `CONTRIBUTING.md` | Create: commit convention and hook install |
 | `docker/ci.Dockerfile` | Create: SDK 10 + .NET 8 runtime + 64tass |
