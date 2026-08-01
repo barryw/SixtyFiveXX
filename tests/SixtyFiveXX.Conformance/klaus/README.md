@@ -34,21 +34,25 @@ this project's MIT-licensed code. Klaus's copyright header is retained in the po
 Other useful addresses, all read from the 64tass listing: NMI vector `$0739`,
 RESET vector `$0778`, IRQ/BRK vector `$077D`. The zero page block is `$0A`–`$0F`
 and the data segment is `$0200`–`$0203` (`$0203` is `I_src`, the expected-interrupt
-mask). Any `jmp *` or `beq *`/`bne *` other than `$06F5` is a failure trap.
+mask). Any `jmp *` or `beq *`/`bne *` reachable from the `$0400` entry, other than
+`$06F5`, is a failure trap.
 
 Two further `jmp *` "test passed" traps exist at `$070F` and `$072C`. They belong to
 the manual 65C02 `WAI`/`STP` sections, which are documented as requiring the PC to be
-set by hand and are unreachable from `$0400` — `$06F5` is the only success trap a
-normal run can reach.
+set by hand and sit after a `jmp start`, making them unreachable from `$0400` — `$06F5`
+is the only success trap a normal run can reach.
 
 ## Port notes
 
 The AS65 directives `noopt`, `data`, `bss`, `code` and `end start` have no 64tass
-equivalent and are commented out rather than deleted. Two lines were added before the
-zero page block:
+equivalent and are commented out rather than deleted. Five lines were added before the
+zero page block: two comment lines explaining why, the `$0000` anchor itself, and a
+blank separator line:
 
-    * = $0000
-    .byte 0
+    ; 64tass emits the binary from the lowest address used. Anchor the image at
+    ; $0000 so the output is a full 64 KB memory picture (gaps are zero filled).
+        * = $0000
+        .byte 0
 
 64tass writes the binary from the lowest address used, which would otherwise be
 `zero_page` (`$0A`) and produce a 65,526-byte file. With the anchor, and with the

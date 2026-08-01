@@ -10,6 +10,8 @@ if ! command -v 64tass >/dev/null 2>&1; then
     exit 1
 fi
 
+rm -f "$here/6502_interrupt_test.bin" "$here/6502_interrupt_test.lst"
+
 64tass --nostart --long-branch \
        -L "$here/6502_interrupt_test.lst" \
        -o "$here/6502_interrupt_test.bin" \
