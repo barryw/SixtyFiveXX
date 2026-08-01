@@ -72,7 +72,9 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     private bool _nmiLine;
 
     /// <summary>
-    /// Latched by a rising edge on NMI and cleared when the interrupt is serviced. NMI is
+    /// Latched by a rising edge on NMI and cleared when the interrupt is serviced — either
+    /// by <see cref="FetchOpcode"/> dispatching it at an instruction boundary, or by
+    /// <c>MicroOp.VectorLo</c> hijacking a BRK or IRQ sequence already in flight. NMI is
     /// edge-triggered, so this survives the line going low again and holding it high does
     /// not produce a second interrupt.
     /// </summary>
@@ -566,6 +568,14 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
                 break;
 
             case MicroOp.VectorLo:
+                // An NMI that arrives before the vector is read hijacks the sequence in
+                // progress: the pushes already happened with whatever B flag the original
+                // interrupt used, but control lands in the NMI handler.
+                if (_nmiPending && _vector != NmiVector)
+                {
+                    _nmiPending = false;
+                    _vector = NmiVector;
+                }
                 _tmp = _bus.Read(_vector);
                 break;
 
