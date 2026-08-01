@@ -82,7 +82,7 @@ public class Harte6502Tests(ITestOutputHelper output)
         output.WriteLine($"This suite runs {legal} of 256 opcodes ({legal * 10_000:N0} vectors).");
         output.WriteLine($"{undefined} opcodes remain undocumented or unstable and are NOT covered.");
 
-        Assert.Equal(244, legal);
+        Assert.Equal(256, legal);
     }
 
     private static void AssertRegisters(HarteCase test, in CpuState actual)

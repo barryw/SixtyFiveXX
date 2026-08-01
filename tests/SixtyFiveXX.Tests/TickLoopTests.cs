@@ -132,16 +132,11 @@ public class TickLoopTests
         Assert.Equal(expected, (cpu.State.P & flag) != 0);
     }
 
-    [Fact]
-    public void UndefinedOpcode_Throws()
-    {
-        var (cpu, _) = Machine(0x02);
-
-        var ex = Assert.Throws<UndefinedOpcodeException>(cpu.Tick);
-
-        Assert.Equal(0x02, ex.Opcode);
-        Assert.Equal(0x0200, ex.Address);
-    }
+    // UndefinedOpcode_Throws was removed: it fixtured $02 as "undefined," but the JAM
+    // opcodes (task 6) fill every remaining gap in Opcodes6502.Table, so no opcode byte
+    // can reach FetchOpcode's UndefinedOpcodeException through this table anymore. The
+    // throw itself stays in Cpu.cs — it guards future variant tables (65C02 etc.) that
+    // will have real gaps of their own.
 
     private sealed class WatchBus(byte[] ram, List<int> reads) : IBus
     {

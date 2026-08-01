@@ -287,6 +287,12 @@ internal static class Opcodes6502
         Set(0x9C, "SHY", AddrMode.AbsoluteX,       Op.Shy, Access.Write);
         Set(0x9E, "SHX", AddrMode.AbsoluteY,       Op.Shx, Access.Write);
 
+        // ---- Undocumented: JAM ------------------------------------------------
+        // These halt the processor until reset.
+        foreach (var op in new[] { 0x02, 0x12, 0x22, 0x32, 0x42, 0x52,
+                                   0x62, 0x72, 0x92, 0xB2, 0xD2, 0xF2 })
+            Set(op, "JAM", AddrMode.Implied, Op.Jam, Access.None);
+
         return t;
     }
 }

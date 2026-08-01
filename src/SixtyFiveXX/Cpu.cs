@@ -59,6 +59,12 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// <summary>High byte of an unstable store's target address, plus one.</summary>
     private byte _storeHigh;
 
+    /// <summary>Position within the jammed address-bus pattern.</summary>
+    private int _jamPhase;
+
+    /// <summary>Set by <c>JamHold</c>; cleared only by <see cref="Reset"/>.</summary>
+    private bool _jammed;
+
     /// <summary>Creates a core over the given bus.</summary>
     public Cpu(TBus bus)
     {
@@ -79,6 +85,13 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
 
     /// <summary>True when the next <see cref="Tick"/> will fetch an opcode.</summary>
     public bool AtInstructionBoundary => _mpc < 0;
+
+    /// <summary>
+    /// True once a JAM opcode has halted the processor. Only <see cref="Reset"/> clears
+    /// it. A jammed core keeps driving the address bus if ticked, exactly as the silicon
+    /// does, but never executes another instruction.
+    /// </summary>
+    public bool IsJammed => _jammed;
 
     /// <summary>The bus. Exposed so a caller holding only the CPU can reach its memory.</summary>
     public ref TBus Bus => ref _bus;
@@ -117,9 +130,13 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
         _s.I = true;
         _vector = ResetVector;
         _mpc = _table.ResetEntry;
+        _jammed = false;
+        _jamPhase = 0;
     }
 
-    /// <summary>Runs to the next instruction boundary.</summary>
+    /// <summary>
+    /// Runs to the next instruction boundary, or returns early if the processor jams.
+    /// </summary>
     /// <returns>The number of cycles consumed.</returns>
     public long Step()
     {
@@ -128,7 +145,7 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
         {
             Tick();
         }
-        while (_mpc >= 0);
+        while (_mpc >= 0 && !_jammed);
 
         return _cycles - before;
     }
@@ -150,7 +167,8 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
 
     /// <summary>
     /// Runs whole instructions until <paramref name="stop"/> returns true at an
-    /// instruction boundary, or until <paramref name="maxCycles"/> is exhausted.
+    /// instruction boundary, until <paramref name="maxCycles"/> is exhausted, or until
+    /// the processor jams.
     /// </summary>
     /// <param name="stop">Evaluated at each instruction boundary, never mid-instruction.</param>
     /// <param name="maxCycles">A ceiling, so a runaway program cannot hang the caller.</param>
@@ -163,6 +181,7 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
         while (_cycles - before < maxCycles)
         {
             Step();
+            if (_jammed) break;
             if (stop(this)) break;
         }
 
@@ -470,6 +489,20 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
             case MicroOp.StackDummyReadDec:
                 _bus.Read(0x0100 + _s.S);
                 _s.S--;
+                break;
+
+            case MicroOp.JamHold:
+                // The address bus cycles $FFFF, $FFFE, $FFFE, then $FFFF forever.
+                _jammed = true;
+                _bus.Read(_jamPhase switch
+                {
+                    0 => 0xFFFF,
+                    1 => 0xFFFE,
+                    2 => 0xFFFE,
+                    _ => 0xFFFF,
+                });
+                if (_jamPhase < 3) _jamPhase++;
+                _mpc--;             // hold position: this micro-op repeats forever
                 break;
 
             default:

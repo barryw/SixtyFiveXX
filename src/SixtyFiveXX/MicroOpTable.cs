@@ -113,6 +113,14 @@ internal sealed class MicroOpTable
             return;
         }
 
+        if (info.Operation == Op.Jam)
+        {
+            // Cycle 2 is a dummy read at PC; every cycle after that is held by JamHold,
+            // which never advances the sequence position.
+            ops.AddRange([MicroOp.ImpliedDummy, MicroOp.JamHold]);
+            return;
+        }
+
         if (info.Mode is AddrMode.Implied or AddrMode.Accumulator)
         {
             ops.Add(MicroOp.ImpliedExec);

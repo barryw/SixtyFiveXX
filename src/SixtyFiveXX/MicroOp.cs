@@ -154,4 +154,10 @@ internal enum MicroOp : byte
 
     /// <summary>Sequence terminator. Consumes no cycle.</summary>
     End,
+
+    /// <summary>
+    /// Drives the address bus while jammed and never advances. The sequence position is
+    /// held, so this micro-op repeats for as long as the clock runs.
+    /// </summary>
+    JamHold,
 }

@@ -59,4 +59,7 @@ internal enum Op : byte
     // Undocumented and genuinely unstable on real silicon. Modelled as the
     // deterministic values the SingleStepTests vectors encode.
     Ane, Lxa, Las, Sha, Shx, Shy, Tas,
+
+    /// <summary>Undocumented. Halts the processor until reset.</summary>
+    Jam,
 }
