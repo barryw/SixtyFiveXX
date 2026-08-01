@@ -113,6 +113,79 @@ else
 fi
 rm -f "$tmp"
 
+# A stale comment carrying the value we're about to stamp, sitting before
+# the real (attributed, thus unstampable) <Version>, must not let the
+# verification pass just because the first textual match in the file
+# happens to already say the right thing.
+tmp="$(mktemp)"
+cat > "$tmp" <<'EOF'
+<Project>
+  <PropertyGroup>
+    <!-- <Version>1.0.0</Version> -->
+    <Version Condition="'$(Foo)'=='bar'">0.0.0</Version>
+    <AssemblyVersion>0.0.0.0</AssemblyVersion>
+    <FileVersion>0.0.0.0</FileVersion>
+  </PropertyGroup>
+</Project>
+EOF
+if "$here/stamp-version.sh" "1.0.0" "$tmp" 2>/dev/null; then
+    echo "FAIL rejects decoy comment masking an unstamped attributed Version"; failures=$((failures + 1))
+else
+    echo "ok   rejects decoy comment masking an unstamped attributed Version"
+fi
+rm -f "$tmp"
+
+# A second, conditional PropertyGroup with a stray <Version> alongside the
+# real one is ambiguous -- the script must refuse rather than guess which
+# element governs, even though both end up holding a value.
+tmp="$(mktemp)"
+cat > "$tmp" <<'EOF'
+<Project>
+  <PropertyGroup>
+    <Version>0.0.0</Version>
+    <AssemblyVersion>0.0.0.0</AssemblyVersion>
+    <FileVersion>0.0.0.0</FileVersion>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Debug'">
+    <Version>0.0.0</Version>
+  </PropertyGroup>
+</Project>
+EOF
+if "$here/stamp-version.sh" "1.0.0" "$tmp" 2>/dev/null; then
+    echo "FAIL rejects a second PropertyGroup with a stray Version"; failures=$((failures + 1))
+else
+    echo "ok   rejects a second PropertyGroup with a stray Version"
+fi
+rm -f "$tmp"
+
+# A decoy comment carrying a WRONG value, before an otherwise correctly
+# stampable bare <Version>, must be reported as ambiguous (a duplicate
+# occurrence) -- not as a wrong value -- so the operator is pointed at the
+# real problem (a second occurrence) rather than a red herring.
+tmp="$(mktemp)"
+cat > "$tmp" <<'EOF'
+<Project>
+  <PropertyGroup>
+    <!-- <Version>9.9.9</Version> -->
+    <Version>0.0.0</Version>
+    <AssemblyVersion>0.0.0.0</AssemblyVersion>
+    <FileVersion>0.0.0.0</FileVersion>
+  </PropertyGroup>
+</Project>
+EOF
+err="$("$here/stamp-version.sh" "1.0.0" "$tmp" 2>&1 >/dev/null)"
+rc=$?
+if [ "$rc" -eq 0 ]; then
+    echo "FAIL rejects decoy comment ambiguity (exited 0)"; failures=$((failures + 1))
+elif ! echo "$err" | grep -q "ambiguous"; then
+    echo "FAIL rejects decoy comment ambiguity (message did not say ambiguous)"
+    echo "     got: $err"
+    failures=$((failures + 1))
+else
+    echo "ok   rejects decoy comment ambiguity, with an ambiguous (not wrong-value) message"
+fi
+rm -f "$tmp"
+
 if [ "$failures" -eq 0 ]; then
     echo "All stamp-version tests passed."
 else
