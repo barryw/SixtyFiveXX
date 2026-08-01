@@ -27,7 +27,7 @@ this project's MIT-licensed code. Klaus's copyright header is retained in the po
 | `I_filter` | `$7F` | Bit 7 set means "diagnostic stop" |
 | `D_clear` | 0 | NMOS: the decimal flag is not cleared on interrupt entry |
 | entry | `$0400` | |
-| success trap | `$06F5` | `jmp *` reached only when every test passed |
+| success trap | `$06F5` | `jmp *`, the nominal "every test passed" trap — see below |
 
 `FeedbackBus` in the parent directory implements that register.
 
@@ -35,12 +35,44 @@ Other useful addresses, all read from the 64tass listing: NMI vector `$0739`,
 RESET vector `$0778`, IRQ/BRK vector `$077D`. The zero page block is `$0A`–`$0F`
 and the data segment is `$0200`–`$0203` (`$0203` is `I_src`, the expected-interrupt
 mask). Any `jmp *` or `beq *`/`bne *` reachable from the `$0400` entry, other than
-`$06F5`, is a failure trap.
+`$06F5`, is a failure trap — with one documented exception, below.
 
 Two further `jmp *` "test passed" traps exist at `$070F` and `$072C`. They belong to
 the manual 65C02 `WAI`/`STP` sections, which are documented as requiring the PC to be
 set by hand and sit after a `jmp start`, making them unreachable from `$0400` — `$06F5`
 is the only success trap a normal run can reach.
+
+## The NMOS trap at `$075C`
+
+A faithful NMOS core run from `$0400` does not reach `$06F5`. It runs 2,720 of the
+program's roughly 2,915 cycles — about 93% — and stops at `$075C`, in the last
+sub-test, `;test overlapping NMI, IRQ & BRK` (asm 809–831, assembled `$06C5`–`$06F5`).
+
+That sub-test's `#I_set 8` macro asserts IRQ and NMI in the same `STA $BFFC` write
+that immediately precedes a `BRK`. On real NMOS silicon the interrupt poll for that
+`STA`→`BRK` boundary samples the pin one cycle before the write that asserts it, so
+`BRK` always starts normally: the status byte is pushed with `B` set, and only then
+does the pending NMI hijack the vector to the NMI handler — the documented NMOS
+BRK/NMI hijack. `$075C` is the handler's check that `B` was *not* set, and it fails
+by design at this timing. Klaus's own source says so, on the trapping line itself:
+
+    #trap_ne         ;unexpected B-flag! - this may fail on a real 6502
+                      ;due to a hardware bug on concurrent BRK & NMI
+
+and again eleven lines later, at the very next check the same hijack event trips
+once `$075C`'s is out of the way (asm 830), which a faithful core therefore never
+reaches either:
+
+    ;may fail due to a bug on a real NMOS 6502 - NMI could mask BRK
+        #trap_ne      ;lost an interrupt
+
+`KlausInterruptTests.cs` asserts the `$075C` trap together with its exact cycle
+count (2,721), so the whole 2,720-cycle prefix — every sub-test before this one —
+remains an exact regression gate. See `.superpowers/sdd/investigation-075c.md` for
+the cycle-level trace and timing sweep behind this, and
+`.superpowers/sdd/experiment-past-075c.md` for confirmation that neutralising just
+the `$075C` check only buys 192 more cycles before the asm-830 check above traps in
+turn.
 
 ## Port notes
 
