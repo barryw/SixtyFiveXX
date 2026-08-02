@@ -291,7 +291,13 @@ unstable NMOS opcodes' magic constants.
 
   It also guards the inverse — a descriptor type accidentally made public becomes API this
   project would then owe compatibility to. Keeping `OpcodeInfo` internal is what lets phase
-  4 reshape it freely.
+  4 reshape it freely. The assertion is therefore an **exact set**, not a checklist of named
+  types: a checklist can only catch the leaks someone thought to list.
+
+  Implemented as `tests/SixtyFiveXX.Conformance/PublicSurfaceTests.cs`, and proven to
+  discriminate in both directions — `Cpu` made internal (with the consumer ripple demoted,
+  reproducing the original regression) and a documented descriptor enum made public each
+  turn it red on both packaged TFMs.
 
 - **Unit tests** per addressing mode, flag, stack wrap, page cross, and interrupt timing.
 - **Benchmarks** as a gate: ≥50 MHz simulated 6502 single-threaded with `FlatBus`,
@@ -400,7 +406,7 @@ Each phase is gated by green suites, not by a subjective sense of completion.
 | --- | --- | --- | --- |
 | 1 | Micro-op engine, `IBus`, `FlatBus`, 6502 legal opcodes | Harte 6502 legal-opcode subset | **Complete** — 1,510,000 vectors |
 | 2 | Undocumented opcodes; interrupts, RDY, SO | **Full** Harte 6502 (all 256); Klaus functional + interrupt | **Complete** — 2,560,000 vectors |
-| 3 | `ICpuVariant` refactor; public-surface gate | **Zero behaviour change** — every phase 1–2 suite still green — **plus** the packed-assembly surface test below | |
+| 3 | `ICpuVariant` refactor; public-surface gate | **Zero behaviour change** — every phase 1–2 suite still green — **plus** the packed-assembly surface test below | **Complete** — 311 unit + 264 conformance on both TFMs |
 | 4 | 65C02, three sub-variants | Harte `wdc65c02` / `rockwell65c02` / `synertek65c02`; Klaus 65C02 extended (WDC + Rockwell only) | |
 | 5 | 6510 core (`$00`/`$01` port) | Existing 6502 suites for inherited opcodes; VICE `cpuport` for the port delta | |
 | 6 | Disassembler; sim6502 adapter | **sim6502 swaps over.** Its own suite green; `sim6502/Proc/` deleted | |
