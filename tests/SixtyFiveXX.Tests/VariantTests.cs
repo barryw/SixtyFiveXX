@@ -39,6 +39,18 @@ public class VariantTests
     }
 
     [Fact]
+    public void Mos6502Variant_DeclaresItsCpuVariantValue()
+    {
+        // The public half of the variant contract. Phase 6's sim6502 adapter selects its
+        // processor from a DSL at run time, so it needs the type -> enum direction pinned:
+        // given Mos6502Variant, which CpuVariant is it. Asserting it here rather than
+        // leaning on For_Mos6502Variant_ResolvesToOpcodes6502Table, which catches a wrong
+        // value today only as a side effect of the internal table mapping having no entry
+        // for any other variant — a shield that disappears the moment phase 4 wires one up.
+        Assert.Equal(CpuVariant.Mos6502, Mos6502Variant.Variant);
+    }
+
+    [Fact]
     public void For_IsCachedPerVariant()
     {
         // A static field on a generic type is per-constructed-type, so two calls for the

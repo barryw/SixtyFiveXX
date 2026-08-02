@@ -187,21 +187,50 @@ blocks.
 ### 5.5 Public API surface
 
 ```csharp
-long Cycles { get; }
-void ResetCycleCount();
-void Reset();
+public sealed partial class Cpu<TBus, TVariant>
+    where TBus : struct, IBus
+    where TVariant : struct, ICpuVariant
+{
+    public Cpu(TBus bus);
 
-void Tick();                                 // one clock cycle
-void Step();                                 // run to the next instruction boundary
-long Run(long cycles);
-long RunUntil(Func<ICpu, bool> stop);
+    long Cycles { get; }
+    void ResetCycleCount();
+    void Reset();
 
-ref CpuState State { get; }                  // A, X, Y, S, P, PC (+ C, DBR, PBR, DP, E on 65816)
-void SetIrq(bool asserted);
-void SetNmi(bool asserted);
-void SetRdy(bool ready);
-void SetSo();
+    void Tick();                                 // one clock cycle
+    long Step();                                 // run to the next instruction boundary
+    long Run(long cycles);
+    long RunUntil(Func<Cpu<TBus, TVariant>, bool> stop, long maxCycles = long.MaxValue);
+
+    ref CpuState State { get; }                  // A, X, Y, S, P, PC (+ C, DBR, PBR, DP, E on 65816)
+    ref TBus Bus { get; }
+    bool AtInstructionBoundary { get; }
+    bool IsJammed { get; }
+
+    void SetIrq(bool asserted);                  // level-sensitive; IrqAsserted reads it back
+    void SetNmi(bool asserted);                  // edge-latched;    NmiAsserted reads the line
+    void SetRdy(bool ready);                     // Ready reads it back
+    void SetSo();
+}
+
+public interface ICpuVariant
+{
+    static abstract CpuVariant Variant { get; }  // resolved through the type parameter
+}
 ```
+
+Both type parameters are `struct`, so `TBus`'s bus calls and `TVariant`'s `static abstract`
+member resolve at JIT time per closed generic type — no interface dispatch on the
+per-cycle path. `RunUntil`'s predicate is typed on the closed CPU rather than an `ICpu`
+interface for the same reason: an interface here would reintroduce the dispatch the
+generic exists to avoid, and there is no consumer that needs to hold two differently-typed
+cores in one variable. Phase 6's adapter pays that cost once, at machine construction,
+where it maps sim6502's runtime `CpuVariant` onto a closed `Cpu<,>`.
+
+`ICpuVariant` carries exactly one member. Behavioural flags are added only when a phase is
+blocked without them; the opcode descriptors themselves stay internal, mapped from
+`TVariant.Variant` inside the library, so phase 4 can reshape `OpcodeInfo` without it
+being public API.
 
 Higher-level control flow — sim6502's `ExecuteJsr(address, stopOnAddress, stopOnRts,
 failOnBrk)` — is built on `RunUntil` plus stack-depth tracking **in the adapter**, not in
