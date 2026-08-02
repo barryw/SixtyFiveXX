@@ -173,7 +173,7 @@ vectors check every one:
 | --- | --- |
 | `Mos6502` | NMOS baseline. All 105 undocumented opcodes, including the unstable `ANE`/`LXA`/`TAS`/`SHA`/`SHX`/`SHY` magic-constant behaviour. BCD `ADC`/`SBC` with real, undefined N/V/Z. |
 | `Mos6510` | 6502 plus the on-chip `$00` DDR and `$01` port registers. These are CPU registers, so they live in the **core**, not in a bus. |
-| `Wdc65C02` | New opcodes; `JMP ($xxFF)` page-wrap bug fixed; `D` cleared on interrupt; corrected BCD flags at the cost of one cycle; per-opcode NOP timing table. Sub-flags: `Rockwell` (`RMB`/`SMB`/`BBR`/`BBS`), `Wdc` (adds `WAI`/`STP`), `Synertek`. Harte tests these three separately. |
+| `Wdc65C02` | New opcodes; `JMP ($xxFF)` page-wrap bug fixed **but the buggy address is still read and discarded**; `D` cleared on interrupt and no NMI/BRK hijack; BCD `ADC`/`SBC` take N and Z from the corrected result at the cost of one cycle — **`V` is unchanged from NMOS**, and `SBC`'s decimal correction itself differs; the page-cross dummy read moves to the last operand byte; RMW does a dummy read, and its `abs,X` form became conditional for the shifts but not for `INC`/`DEC`; per-opcode NOP timings in seven distinct shapes. Sub-variants are separate tables, not flags: `Rockwell` (`RMB`/`SMB`/`BBR`/`BBS`), `Wdc` (adds `WAI`/`STP`), `Synertek` (base only). Harte tests these three separately. |
 | `W65C816` | 16-bit `A`/`X`/`Y`, `M`/`X`/`E` mode bits, 24-bit addressing, `DBR`/`PBR`/`DP`, `MVN`/`MVP` block moves, `COP`, and the extra cycle when the direct-page low byte is non-zero. Its own opcode table on the **same** engine and the same tick loop. |
 
 `CpuState` carries 16-bit `A`/`X`/`Y` plus the bank and direct-page registers for every
@@ -418,7 +418,7 @@ Each phase is gated by green suites, not by a subjective sense of completion.
 | 1 | Micro-op engine, `IBus`, `FlatBus`, 6502 legal opcodes | Harte 6502 legal-opcode subset | **Complete** — 1,510,000 vectors |
 | 2 | Undocumented opcodes; interrupts, RDY, SO | **Full** Harte 6502 (all 256); Klaus functional + interrupt | **Complete** — 2,560,000 vectors |
 | 3 | `ICpuVariant` refactor; public-surface gate | **Zero behaviour change** — every phase 1–2 suite still green — **plus** the packed-assembly surface test below | **Complete** — 311 unit + 264 conformance on both TFMs |
-| 4 | 65C02, three sub-variants | Harte `wdc65c02` / `rockwell65c02` / `synertek65c02`; Klaus 65C02 extended (WDC + Rockwell only) | |
+| 4 | 65C02, three sub-variants | Harte `wdc65c02` / `rockwell65c02` / `synertek65c02`; Klaus 65C02 extended (WDC + Rockwell only) | **Complete** — 7,660,000 vectors; 1,041 conformance tests on both TFMs |
 | 5 | 6510 core (`$00`/`$01` port) | Existing 6502 suites for inherited opcodes; VICE `cpuport` for the port delta | |
 | 6 | Disassembler; sim6502 adapter | **sim6502 swaps over.** Its own suite green; `sim6502/Proc/` deleted | |
 | 7 | 65816 | Harte 65816 | Deferred — no consumer needs it yet |

@@ -71,6 +71,12 @@ addition beyond what selecting a variant requires.
 
 ## Phase 4 — the 65C02 family
 
+**Complete.** All three sub-variants certified. See the plan at
+`docs/superpowers/plans/2026-08-02-phase4-65c02.md`, whose "Measured from the vectors"
+section supersedes the delta list below — six of the items here turned out to be
+incomplete or wrong when checked against the vectors, and the plan records what they
+actually are.
+
 Three sub-variants over one shared CMOS baseline.
 
 **Shared CMOS deltas from NMOS:**
@@ -92,13 +98,17 @@ Three sub-variants over one shared CMOS baseline.
 | `Rockwell65C02` | `RMB`/`SMB`/`BBR`/`BBS` |
 | `Wdc65C02` | Rockwell's set plus `WAI` and `STP` |
 
-**Gates:** Harte `wdc65c02`, `rockwell65c02` and `synertek65c02` — 2,560,000 vectors each,
-7,680,000 in total. Plus Klaus 65C02 extended for **WDC and Rockwell only**; Synertek is
-carried by Harte alone, because the Klaus program uses bit operations Synertek lacks.
+**Gates:** Harte `wdc65c02`, `rockwell65c02` and `synertek65c02` — 2,560,000 vectors each
+except WDC, which has 2,540,000 (see below), for 7,660,000 in total. Plus Klaus 65C02
+extended for **WDC and Rockwell only**; Synertek is carried by Harte alone, because the
+Klaus program uses bit operations Synertek lacks.
 
-`WAI` and `STP` are gated by Harte and unit tests only. `WAI` halts until an interrupt,
-which interacts with the RDY and interrupt machinery from phase 2b and deserves
-cycle-exact unit tests of its own.
+`WAI` and `STP` turned out to have **no external oracle at all**. SingleStepTests ships
+genuinely empty files for `wdc65c02` `$CB` and `$DB` — an instruction that halts cannot be
+expressed as a before-and-after pair — and the Klaus program does not use them either. The
+unit tests written for them are the entire gate, so the conformance harness now requires
+any opcode with no vectors to be declared and prints it in the run output rather than
+passing over it silently.
 
 ## Phase 5 — the 6510
 
