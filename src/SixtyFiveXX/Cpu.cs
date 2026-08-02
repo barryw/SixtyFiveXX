@@ -466,6 +466,43 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 Exec();
                 break;
 
+            case MicroOp.ReadExecCmosArith:
+                _data = _bus.Read(_addr);
+                if (_s.D) break;                 // decimal costs one more cycle: BcdExtra
+                Exec();
+                EndInstruction();
+                break;
+
+            case MicroOp.ImmExecCmosArith:
+                _data = _bus.Read(_s.PC);
+                _s.PC++;
+                if (_s.D) break;
+                Exec();
+                EndInstruction();
+                break;
+
+            case MicroOp.BcdExtra:
+                // ponytail: re-reads the effective address, which is what every memory
+                // addressing mode's vectors show. Immediate mode has no effective address
+                // and its vectors expect a fixed per-opcode constant instead — see
+                // CmosArithmeticTests. _addr is stale here for that mode.
+                _bus.Read(_addr);
+                Exec();
+                break;
+
+            case MicroOp.ReadPageCrossCmosArith:
+                if (_pageCross)
+                {
+                    _bus.Read((_s.PC - 1) & 0xFFFF);
+                    _addr = (_addr + 0x100) & 0xFFFF;
+                    break;
+                }
+                _data = _bus.Read(_addr);
+                if (_s.D) { _mpc++; break; }      // skip the read, land on BcdExtra
+                Exec();
+                EndInstruction();
+                break;
+
             case MicroOp.RmwModifyRead:
                 // CMOS parts read instead. Same cycle, opposite direction — which matters
                 // to any bus with read or write side effects, not just to a cycle count.

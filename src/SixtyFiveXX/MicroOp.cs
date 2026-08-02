@@ -128,6 +128,31 @@ internal enum MicroOp : byte
     RtsFinish,
 
     /// <summary>
+    /// The CMOS arithmetic read. Reads the operand, and finishes the instruction there
+    /// unless <c>D</c> is set — decimal mode costs one more cycle, supplied by
+    /// <see cref="BcdExtra"/>.
+    /// </summary>
+    ReadExecCmosArith,
+
+    /// <summary>
+    /// <see cref="ReadExecCmosArith"/> for immediate mode, reading the operand at PC.
+    /// </summary>
+    ImmExecCmosArith,
+
+    /// <summary>
+    /// The extra cycle CMOS <c>ADC</c>/<c>SBC</c> spend in decimal mode: a discarded repeat
+    /// read of the effective address, then the operation.
+    /// </summary>
+    BcdExtra,
+
+    /// <summary>
+    /// <see cref="ReadPageCrossCmos"/> for CMOS arithmetic, which needs a third outcome:
+    /// without a page cross this cycle is the real read, and it must still route into the
+    /// decimal-mode extra cycle rather than finishing unconditionally.
+    /// </summary>
+    ReadPageCrossCmosArith,
+
+    /// <summary>
     /// The CMOS middle cycle of a read-modify-write: a dummy <em>read</em> of the effective
     /// address where NMOS writes the unmodified value back. Same cycle count either way.
     /// </summary>

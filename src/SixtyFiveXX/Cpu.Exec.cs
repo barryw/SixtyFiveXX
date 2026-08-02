@@ -107,6 +107,8 @@ public sealed partial class Cpu<TBus, TVariant>
             // Arithmetic
             case Op.Adc: Adc(_data); break;
             case Op.Sbc: Sbc(_data); break;
+            case Op.AdcCmos: AdcCmos(_data); break;
+            case Op.SbcCmos: SbcCmos(_data); break;
 
             // Undocumented combination read-modify-writes. Each performs a documented
             // memory operation and then a documented ALU operation on the result.
@@ -268,6 +270,51 @@ public sealed partial class Cpu<TBus, TVariant>
     }
 
     /// <summary>Subtract with borrow, in binary or NMOS decimal mode.</summary>
+    /// <summary>
+    /// CMOS ADC. Binary mode is identical to NMOS. Decimal mode keeps NMOS's C and V — V
+    /// still comes from the partially corrected high nibble, not from the binary sum — but
+    /// takes N and Z from the final decimal result.
+    /// </summary>
+    private void AdcCmos(byte value)
+    {
+        if (!_s.D) { Adc(value); return; }
+
+        var carry = _s.C ? 1 : 0;
+        var lo = (_s.A & 0x0F) + (value & 0x0F) + carry;
+        if (lo > 0x09) lo += 0x06;
+        var hi = (_s.A >> 4) + (value >> 4) + (lo > 0x0F ? 1 : 0);
+
+        _s.V = (~(_s.A ^ value) & (_s.A ^ (hi << 4)) & 0x80) != 0;
+
+        if (hi > 0x09) hi += 0x06;
+        _s.C = hi > 0x0F;
+        _s.A = (byte)((hi << 4) | (lo & 0x0F));
+        SetZN(_s.A);
+    }
+
+    /// <summary>
+    /// CMOS SBC. The decimal correction itself differs from NMOS, not only the flags: the
+    /// binary difference is adjusted by $60 and $06 rather than nibble-wise, which is what
+    /// makes invalid BCD inputs land differently. C and V stay binary, as on NMOS.
+    /// </summary>
+    private void SbcCmos(byte value)
+    {
+        if (!_s.D) { Sbc(value); return; }
+
+        var borrow = _s.C ? 0 : 1;
+        var binary = _s.A - value - borrow;
+
+        _s.C = binary >= 0;
+        _s.V = ((_s.A ^ value) & (_s.A ^ binary) & 0x80) != 0;
+
+        var result = binary;
+        if (result < 0) result -= 0x60;
+        if (((_s.A & 0x0F) - (value & 0x0F) - borrow) < 0) result -= 0x06;
+
+        _s.A = (byte)result;
+        SetZN(_s.A);
+    }
+
     private void Sbc(byte value)
     {
         var borrow = _s.C ? 0 : 1;

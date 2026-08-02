@@ -85,6 +85,9 @@ internal sealed class MicroOpTable
     private static bool IndexedRmwAlwaysPaysFixup(Sequences seq, Op op) =>
         seq.RmwPageCross == MicroOp.DummyReadFixup || op is Op.Inc or Op.Dec;
 
+    /// <summary>True for the CMOS ADC and SBC, whose decimal mode costs an extra cycle.</summary>
+    private static bool CmosArithmetic(OpcodeInfo info) => info.Operation is Op.AdcCmos or Op.SbcCmos;
+
     /// <summary>
     /// The fixup cycle an indexed write or read-modify-write pays after forming its address.
     /// </summary>
@@ -233,7 +236,11 @@ internal sealed class MicroOpTable
 
         if (info.Mode == AddrMode.Immediate)
         {
-            ops.Add(MicroOp.ImmExec);
+            // CMOS arithmetic spends one extra cycle in decimal mode, so its immediate form
+            // carries a slot for it that the micro-op skips when D is clear.
+            ops.AddRange(info.Operation is Op.AdcCmos or Op.SbcCmos
+                ? [MicroOp.ImmExecCmosArith, MicroOp.BcdExtra]
+                : [MicroOp.ImmExec]);
             return;
         }
 
@@ -320,8 +327,16 @@ internal sealed class MicroOpTable
 
         switch (access)
         {
+            case Access.Read when indexedRead && CmosArithmetic(info):
+                ops.AddRange([MicroOp.ReadPageCrossCmosArith, MicroOp.ReadExecCmosArith, MicroOp.BcdExtra]);
+                break;
+
             case Access.Read when indexedRead:
                 ops.AddRange([seq.ReadPageCross, MicroOp.ReadExec]);
+                break;
+
+            case Access.Read when CmosArithmetic(info):
+                ops.AddRange([MicroOp.ReadExecCmosArith, MicroOp.BcdExtra]);
                 break;
 
             case Access.Read:

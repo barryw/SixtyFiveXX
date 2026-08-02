@@ -48,6 +48,16 @@ internal enum Op : byte
     Bra,
 
     /// <summary>
+    /// CMOS <c>ADC</c> and <c>SBC</c>. Decimal mode differs from NMOS in the accumulator
+    /// correction as well as the flags, so these are separate members rather than a variant
+    /// test inside <see cref="Adc"/>. Derived from the vectors, not a datasheet: N and Z
+    /// come from the final decimal result, while C and V are computed exactly as NMOS does
+    /// — so "correct N/V/Z" overstates it, V included. Verified against every decimal
+    /// vector of <c>$69</c>, <c>$72</c>, <c>$E9</c> and <c>$F2</c>.
+    /// </summary>
+    AdcCmos, SbcCmos,
+
+    /// <summary>
     /// The immediate form of BIT, which sets only Z. Every other addressing mode also
     /// copies the operand's top two bits into N and V; this one does not, so it needs its
     /// own member rather than a mode test inside <see cref="Bit"/>. Confirmed against all
