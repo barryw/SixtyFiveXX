@@ -128,6 +128,43 @@ internal enum MicroOp : byte
     RtsFinish,
 
     /// <summary>
+    /// The CMOS middle cycle of a read-modify-write: a dummy <em>read</em> of the effective
+    /// address where NMOS writes the unmodified value back. Same cycle count either way.
+    /// </summary>
+    RmwModifyRead,
+
+    /// <summary>
+    /// The CMOS indexing fixup: a discarded read at the <em>last operand byte</em> rather
+    /// than at the mis-indexed address NMOS reads. That is <c>PC - 1</c> by the time this
+    /// runs — <c>PC+2</c> for the absolute-indexed modes, <c>PC+1</c> for <c>(zp),Y</c>.
+    /// Unconditional, so it is what writes and the always-7-cycle <c>INC</c>/<c>DEC abs,X</c>
+    /// use.
+    /// </summary>
+    IndexFixupCmos,
+
+    /// <summary>
+    /// The CMOS conditional read fixup. Without a page cross this cycle is the real read
+    /// and the instruction ends; with one it is a discarded read at the last operand byte
+    /// and the following micro-op reads the corrected address. Same shape as
+    /// <see cref="ReadPageCross"/>, differing only in which address the discarded read uses.
+    /// </summary>
+    ReadPageCrossCmos,
+
+    /// <summary>
+    /// The CMOS conditional fixup for an indexed read-modify-write. Without a page cross
+    /// this cycle performs the RMW's own read and skips the <see cref="RmwRead"/> that
+    /// follows, giving six cycles; with one it is a discarded read at the last operand byte
+    /// and the full seven-cycle sequence runs.
+    /// </summary>
+    /// <remarks>
+    /// Only the shift and rotate forms of <c>abs,X</c> use this. <c>INC</c> and
+    /// <c>DEC abs,X</c> are seven cycles whether or not indexing crosses a page, and take
+    /// <see cref="IndexFixupCmos"/> instead — a split with no counterpart on NMOS, where
+    /// every indexed RMW always pays.
+    /// </remarks>
+    RmwPageCrossCmos,
+
+    /// <summary>
     /// The discarded read the CMOS <c>JMP (abs)</c> performs at the address the NMOS core
     /// would have taken its high byte from — <c>(ptr &amp; $FF00) | ((ptr + 1) &amp; $FF)</c>.
     /// </summary>

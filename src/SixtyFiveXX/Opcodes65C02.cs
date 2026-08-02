@@ -86,6 +86,16 @@ internal static class Opcodes65C02
         Set(0xD2, "CMP", AddrMode.ZeroPageIndirect, Op.Cmp, Access.Read);
         Set(0xF2, "SBC", AddrMode.ZeroPageIndirect, Op.Sbc, Access.Read);
 
+        // Indexed forms, for the CMOS indexing deltas: the page-cross dummy read moves to
+        // the last operand byte, and the shift/rotate abs,X forms pay their fixup only on
+        // an actual cross while INC/DEC abs,X always pay.
+        Set(0x1D, "ORA", AddrMode.AbsoluteX, Op.Ora, Access.Read);
+        Set(0xB1, "LDA", AddrMode.IndirectIndexed, Op.Lda, Access.Read);
+        Set(0x9D, "STA", AddrMode.AbsoluteX, Op.Sta, Access.Write);
+        Set(0x1E, "ASL", AddrMode.AbsoluteX, Op.Asl, Access.ReadModifyWrite);
+        Set(0xFE, "INC", AddrMode.AbsoluteX, Op.Inc, Access.ReadModifyWrite);
+        Set(0x06, "ASL", AddrMode.ZeroPage,  Op.Asl, Access.ReadModifyWrite);
+
         // BIT gains an immediate form and two indexed ones.
         Set(0x89, "BIT", AddrMode.Immediate, Op.BitImm, Access.Read);
         Set(0x34, "BIT", AddrMode.ZeroPageX, Op.Bit, Access.Read);

@@ -41,21 +41,57 @@ internal sealed class MicroOpTable
     };
 
     /// <summary>
-    /// Which P-push micro-op a variant's BRK and hardware-interrupt sequences use.
+    /// The micro-ops a variant substitutes where the NMOS and CMOS families differ.
     /// </summary>
     /// <remarks>
-    /// The NMOS and CMOS families differ on exactly one cycle of every interrupt entry —
-    /// CMOS clears <c>D</c> and performs no NMI hijack — so the difference is resolved
-    /// here, once per variant at table-build time, by emitting a different micro-op. The
-    /// alternative, a variant test inside the micro-op itself, would put a branch on the
-    /// interrupt path and defeat the reason the variant is a type parameter at all.
+    /// Every one of these is resolved once per variant at table-build time, by emitting a
+    /// different micro-op rather than testing the variant inside a shared one. A test
+    /// inside the micro-op would put a branch on the per-cycle path and defeat the reason
+    /// the variant is a type parameter at all.
     /// </remarks>
-    private static (MicroOp Brk, MicroOp Interrupt) InterruptPushesFor(CpuVariant variant) => variant switch
+    private readonly record struct Sequences(
+        MicroOp BrkPushP,
+        MicroOp IntPushP,
+        MicroOp RmwMiddle,
+        MicroOp IndexFixup,
+        MicroOp ReadPageCross,
+        MicroOp RmwPageCross);
+
+    private static readonly Sequences Nmos = new(
+        MicroOp.PushPBrk, MicroOp.PushPInt,
+        MicroOp.RmwModifyWrite, MicroOp.DummyReadFixup,
+        MicroOp.ReadPageCross, MicroOp.DummyReadFixup);
+
+    private static readonly Sequences Cmos = new(
+        MicroOp.PushPBrkCmos, MicroOp.PushPIntCmos,
+        MicroOp.RmwModifyRead, MicroOp.IndexFixupCmos,
+        MicroOp.ReadPageCrossCmos, MicroOp.RmwPageCrossCmos);
+
+    private static Sequences SequencesFor(CpuVariant variant) => variant switch
     {
-        CpuVariant.Wdc65C02 or CpuVariant.Rockwell65C02 or CpuVariant.Synertek65C02 =>
-            (MicroOp.PushPBrkCmos, MicroOp.PushPIntCmos),
-        _ => (MicroOp.PushPBrk, MicroOp.PushPInt),
+        CpuVariant.Wdc65C02 or CpuVariant.Rockwell65C02 or CpuVariant.Synertek65C02 => Cmos,
+        _ => Nmos,
     };
+
+    /// <summary>
+    /// True for the indexed read-modify-writes that pay their fixup cycle unconditionally.
+    /// </summary>
+    /// <remarks>
+    /// On NMOS that is all of them. On CMOS the shift and rotate forms became conditional —
+    /// six cycles without a page cross, seven with — but <c>INC</c> and <c>DEC abs,X</c>
+    /// stayed at seven regardless. Measured across all six opcodes' vectors; no reading of
+    /// "read-modify-write does a dummy read instead of a dummy write" predicts the split.
+    /// </remarks>
+    private static bool IndexedRmwAlwaysPaysFixup(Sequences seq, Op op) =>
+        seq.RmwPageCross == MicroOp.DummyReadFixup || op is Op.Inc or Op.Dec;
+
+    /// <summary>
+    /// The fixup cycle an indexed write or read-modify-write pays after forming its address.
+    /// </summary>
+    private static MicroOp IndexedFixupFor(OpcodeInfo info, Sequences seq) =>
+        info.Access == Access.ReadModifyWrite && !IndexedRmwAlwaysPaysFixup(seq, info.Operation)
+            ? seq.RmwPageCross
+            : seq.IndexFixup;
 
     /// <summary>Every opcode's micro-op sequence, concatenated, each terminated by <see cref="MicroOp.End"/>.</summary>
     public readonly MicroOp[] Ops;
@@ -84,13 +120,13 @@ internal sealed class MicroOpTable
         Info = info;
         Entry = new ushort[256];
 
-        var pushes = InterruptPushesFor(variant);
+        var seq = SequencesFor(variant);
         var ops = new List<MicroOp>(2048);
 
         for (var opcode = 0; opcode < 256; opcode++)
         {
             Entry[opcode] = (ushort)ops.Count;
-            Emit(ops, info[opcode], pushes.Brk);
+            Emit(ops, info[opcode], seq);
             ops.Add(MicroOp.End);
         }
 
@@ -99,7 +135,7 @@ internal sealed class MicroOpTable
             MicroOp.IntDummy,
             MicroOp.PushPch,
             MicroOp.PushPcl,
-            pushes.Interrupt,
+            seq.IntPushP,
             MicroOp.VectorLo,
             MicroOp.VectorHi,
         ]);
@@ -134,7 +170,7 @@ internal sealed class MicroOpTable
         return count;
     }
 
-    private static void Emit(List<MicroOp> ops, OpcodeInfo info, MicroOp brkPushP)
+    private static void Emit(List<MicroOp> ops, OpcodeInfo info, Sequences seq)
     {
         if (info.Operation == Op.Undefined) return;
 
@@ -142,7 +178,7 @@ internal sealed class MicroOpTable
         // into an addressing phase plus an access phase.
         if (info.Mode == AddrMode.Stack)
         {
-            EmitStack(ops, info.Operation, brkPushP);
+            EmitStack(ops, info.Operation, seq.BrkPushP);
             return;
         }
 
@@ -218,14 +254,16 @@ internal sealed class MicroOpTable
             return;
         }
 
-        EmitAddressing(ops, info.Mode, info.Access);
-        EmitAccess(ops, info.Mode, info.Access);
+        EmitAddressing(ops, info, seq);
+        EmitAccess(ops, info, seq);
     }
 
     /// <summary>Emits the cycles that form the effective address, up to but excluding the access.</summary>
-    private static void EmitAddressing(List<MicroOp> ops, AddrMode mode, Access access)
+    private static void EmitAddressing(List<MicroOp> ops, OpcodeInfo info, Sequences seq)
     {
-        switch (mode)
+        var access = info.Access;
+
+        switch (info.Mode)
         {
             case AddrMode.ZeroPage:
                 ops.Add(MicroOp.FetchAddrLo);
@@ -245,14 +283,12 @@ internal sealed class MicroOpTable
 
             case AddrMode.AbsoluteX:
                 ops.AddRange([MicroOp.FetchAddrLo, MicroOp.FetchAddrHiX]);
-                // Writes and read-modify-writes always pay the fixup cycle; reads only
-                // pay it on an actual page cross, which ReadPageCross decides at run time.
-                if (access != Access.Read) ops.Add(MicroOp.DummyReadFixup);
+                if (access != Access.Read) ops.Add(IndexedFixupFor(info, seq));
                 break;
 
             case AddrMode.AbsoluteY:
                 ops.AddRange([MicroOp.FetchAddrLo, MicroOp.FetchAddrHiY]);
-                if (access != Access.Read) ops.Add(MicroOp.DummyReadFixup);
+                if (access != Access.Read) ops.Add(IndexedFixupFor(info, seq));
                 break;
 
             case AddrMode.IndexedIndirect:
@@ -267,24 +303,25 @@ internal sealed class MicroOpTable
 
             case AddrMode.IndirectIndexed:
                 ops.AddRange([MicroOp.FetchAddrLo, MicroOp.PtrReadLo, MicroOp.PtrReadHiY]);
-                if (access != Access.Read) ops.Add(MicroOp.DummyReadFixup);
+                if (access != Access.Read) ops.Add(IndexedFixupFor(info, seq));
                 break;
 
             default:
-                throw new InvalidOperationException($"{mode} has no addressing sequence.");
+                throw new InvalidOperationException($"{info.Mode} has no addressing sequence.");
         }
     }
 
     /// <summary>Emits the cycles that read, write, or read-modify-write the effective address.</summary>
-    private static void EmitAccess(List<MicroOp> ops, AddrMode mode, Access access)
+    private static void EmitAccess(List<MicroOp> ops, OpcodeInfo info, Sequences seq)
     {
+        var access = info.Access;
         var indexedRead = access == Access.Read &&
-                          mode is AddrMode.AbsoluteX or AddrMode.AbsoluteY or AddrMode.IndirectIndexed;
+                          info.Mode is AddrMode.AbsoluteX or AddrMode.AbsoluteY or AddrMode.IndirectIndexed;
 
         switch (access)
         {
             case Access.Read when indexedRead:
-                ops.AddRange([MicroOp.ReadPageCross, MicroOp.ReadExec]);
+                ops.AddRange([seq.ReadPageCross, MicroOp.ReadExec]);
                 break;
 
             case Access.Read:
@@ -296,7 +333,7 @@ internal sealed class MicroOpTable
                 break;
 
             case Access.ReadModifyWrite:
-                ops.AddRange([MicroOp.RmwRead, MicroOp.RmwModifyWrite, MicroOp.RmwWrite]);
+                ops.AddRange([MicroOp.RmwRead, seq.RmwMiddle, MicroOp.RmwWrite]);
                 break;
 
             default:

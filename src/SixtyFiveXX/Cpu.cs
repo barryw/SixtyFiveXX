@@ -466,6 +466,13 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 Exec();
                 break;
 
+            case MicroOp.RmwModifyRead:
+                // CMOS parts read instead. Same cycle, opposite direction — which matters
+                // to any bus with read or write side effects, not just to a cycle count.
+                _bus.Read(_addr);
+                Exec();
+                break;
+
             case MicroOp.RmwWrite:
                 _bus.Write(_addr, _data);
                 break;
@@ -519,6 +526,46 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             case MicroOp.DummyReadFixup:
                 _bus.Read(_addr);
                 if (_pageCross) _addr = (_addr + 0x100) & 0xFFFF;
+                break;
+
+            // The CMOS indexing fixups all read the last operand byte rather than the
+            // mis-indexed address. PC has advanced past the operand bytes by now, so that
+            // is PC - 1: $nnnn's high byte for the absolute-indexed modes, and the
+            // zero-page operand for (zp),Y.
+            case MicroOp.IndexFixupCmos:
+                _bus.Read((_s.PC - 1) & 0xFFFF);
+                if (_pageCross) _addr = (_addr + 0x100) & 0xFFFF;
+                break;
+
+            case MicroOp.ReadPageCrossCmos:
+                if (_pageCross)
+                {
+                    _bus.Read((_s.PC - 1) & 0xFFFF);
+                    _addr = (_addr + 0x100) & 0xFFFF;
+                }
+                else
+                {
+                    // No cross: this cycle is the real read, exactly as ReadPageCross does
+                    // it. The saving is that CMOS never reads the wrong address first.
+                    _data = _bus.Read(_addr);
+                    Exec();
+                    EndInstruction();
+                }
+                break;
+
+            case MicroOp.RmwPageCrossCmos:
+                if (_pageCross)
+                {
+                    _bus.Read((_s.PC - 1) & 0xFFFF);
+                    _addr = (_addr + 0x100) & 0xFFFF;
+                }
+                else
+                {
+                    // No cross: perform the RMW's own read here and skip the RmwRead that
+                    // follows, which is what makes these six cycles rather than seven.
+                    _data = _bus.Read(_addr);
+                    _mpc++;
+                }
                 break;
 
             case MicroOp.UnstableStoreFixup:
