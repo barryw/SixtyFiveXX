@@ -40,6 +40,13 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
 
     private Op _op;
 
+    /// <summary>
+    /// The opcode currently executing. Only the Rockwell bit operations consult it, to
+    /// recover the bit index the hardware decodes from bits 4-6 rather than carrying
+    /// thirty-two near-identical operations.
+    /// </summary>
+    private byte _opcode;
+
     /// <summary>The value being read, written, or modified by the current instruction.</summary>
     private byte _data;
 
@@ -69,6 +76,12 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
 
     /// <summary>Set by <c>JamHold</c>; cleared only by <see cref="Reset"/>.</summary>
     private bool _jammed;
+
+    /// <summary>Set by <c>StpHold</c>; cleared only by <see cref="Reset"/>.</summary>
+    private bool _stopped;
+
+    /// <summary>Set by <c>WaiHold</c>; cleared by any interrupt signal, or by <see cref="Reset"/>.</summary>
+    private bool _waiting;
 
     /// <summary>Current level on the IRQ pin. Level-sensitive, not latched.</summary>
     private bool _irqLine;
@@ -129,6 +142,18 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// does, but never executes another instruction.
     /// </summary>
     public bool IsJammed => _jammed;
+
+    /// <summary>
+    /// True while <c>STP</c> has halted the processor. WDC only; nothing but
+    /// <see cref="Reset"/> clears it.
+    /// </summary>
+    public bool IsStopped => _stopped;
+
+    /// <summary>
+    /// True while <c>WAI</c> is holding the processor. WDC only. Cleared by IRQ being
+    /// asserted or an NMI latched, whether or not <c>I</c> allows the interrupt to be taken.
+    /// </summary>
+    public bool IsWaiting => _waiting;
 
     /// <summary>The bus. Exposed so a caller holding only the CPU can reach its memory.</summary>
     public ref TBus Bus => ref _bus;
@@ -197,10 +222,11 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             // that actually read it (ReadExec, RmwRead, ReadPageCross, DummyReadFixup,
             // UnstableStoreFixup, ZpIndex*). Every other read micro-op — PC, stack, pointer
             // or vector reads — gets _addr's stale value here instead of its own, which is
-            // a real hazard on a bus with read side effects. No test pins the halted
-            // address yet. Upgrade path: derive the pending micro-op's true read address
-            // (a switch mirroring Execute) instead of hard-coding _addr.
-            _bus.Read(_mpc < 0 ? _s.PC : _addr);
+            // a real hazard on a bus with read side effects. Upgrade path: derive the
+            // pending micro-op's true read address (a switch mirroring Execute) instead of
+            // hard-coding _addr. WAI and STP are already handled below, because their holds
+            // are unbounded — see MicroOps.HoldsAtPc.
+            _bus.Read(_mpc < 0 || MicroOps.HoldsAtPc(_ops[_mpc]) ? _s.PC : _addr);
             return;
         }
 
@@ -278,6 +304,8 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
         _mpc = _table.ResetEntry;
         _jammed = false;
         _jamPhase = 0;
+        _stopped = false;
+        _waiting = false;
     }
 
     /// <summary>
@@ -286,7 +314,9 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// <remarks>
     /// Nothing inside this loop can release a held RDY line, so it never returns while
     /// RDY is expected to stay low on a read cycle. A caller driving RDY must step the
-    /// processor with <see cref="Tick"/> or <see cref="Run"/> instead.
+    /// processor with <see cref="Tick"/> or <see cref="Run"/> instead. For the same reason
+    /// it returns while <c>WAI</c> is holding: only the host can assert the interrupt that
+    /// releases it, so looping here would never terminate.
     /// </remarks>
     /// <returns>The number of cycles consumed.</returns>
     public long Step()
@@ -296,7 +326,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
         {
             Tick();
         }
-        while (_mpc >= 0 && !_jammed);
+        while (_mpc >= 0 && !_jammed && !_stopped && !_waiting);
 
         return _cycles - before;
     }
@@ -382,10 +412,16 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
         _s.PC++;
 
         var entry = _entry[opcode];
-        if (_ops[entry] == MicroOp.End) throw new UndefinedOpcodeException(opcode, pc);
+        var info = _table.Info[opcode];
 
-        _op = _table.Info[opcode].Operation;
-        _mpc = entry;
+        // Keyed off the descriptor rather than an empty sequence: the CMOS single-cycle
+        // NOPs are defined opcodes that emit no micro-ops at all, so "no micro-ops" and
+        // "not implemented" are no longer the same thing.
+        if (info.Operation == Op.Undefined) throw new UndefinedOpcodeException(opcode, pc);
+
+        _op = info.Operation;
+        _opcode = opcode;
+        _mpc = _ops[entry] == MicroOp.End ? -1 : entry;
     }
 
     /// <summary>Ends the current instruction; the next tick fetches an opcode.</summary>
@@ -403,6 +439,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
         Op.Bmi => _s.N,
         Op.Bvc => !_s.V,
         Op.Bvs => _s.V,
+        Op.Bra => true,
         _ => throw new InvalidOperationException($"{_op} is not a branch."),
     };
 
@@ -465,6 +502,50 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 Exec();
                 break;
 
+            case MicroOp.ReadExecCmosArith:
+                _data = _bus.Read(_addr);
+                if (_s.D) break;                 // decimal costs one more cycle: BcdExtra
+                Exec();
+                EndInstruction();
+                break;
+
+            case MicroOp.ImmExecCmosArith:
+                _data = _bus.Read(_s.PC);
+                _s.PC++;
+                if (_s.D) break;
+                Exec();
+                EndInstruction();
+                break;
+
+            case MicroOp.BcdExtra:
+                // ponytail: re-reads the effective address, which is what every memory
+                // addressing mode's vectors show. Immediate mode has no effective address
+                // and its vectors expect a fixed per-opcode constant instead — see
+                // CmosArithmeticTests. _addr is stale here for that mode.
+                _bus.Read(_addr);
+                Exec();
+                break;
+
+            case MicroOp.ReadPageCrossCmosArith:
+                if (_pageCross)
+                {
+                    _bus.Read((_s.PC - 1) & 0xFFFF);
+                    _addr = (_addr + 0x100) & 0xFFFF;
+                    break;
+                }
+                _data = _bus.Read(_addr);
+                if (_s.D) { _mpc++; break; }      // skip the read, land on BcdExtra
+                Exec();
+                EndInstruction();
+                break;
+
+            case MicroOp.RmwModifyRead:
+                // CMOS parts read instead. Same cycle, opposite direction — which matters
+                // to any bus with read or write side effects, not just to a cycle count.
+                _bus.Read(_addr);
+                Exec();
+                break;
+
             case MicroOp.RmwWrite:
                 _bus.Write(_addr, _data);
                 break;
@@ -518,6 +599,46 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             case MicroOp.DummyReadFixup:
                 _bus.Read(_addr);
                 if (_pageCross) _addr = (_addr + 0x100) & 0xFFFF;
+                break;
+
+            // The CMOS indexing fixups all read the last operand byte rather than the
+            // mis-indexed address. PC has advanced past the operand bytes by now, so that
+            // is PC - 1: $nnnn's high byte for the absolute-indexed modes, and the
+            // zero-page operand for (zp),Y.
+            case MicroOp.IndexFixupCmos:
+                _bus.Read((_s.PC - 1) & 0xFFFF);
+                if (_pageCross) _addr = (_addr + 0x100) & 0xFFFF;
+                break;
+
+            case MicroOp.ReadPageCrossCmos:
+                if (_pageCross)
+                {
+                    _bus.Read((_s.PC - 1) & 0xFFFF);
+                    _addr = (_addr + 0x100) & 0xFFFF;
+                }
+                else
+                {
+                    // No cross: this cycle is the real read, exactly as ReadPageCross does
+                    // it. The saving is that CMOS never reads the wrong address first.
+                    _data = _bus.Read(_addr);
+                    Exec();
+                    EndInstruction();
+                }
+                break;
+
+            case MicroOp.RmwPageCrossCmos:
+                if (_pageCross)
+                {
+                    _bus.Read((_s.PC - 1) & 0xFFFF);
+                    _addr = (_addr + 0x100) & 0xFFFF;
+                }
+                else
+                {
+                    // No cross: perform the RMW's own read here and skip the RmwRead that
+                    // follows, which is what makes these six cycles rather than seven.
+                    _data = _bus.Read(_addr);
+                    _mpc++;
+                }
                 break;
 
             case MicroOp.UnstableStoreFixup:
@@ -607,6 +728,56 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 // NMOS bug: the vector's high byte is fetched from the same page, so
                 // JMP ($xxFF) reads its high byte from $xx00.
                 _s.PC = (ushort)((_bus.Read((_ptr & 0xFF00) | ((_ptr + 1) & 0xFF)) << 8) | _tmp);
+                break;
+
+            case MicroOp.BitBranchDummy:
+                _bus.Read(_addr);
+                break;
+
+            case MicroOp.BitBranchFixup:
+                // Reads the address stashed by BitBranchFetch rather than the half-corrected
+                // PC an ordinary branch uses.
+                _bus.Read(_addr);
+                _s.PC = (ushort)(_s.PC + _branchFix);
+                break;
+
+            case MicroOp.BitBranchFetch:
+            {
+                var tested = _data;
+                _data = _bus.Read(_s.PC);
+                _s.PC++;
+                // The byte after the displacement, which both remaining cycles read. _addr
+                // held the zero-page address, which nothing needs from here on.
+                _addr = _s.PC;
+                var isSet = (tested & (1 << ((_opcode >> 4) & 7))) != 0;
+                if (_op == Op.Bbr ? isSet : !isSet) EndInstruction();
+                break;
+            }
+
+            case MicroOp.NopAbsExtraRead:
+                // The fourth cycle of the three-byte, four-cycle CMOS NOPs: a discarded
+                // re-read of the high operand byte, which PC has already passed.
+                _bus.Read((_s.PC - 1) & 0xFFFF);
+                break;
+
+            case MicroOp.JmpIndBugDummy:
+                // Read and discard, at exactly the address JmpIndHi would have used. When
+                // the pointer's low byte is not $FF this is the same address the next
+                // micro-op reads, which is why the non-wrapping case shows two adjacent
+                // reads of one location rather than an obviously wasted cycle.
+                _bus.Read((_ptr & 0xFF00) | ((_ptr + 1) & 0xFF));
+                break;
+
+            case MicroOp.PtrJmpHi:
+                _s.PC = (ushort)((_bus.Read((_ptr + 1) & 0xFFFF) << 8) | _tmp);
+                break;
+
+            case MicroOp.JmpAbsXDummy:
+                // The discarded read is at the first operand byte. PC has already advanced
+                // past both operand bytes, so that is PC - 2. Its address does not depend
+                // on the indexing, so there is no page-cross penalty to account for.
+                _bus.Read((_s.PC - 2) & 0xFFFF);
+                _addr = (_addr + _s.X) & 0xFFFF;
                 break;
 
             case MicroOp.PullPcl:
@@ -702,6 +873,33 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 _s.I = true;
                 break;
 
+            case MicroOp.PushPBrkCmos:
+                // The CMOS BRK push. The vector is still committed on this cycle, but the
+                // hijack the NMOS form performs here is simply absent — the 65C02 removed
+                // the anomaly, so a latched NMI stays latched and is taken after the
+                // handler's first instruction instead of stealing BRK's vector.
+                //
+                // The push happens before D is cleared, and that order is the behaviour:
+                // the byte on the stack carries D as the interrupted code left it, so RTI
+                // restores it, while the handler itself runs with D clear. Clearing first
+                // would silently corrupt the restored flag on every CMOS BRK.
+                _vector = IrqVector;
+                _bus.Write(0x0100 + _s.S, (byte)(_s.P | Flag.B | Flag.U));
+                _s.S--;
+                _s.I = true;
+                _s.D = false;
+                break;
+
+            case MicroOp.PushPIntCmos:
+                // The CMOS hardware-interrupt push. As PushPBrkCmos: no hijack, and D
+                // cleared after the push. _vector is left alone for the same reason
+                // PushPInt leaves it — only the dispatcher knows IRQ from NMI.
+                _bus.Write(0x0100 + _s.S, (byte)((_s.P | Flag.U) & ~Flag.B));
+                _s.S--;
+                _s.I = true;
+                _s.D = false;
+                break;
+
             case MicroOp.VectorLo:
                 // No hijack test here: by this cycle the vector-low address has already
                 // been formed (see PushPBrk). This is the plain read.
@@ -715,6 +913,20 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             case MicroOp.StackDummyReadDec:
                 _bus.Read(0x0100 + _s.S);
                 _s.S--;
+                break;
+
+            case MicroOp.WaiHold:
+                // The wake condition is the interrupt SIGNAL, not the poll: WAI resumes even
+                // with I set, and the instruction after WAI then runs instead of a handler.
+                _bus.Read(_s.PC);
+                if (_nmiPending || _irqLine) _waiting = false;
+                else { _waiting = true; _mpc--; }
+                break;
+
+            case MicroOp.StpHold:
+                _stopped = true;
+                _bus.Read(_s.PC);
+                _mpc--;                 // hold position: only Reset escapes
                 break;
 
             case MicroOp.JamHold:

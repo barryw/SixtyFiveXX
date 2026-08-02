@@ -33,6 +33,62 @@ internal enum Op : byte
     // Control flow
     Jmp, Jsr, Rts, Rti, Brk, Nop,
 
+    // CMOS additions.
+
+    /// <summary>Stores zero. CMOS only.</summary>
+    Stz,
+
+    /// <summary>Test and reset bits: Z from A AND M, then M &amp;= ~A. Read-modify-write. CMOS only.</summary>
+    Trb,
+
+    /// <summary>Test and set bits: Z from A AND M, then M |= A. Read-modify-write. CMOS only.</summary>
+    Tsb,
+
+    /// <summary>Branch always. CMOS only.</summary>
+    Bra,
+
+    /// <summary>
+    /// CMOS <c>ADC</c> and <c>SBC</c>. Decimal mode differs from NMOS in the accumulator
+    /// correction as well as the flags, so these are separate members rather than a variant
+    /// test inside <see cref="Adc"/>. Derived from the vectors, not a datasheet: N and Z
+    /// come from the final decimal result, while C and V are computed exactly as NMOS does
+    /// — so "correct N/V/Z" overstates it, V included. Verified against every decimal
+    /// vector of <c>$69</c>, <c>$72</c>, <c>$E9</c> and <c>$F2</c>.
+    /// </summary>
+    AdcCmos, SbcCmos,
+
+    /// <summary>
+    /// Rockwell's bit operations: reset or set one bit of a page-zero byte, and branch on
+    /// one bit of it being clear or set. The bit index is not part of the operation — it
+    /// comes from bits 4-6 of the opcode, exactly as the hardware decodes it, which is why
+    /// these are four members rather than thirty-two.
+    /// </summary>
+    Rmb, Smb, Bbr, Bbs,
+
+    /// <summary>WDC only. Halts until an interrupt is signalled.</summary>
+    Wai,
+
+    /// <summary>WDC only. Halts until reset.</summary>
+    Stp,
+
+    /// <summary>
+    /// The immediate form of BIT, which sets only Z. Every other addressing mode also
+    /// copies the operand's top two bits into N and V; this one does not, so it needs its
+    /// own member rather than a mode test inside <see cref="Bit"/>. Confirmed against all
+    /// 10,000 <c>$89</c> vectors, none of which alters N or V. CMOS only.
+    /// </summary>
+    BitImm,
+
+    // Index-register stack operations. CMOS only.
+    Phx, Phy, Plx, Ply,
+
+    /// <summary>
+    /// Increment and decrement the accumulator. Separate members for the same reason
+    /// <see cref="AslA"/> is separate from <see cref="Asl"/> — they take no effective
+    /// address. CMOS only.
+    /// </summary>
+    IncA, DecA,
+
     /// <summary>
     /// An undocumented NOP that still performs its addressing mode's read and discards
     /// the result. Distinct from <see cref="Nop"/> so the discarded read is deliberate.

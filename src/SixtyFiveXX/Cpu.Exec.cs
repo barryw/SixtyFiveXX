@@ -42,12 +42,30 @@ public sealed partial class Cpu<TBus, TVariant>
             case Op.Sta: _data = _s.A; break;
             case Op.Stx: _data = _s.X; break;
             case Op.Sty: _data = _s.Y; break;
+            case Op.Stz: _data = 0; break;
+
+            // Rockwell's bit set and reset, read-modify-writes over data. The bit index
+            // comes from the opcode, as it does in hardware. Neither touches any flag.
+            case Op.Rmb: _data = (byte)(_data & ~(1 << ((_opcode >> 4) & 7))); break;
+            case Op.Smb: _data = (byte)(_data | (1 << ((_opcode >> 4) & 7))); break;
+
+            // BBR and BBS do their work in BitBranchFetch; nothing remains for Exec.
+            case Op.Bbr:
+            case Op.Bbs:
+                break;
+
+            // Test-and-modify. Z comes from the AND, as for BIT, but N and V are left
+            // alone — unlike BIT, which takes them from the operand's top two bits.
+            case Op.Trb: _s.Z = (_s.A & _data) == 0; _data = (byte)(_data & ~_s.A); break;
+            case Op.Tsb: _s.Z = (_s.A & _data) == 0; _data = (byte)(_data | _s.A); break;
 
             // Memory increment and decrement, operating on _data in place.
             case Op.Inc: _data = (byte)(_data + 1); SetZN(_data); break;
             case Op.Dec: _data = (byte)(_data - 1); SetZN(_data); break;
 
             // Register increment and decrement.
+            case Op.IncA: _s.A = (byte)(_s.A + 1); SetZN(_s.A); break;
+            case Op.DecA: _s.A = (byte)(_s.A - 1); SetZN(_s.A); break;
             case Op.Inx: _s.X = (byte)(_s.X + 1); SetZN(_s.X); break;
             case Op.Dex: _s.X = (byte)(_s.X - 1); SetZN(_s.X); break;
             case Op.Iny: _s.Y = (byte)(_s.Y + 1); SetZN(_s.Y); break;
@@ -58,6 +76,10 @@ public sealed partial class Cpu<TBus, TVariant>
             case Op.Php: _data = (byte)(_s.P | Flag.B | Flag.U); break;
             case Op.Pla: _s.A = _data; SetZN(_s.A); break;
             case Op.Plp: _s.P = (byte)((_data & ~Flag.B) | Flag.U); break;
+            case Op.Phx: _data = _s.X; break;
+            case Op.Phy: _data = _s.Y; break;
+            case Op.Plx: _s.X = _data; SetZN(_s.X); break;
+            case Op.Ply: _s.Y = _data; SetZN(_s.Y); break;
 
             // Logic
             case Op.And: _s.A &= _data; SetZN(_s.A); break;
@@ -71,6 +93,9 @@ public sealed partial class Cpu<TBus, TVariant>
                 _s.N = (_data & 0x80) != 0;
                 _s.V = (_data & 0x40) != 0;
                 break;
+
+            // BIT immediate sets Z alone — see Op.BitImm.
+            case Op.BitImm: _s.Z = (_s.A & _data) == 0; break;
 
             // Compares
             case Op.Cmp: Compare(_s.A); break;
@@ -92,6 +117,8 @@ public sealed partial class Cpu<TBus, TVariant>
             // Arithmetic
             case Op.Adc: Adc(_data); break;
             case Op.Sbc: Sbc(_data); break;
+            case Op.AdcCmos: AdcCmos(_data); break;
+            case Op.SbcCmos: SbcCmos(_data); break;
 
             // Undocumented combination read-modify-writes. Each performs a documented
             // memory operation and then a documented ALU operation on the result.
@@ -250,6 +277,51 @@ public sealed partial class Cpu<TBus, TVariant>
         if (hi > 0x09) hi += 0x06;
         _s.C = hi > 0x0F;
         _s.A = (byte)((hi << 4) | (lo & 0x0F));
+    }
+
+    /// <summary>
+    /// CMOS ADC. Binary mode is identical to NMOS. Decimal mode keeps NMOS's C and V — V
+    /// still comes from the partially corrected high nibble, not from the binary sum — but
+    /// takes N and Z from the final decimal result.
+    /// </summary>
+    private void AdcCmos(byte value)
+    {
+        if (!_s.D) { Adc(value); return; }
+
+        var carry = _s.C ? 1 : 0;
+        var lo = (_s.A & 0x0F) + (value & 0x0F) + carry;
+        if (lo > 0x09) lo += 0x06;
+        var hi = (_s.A >> 4) + (value >> 4) + (lo > 0x0F ? 1 : 0);
+
+        _s.V = (~(_s.A ^ value) & (_s.A ^ (hi << 4)) & 0x80) != 0;
+
+        if (hi > 0x09) hi += 0x06;
+        _s.C = hi > 0x0F;
+        _s.A = (byte)((hi << 4) | (lo & 0x0F));
+        SetZN(_s.A);
+    }
+
+    /// <summary>
+    /// CMOS SBC. The decimal correction itself differs from NMOS, not only the flags: the
+    /// binary difference is adjusted by $60 and $06 rather than nibble-wise, which is what
+    /// makes invalid BCD inputs land differently. C and V stay binary, as on NMOS.
+    /// </summary>
+    private void SbcCmos(byte value)
+    {
+        if (!_s.D) { Sbc(value); return; }
+
+        var borrow = _s.C ? 0 : 1;
+        var binary = _s.A - value - borrow;
+
+        _s.C = binary >= 0;
+        _s.V = ((_s.A ^ value) & (_s.A ^ binary) & 0x80) != 0;
+
+        var result = binary;
+        if (result < 0) result -= 0x60;
+        if (((_s.A & 0x0F) - (value & 0x0F) - borrow) < 0) result -= 0x06;
+
+        _s.A = (byte)result;
+        SetZN(_s.A);
     }
 
     /// <summary>Subtract with borrow, in binary or NMOS decimal mode.</summary>

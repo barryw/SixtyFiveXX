@@ -24,14 +24,21 @@ public class VariantTests
     [Fact]
     public void For_ResolvesTheTableFromTVariantsVariant_NotSomethingHardcoded()
     {
-        // StubUnsupportedVariant reports CpuVariant.Wdc65C02, which the internal
-        // variant-to-table mapping has no entry for yet (only Mos6502 does today). If
-        // For<TVariant> ignored TVariant.Variant — e.g. always resolved the Mos6502 table
-        // regardless of the type argument — this call would silently succeed instead of
-        // throwing, proving nothing. It throws instead, so resolution genuinely depends on
-        // TVariant.Variant rather than something hardcoded to the 6502. The exception
-        // surfaces wrapped: the mapping runs inside a generic static field initialiser
-        // (Cache<TVariant>.Table), and the CLR wraps any exception thrown there in
+        // Two variants that both resolve successfully, to different tables. This is the
+        // direct form of the claim: resolution follows TVariant.Variant. It replaces an
+        // earlier version that inferred the same thing from an unsupported variant throwing
+        // — which held only while exactly one table existed, and silently stopped
+        // discriminating the moment phase 4 wired up a second one.
+        Assert.Same(Opcodes6502.Table, MicroOpTable.For<Mos6502Variant>().Info);
+        Assert.Same(Opcodes65C02.Table, MicroOpTable.For<StubCmosVariant>().Info);
+    }
+
+    [Fact]
+    public void For_ThrowsForAVariantWithNoTableYet()
+    {
+        // The 65816 is deferred indefinitely, so nothing maps it. The exception surfaces
+        // wrapped: the mapping runs inside a generic static field initialiser
+        // (Cache<TVariant>.Table), and the CLR wraps anything thrown there in
         // TypeInitializationException.
         var ex = Assert.Throws<TypeInitializationException>(
             () => MicroOpTable.For<StubUnsupportedVariant>());
@@ -59,13 +66,24 @@ public class VariantTests
     }
 
     /// <summary>
-    /// A variant that names a real <see cref="CpuVariant"/> member with no opcode table
-    /// wired up yet, used only to prove <see cref="MicroOpTable.For{TVariant}"/> resolves
-    /// its table by consulting <c>TVariant.Variant</c> rather than something hardcoded to
-    /// the 6502.
+    /// A variant naming a real <see cref="CpuVariant"/> member that has no opcode table and
+    /// is not scheduled to get one — the 65816 is out of scope for the variant-cores spec.
+    /// Deliberately not a 65C02 or the 6510: those acquire tables in phases 4 and 5, which
+    /// would quietly turn this test into a no-op.
     /// </summary>
     private readonly struct StubUnsupportedVariant : ICpuVariant
     {
-        public static CpuVariant Variant => CpuVariant.Wdc65C02;
+        public static CpuVariant Variant => CpuVariant.W65C816;
+    }
+
+    /// <summary>
+    /// A CMOS variant, used to prove table resolution follows <c>TVariant.Variant</c> by
+    /// landing on a different table than the 6502 does. A test-local stub rather than a
+    /// released variant struct, so this test does not depend on which 65C02 sub-variants
+    /// happen to be public yet.
+    /// </summary>
+    private readonly struct StubCmosVariant : ICpuVariant
+    {
+        public static CpuVariant Variant => CpuVariant.Synertek65C02;
     }
 }
