@@ -11,8 +11,29 @@ namespace SixtyFiveXX;
 /// </remarks>
 internal sealed class MicroOpTable
 {
-    /// <summary>The MOS 6502 table. Built once, on first use.</summary>
+    /// <summary>
+    /// The MOS 6502 table, built once, on first use. Retained alongside
+    /// <see cref="For{TVariant}"/> because <c>Cpu{TBus}</c> still binds to it directly; Task 2
+    /// switches that binding to <c>For&lt;Mos6502Variant&gt;()</c>, at which point this field
+    /// becomes redundant with it and can be removed.
+    /// </summary>
     public static readonly MicroOpTable Mos6502 = new(Opcodes6502.Table);
+
+    /// <summary>
+    /// The micro-op table for <typeparamref name="TVariant"/>, built once per variant and
+    /// cached for the lifetime of the process.
+    /// </summary>
+    /// <remarks>
+    /// A <c>static</c> field on a generic type is a distinct storage location per closed
+    /// generic type, so <see cref="Cache{TVariant}"/> gives each variant its own
+    /// lazily-built table with no dictionary lookup.
+    /// </remarks>
+    public static MicroOpTable For<TVariant>() where TVariant : ICpuVariant => Cache<TVariant>.Table;
+
+    private static class Cache<TVariant> where TVariant : ICpuVariant
+    {
+        public static readonly MicroOpTable Table = new(TVariant.OpcodeTable);
+    }
 
     /// <summary>Every opcode's micro-op sequence, concatenated, each terminated by <see cref="MicroOp.End"/>.</summary>
     public readonly MicroOp[] Ops;
