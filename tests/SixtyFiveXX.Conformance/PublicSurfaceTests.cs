@@ -33,6 +33,14 @@ namespace SixtyFiveXX.Conformance;
 /// pass while proving nothing. <c>MetadataReader</c> never resolves or executes anything, and
 /// needs no reference assemblies — which also means one code path reads both TFMs.
 /// </para>
+/// <para>
+/// Scope: types, not members. A public member cannot leak a type internal to this assembly
+/// — the compiler rejects that outright (CS0051/CS0053) — so the regression this exists for
+/// is doubly guarded. What it would not see is a public member typed on something from a
+/// <em>referenced</em> assembly, which never appears in this assembly's type definitions.
+/// Nothing on the public surface has such a dependency today; the day one does, this test
+/// is not the thing that will catch it.
+/// </para>
 /// </remarks>
 public class PublicSurfaceTests
 {
@@ -70,6 +78,8 @@ public class PublicSurfaceTests
         "SixtyFiveXX.Access",
         "SixtyFiveXX.MicroOp",
         "SixtyFiveXX.MicroOpTable",
+        "SixtyFiveXX.MicroOps",
+        "SixtyFiveXX.Opcodes6502",
     ];
 
     /// <summary>
@@ -179,11 +189,17 @@ public class PublicSurfaceTests
             }
         }
 
+        /// <summary>
+        /// Generous enough that a cold CI restore is not mistaken for a hang, short enough
+        /// that a real hang still surfaces as a failed test rather than a stuck pipeline.
+        /// </summary>
+        private static readonly TimeSpan PackTimeout = TimeSpan.FromMinutes(5);
+
         private static string Pack(string workspace)
         {
             var project = Path.Combine(RepositoryRoot(), "src", "SixtyFiveXX", "SixtyFiveXX.csproj");
 
-            var pack = Process.Start(new ProcessStartInfo("dotnet")
+            using var pack = Process.Start(new ProcessStartInfo("dotnet")
             {
                 ArgumentList = { "pack", project, "-c", "Release", "--artifacts-path", workspace },
                 RedirectStandardOutput = true,
@@ -194,7 +210,19 @@ public class PublicSurfaceTests
             // block on a full buffer and this test would hang rather than fail.
             var stdout = pack.StandardOutput.ReadToEndAsync();
             var stderr = pack.StandardError.ReadToEndAsync();
-            pack.WaitForExit();
+
+            // Bounded wait. Draining the pipes rules out a deadlock on our side, but not a
+            // pack that never finishes on its own — a stalled NuGet restore, a blocked feed,
+            // a global MSBuild lock held elsewhere. An unbounded wait would take the whole
+            // conformance run down with it (a minute of Harte and Klaus coverage in the same
+            // assembly), leaving recovery to whatever timeout CI happens to impose.
+            if (!pack.WaitForExit((int)PackTimeout.TotalMilliseconds))
+            {
+                pack.Kill(entireProcessTree: true);
+                throw new TimeoutException(
+                    $"'dotnet pack' did not finish within {PackTimeout} and was killed. " +
+                    "A restore that cannot reach its feed is the usual cause.");
+            }
 
             if (pack.ExitCode != 0)
                 throw new InvalidOperationException(
@@ -209,15 +237,27 @@ public class PublicSurfaceTests
 
         private static string RepositoryRoot()
         {
-            // The test binary sits at tests/<project>/bin/<config>/<tfm>/, but that depth is
-            // not worth hardcoding — walk up to the solution instead, which also survives
-            // the artifacts-path layout used in CI.
-            for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
-                if (File.Exists(Path.Combine(dir.FullName, "SixtyFiveXX.sln")))
-                    return dir.FullName;
+            // Stamped by the csproj at build time rather than discovered by walking up from
+            // AppContext.BaseDirectory. The walk looks obviously correct and is: the test
+            // binary really does sit under the repo today. But it silently assumes the
+            // output directory stays *inside* the checkout, and .NET's UseArtifactsOutput
+            // can move it out — at which point the walk finds no .sln and takes the whole
+            // conformance assembly down, not just this class. MSBuild already knows the
+            // answer for free, so there is nothing to assume.
+            var root = typeof(PublicSurfaceTests).Assembly
+                .GetCustomAttributes<AssemblyMetadataAttribute>()
+                .FirstOrDefault(a => a.Key == "RepositoryRoot")?.Value;
 
-            throw new InvalidOperationException(
-                $"No SixtyFiveXX.sln above {AppContext.BaseDirectory}.");
+            if (string.IsNullOrEmpty(root))
+                throw new InvalidOperationException(
+                    "No RepositoryRoot assembly metadata. It is set by an <AssemblyMetadata> " +
+                    "item in SixtyFiveXX.Conformance.csproj; the build stamps it.");
+
+            if (!File.Exists(Path.Combine(root, "SixtyFiveXX.sln")))
+                throw new InvalidOperationException(
+                    $"RepositoryRoot metadata points at '{root}', which holds no SixtyFiveXX.sln.");
+
+            return root;
         }
 
         private static string[] ReadPublicTypes(ZipArchiveEntry entry)
@@ -243,9 +283,12 @@ public class PublicSurfaceTests
             {
                 TypeAttributes.Public => true,
 
-                // A nested type is only reachable if every type enclosing it is too — which
-                // is what keeps MicroOpTable's private nested Cache<TVariant> out of the set
-                // even though its own flags say nothing about MicroOpTable being internal.
+                // A nested type is only reachable if every type enclosing it is too: its own
+                // flags say nothing about whether the type declaring it escapes the assembly.
+                // No type in the library reaches this branch today — MicroOpTable's
+                // Cache<TVariant> is NestedPrivate and stops at the default case below — so
+                // the first public or protected nested type anyone adds is its first live
+                // exercise.
                 TypeAttributes.NestedPublic or
                     TypeAttributes.NestedFamily or
                     TypeAttributes.NestedFamORAssem =>

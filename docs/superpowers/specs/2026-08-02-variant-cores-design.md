@@ -52,8 +52,8 @@ architecture spec governs.
 
 ## Phase 3 — the `ICpuVariant` refactor
 
-`Cpu<TBus>` binds `MicroOpTable` at construction, so no second variant can exist. This
-phase changes that and **nothing else**.
+`Cpu<TBus>` bound `MicroOpTable` at construction, so no second variant could exist. This
+phase changed that and **nothing else**. **Complete** — see §10 of the main design spec.
 
 The variant must be resolved at compile time, not through a runtime branch per micro-op —
 the engine's whole performance argument is that the tick loop is monomorphic. The shape is

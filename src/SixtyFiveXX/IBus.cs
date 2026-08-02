@@ -22,8 +22,8 @@ public interface IBus
 /// and conformance suites.
 /// </summary>
 /// <remarks>
-/// This is a <c>struct</c> so that a generic <c>Cpu&lt;TBus&gt;</c> core specializes against it
-/// and the JIT inlines every access down to a direct array index.
+/// This is a <c>struct</c> so that a generic <c>Cpu&lt;TBus, TVariant&gt;</c> core specializes
+/// against it and the JIT inlines every access down to a direct array index.
 /// </remarks>
 public readonly struct FlatBus : IBus
 {

@@ -191,6 +191,10 @@ public sealed partial class Cpu<TBus, TVariant>
     where TBus : struct, IBus
     where TVariant : struct, ICpuVariant
 {
+    public const int NmiVector   = 0xFFFA;
+    public const int ResetVector = 0xFFFC;
+    public const int IrqVector   = 0xFFFE;
+
     public Cpu(TBus bus);
 
     long Cycles { get; }
@@ -207,9 +211,16 @@ public sealed partial class Cpu<TBus, TVariant>
     bool AtInstructionBoundary { get; }
     bool IsJammed { get; }
 
-    void SetIrq(bool asserted);                  // level-sensitive; IrqAsserted reads it back
-    void SetNmi(bool asserted);                  // edge-latched;    NmiAsserted reads the line
-    void SetRdy(bool ready);                     // Ready reads it back
+    void SetIrq(bool asserted);                  // level-sensitive
+    bool IrqAsserted { get; }                    // the current pin level
+
+    void SetNmi(bool asserted);                  // edge-latched: only a low-to-high transition
+    bool NmiAsserted { get; }                    // the line, NOT the pending latch — false here
+                                                 // does not mean no NMI is pending
+
+    void SetRdy(bool ready);
+    bool Ready { get; }
+
     void SetSo();
 }
 
@@ -432,10 +443,10 @@ cores side by side. Second, `ICpuVariant` necessarily changes the public API, so
 adapter written before the refactor would be rewritten after it. Building the cores first
 costs later API feedback and buys a single clean cutover with full parity.
 
-**Why the variant refactor is its own phase.** `Cpu<TBus>` currently binds the 6502
-micro-op table at construction, so no second variant can exist until that changes. Doing
-it alone, gated on *zero behaviour change* against 2.56 M vectors and two Klaus programs,
-means any regression it introduces is attributable to the refactor and nothing else.
+**Why the variant refactor was its own phase.** `Cpu<TBus>` bound the 6502 micro-op table
+at construction, so no second variant could exist until that changed. Doing it alone, gated
+on *zero behaviour change* against 2.56 M vectors and two Klaus programs, meant any
+regression it introduced was attributable to the refactor and nothing else.
 
 Apple IIe, NES, and Apple IIgs personalities are follow-on work against the contract
 frozen in phase 8, and are out of scope for this spec.
