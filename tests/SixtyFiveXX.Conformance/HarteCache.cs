@@ -23,7 +23,10 @@ public static class HarteCache
         Environment.GetEnvironmentVariable("SIXTYFIVEXX_HARTE_DIR")
         ?? Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".harte-cache");
 
-    /// <summary>Loads every vector for one opcode, downloading and caching it on first use.</summary>
+    /// <summary>
+    /// Loads every vector for one opcode, downloading and caching it on first use. Returns
+    /// an empty array for opcodes the set deliberately has no vectors for.
+    /// </summary>
     /// <param name="set">The test set directory, for example <c>6502</c> or <c>wdc65c02</c>.</param>
     /// <param name="opcode">The opcode byte.</param>
     public static HarteCase[] Load(string set, byte opcode)
@@ -38,6 +41,13 @@ public static class HarteCache
         }
 
         using var stream = File.OpenRead(path);
+
+        // Upstream ships genuinely empty files for opcodes it has no vectors for — WDC's
+        // WAI and STP, which halt and so cannot be expressed as a before-and-after pair.
+        // That is a meaningful answer, not a corrupt download, so it is reported as "no
+        // cases" rather than thrown. HarteTests requires any such opcode to be declared.
+        if (stream.Length == 0) return [];
+
         return JsonSerializer.Deserialize<HarteCase[]>(stream, Json)
                ?? throw new InvalidOperationException($"{path} deserialized to null.");
     }

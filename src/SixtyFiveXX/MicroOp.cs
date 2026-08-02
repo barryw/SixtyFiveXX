@@ -303,6 +303,20 @@ internal enum MicroOp : byte
     End,
 
     /// <summary>
+    /// Holds the processor until an interrupt is signalled. WDC's <c>WAI</c>. The sequence
+    /// position is held, so this micro-op repeats until IRQ is asserted or an NMI is
+    /// latched — the <c>I</c> flag does not block the wake, only what happens afterwards.
+    /// </summary>
+    WaiHold,
+
+    /// <summary>
+    /// Holds the processor until reset. WDC's <c>STP</c>. Distinct from
+    /// <see cref="JamHold"/>: a JAM is a decode failure that drives a fixed address pattern,
+    /// while STP is a defined instruction that simply stops.
+    /// </summary>
+    StpHold,
+
+    /// <summary>
     /// Drives the address bus while jammed and never advances. The sequence position is
     /// held, so this micro-op repeats for as long as the clock runs.
     /// </summary>

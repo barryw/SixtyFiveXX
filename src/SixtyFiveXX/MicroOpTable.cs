@@ -38,6 +38,7 @@ internal sealed class MicroOpTable
         CpuVariant.Mos6502 => Opcodes6502.Table,
         CpuVariant.Synertek65C02 => Opcodes65C02.Table,
         CpuVariant.Rockwell65C02 => Opcodes65C02.RockwellTable,
+        CpuVariant.Wdc65C02 => Opcodes65C02.WdcTable,
         _ => throw new NotSupportedException($"No opcode table for {variant} yet."),
     };
 
@@ -243,6 +244,14 @@ internal sealed class MicroOpTable
                 MicroOp.FetchAddrLo, MicroOp.FetchAddrHi,
                 MicroOp.JmpAbsXDummy, MicroOp.JmpIndLo, MicroOp.PtrJmpHi,
             ]);
+            return;
+        }
+
+        if (info.Operation is Op.Wai or Op.Stp)
+        {
+            // Cycle 2 is a dummy read at PC, as for any implied instruction; the hold
+            // micro-op then repeats for as long as the condition lasts.
+            ops.AddRange([MicroOp.ImpliedDummy, info.Operation == Op.Wai ? MicroOp.WaiHold : MicroOp.StpHold]);
             return;
         }
 

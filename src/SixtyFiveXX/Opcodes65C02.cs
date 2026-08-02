@@ -31,6 +31,24 @@ internal static class Opcodes65C02
     /// </remarks>
     public static readonly OpcodeInfo[] RockwellTable = BuildRockwellTable();
 
+    /// <summary>
+    /// The WDC 65C02: Rockwell's table plus <c>WAI</c> and <c>STP</c>, which occupy two
+    /// opcodes that are NOPs on the other two sub-variants.
+    /// </summary>
+    public static readonly OpcodeInfo[] WdcTable = BuildWdcTable();
+
+    private static OpcodeInfo[] BuildWdcTable()
+    {
+        var t = (OpcodeInfo[])RockwellTable.Clone();
+
+        // Additive on Rockwell, as Rockwell is on the shared table: WDC has the bit
+        // operations too, so a third independent table would be a third place to drift.
+        t[0xCB] = new OpcodeInfo("WAI", AddrMode.Implied, Op.Wai, Access.None);
+        t[0xDB] = new OpcodeInfo("STP", AddrMode.Implied, Op.Stp, Access.None);
+
+        return t;
+    }
+
     private static OpcodeInfo[] BuildRockwellTable()
     {
         var t = (OpcodeInfo[])Table.Clone();

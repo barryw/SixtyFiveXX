@@ -37,6 +37,12 @@ public abstract class HarteTests<TVariant>(ITestOutputHelper output)
     protected abstract int ExpectedImplementedOpcodes { get; }
 
     /// <summary>
+    /// Opcodes the vector set deliberately ships no cases for. Declared by the derived
+    /// class so an absence is a stated fact rather than a silent gap.
+    /// </summary>
+    protected virtual IReadOnlySet<byte> OpcodesWithoutVectors => new HashSet<byte>();
+
+    /// <summary>
     /// The opcode descriptors the core actually resolved, rather than a table named
     /// directly. Asserting against the resolved table means a variant wired to the wrong
     /// table cannot pass by having the test look at the right one.
@@ -61,7 +67,20 @@ public abstract class HarteTests<TVariant>(ITestOutputHelper output)
     public void Opcode_MatchesEveryVector(byte opcode)
     {
         var cases = HarteCache.Load(Set, opcode);
-        Assert.NotEmpty(cases);
+
+        if (cases.Length == 0)
+        {
+            // Reported, never silent: an opcode with no vectors has no conformance
+            // coverage at all, and that has to be visible in the run rather than inferred
+            // from a green suite.
+            Assert.True(OpcodesWithoutVectors.Contains(opcode),
+                $"{Set} ${opcode:X2} has no vectors, and is not declared in " +
+                $"{nameof(OpcodesWithoutVectors)}. Either upstream changed, or this opcode " +
+                $"is silently uncovered.");
+
+            output.WriteLine($"{Set} ${opcode:X2} {Table[opcode].Mnemonic}: NO VECTORS — not covered here.");
+            return;
+        }
 
         // One 64 KB buffer and one log for the whole file. Allocating per vector would
         // mean 10,000 64 KB arrays per opcode, which dominates the suite's runtime.
@@ -121,11 +140,34 @@ public abstract class HarteTests<TVariant>(ITestOutputHelper output)
     public void Coverage_IsReportedHonestly()
     {
         var implemented = Table.Count(e => e.Operation != Op.Undefined);
+        var uncovered = OpcodesWithoutVectors.Order().ToArray();
 
-        output.WriteLine($"{Set}: {256 * 10_000:N0} vectors across 256 opcodes.");
+        output.WriteLine($"{Set}: {(256 - uncovered.Length) * 10_000:N0} vectors across " +
+                         $"{256 - uncovered.Length} opcodes.");
         output.WriteLine($"{implemented} of 256 opcodes are implemented.");
 
+        if (uncovered.Length > 0)
+            output.WriteLine($"NOT COVERED by this suite: " +
+                             $"{string.Join(", ", uncovered.Select(o => $"${o:X2} {Table[o].Mnemonic}"))}.");
+
         Assert.Equal(ExpectedImplementedOpcodes, implemented);
+    }
+
+    /// <summary>
+    /// Fails if an opcode declared as having no vectors turns out to have some.
+    /// </summary>
+    /// <remarks>
+    /// The declaration is a claim about upstream, and upstream can change. Without this,
+    /// vectors added later would be skipped forever and the suite would stay green while
+    /// quietly testing less than it could.
+    /// </remarks>
+    [Fact]
+    public void DeclaredUncoveredOpcodes_ReallyHaveNoVectors()
+    {
+        foreach (var opcode in OpcodesWithoutVectors)
+            Assert.True(HarteCache.Load(Set, opcode).Length == 0,
+                $"{Set} ${opcode:X2} now has vectors upstream. Remove it from " +
+                $"{nameof(OpcodesWithoutVectors)} so they are actually run.");
     }
 
     private static void AssertRegisters(HarteCase test, in CpuState actual)
@@ -221,6 +263,23 @@ public class Harte6502Tests(ITestOutputHelper output) : HarteTests<Mos6502Varian
 {
     /// <inheritdoc />
     protected override int ExpectedImplementedOpcodes => 256;
+}
+
+/// <summary>
+/// The WDC 65C02 against the <c>wdc65c02</c> vector set.
+/// </summary>
+/// <remarks>
+/// Upstream ships empty files for <c>$CB</c> and <c>$DB</c>: <c>WAI</c> and <c>STP</c> halt,
+/// so they cannot be expressed as a before-and-after vector for a single instruction. They
+/// are declared uncovered here and carried entirely by unit tests.
+/// </remarks>
+public class HarteWdc65C02Tests(ITestOutputHelper output) : HarteTests<Wdc65C02Variant>(output)
+{
+    /// <inheritdoc />
+    protected override int ExpectedImplementedOpcodes => 256;
+
+    /// <inheritdoc />
+    protected override IReadOnlySet<byte> OpcodesWithoutVectors => new HashSet<byte> { 0xCB, 0xDB };
 }
 
 /// <summary>The Rockwell 65C02 against the <c>rockwell65c02</c> vector set.</summary>

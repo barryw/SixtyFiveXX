@@ -14,11 +14,14 @@ namespace SixtyFiveXX.Conformance;
 /// instructions against each other across a real program.
 /// </para>
 /// <para>
-/// It is a gate for Rockwell only among the sub-variants implemented so far. The program
-/// uses <c>RMB</c>/<c>SMB</c>/<c>BBR</c>/<c>BBS</c>, which Synertek does not have — there
-/// they are NOPs, so the program would run and fail rather than fail to assemble. Synertek
-/// is carried by its Harte set alone, which is the whole reason the three sub-variants have
-/// separate vector sets.
+/// A gate for Rockwell and WDC, which both have the bit operations the program uses. It is
+/// deliberately not run for Synertek, where those opcodes are NOPs: the program would run
+/// and fail rather than fail to load, and Synertek is carried by its own vector set — which
+/// is the whole reason the three sub-variants have separate ones.
+/// </para>
+/// <para>
+/// The program does not use <c>WAI</c> or <c>STP</c>, so it adds nothing to WDC's coverage
+/// of those two. They have no vectors either; <c>WaiStpTests</c> is their entire gate.
 /// </para>
 /// </remarks>
 public class Klaus65C02Tests(ITestOutputHelper output)
@@ -30,10 +33,17 @@ public class Klaus65C02Tests(ITestOutputHelper output)
     private const long CycleCeiling = 500_000_000;
 
     [Fact]
-    public void ExtendedOpcodeTest_RunsToTheSuccessTrap()
+    public void ExtendedOpcodeTest_RunsToTheSuccessTrap_OnRockwell() =>
+        RunToSuccessTrap<Rockwell65C02Variant>();
+
+    [Fact]
+    public void ExtendedOpcodeTest_RunsToTheSuccessTrap_OnWdc() =>
+        RunToSuccessTrap<Wdc65C02Variant>();
+
+    private void RunToSuccessTrap<TVariant>() where TVariant : struct, ICpuVariant
     {
         var ram = KlausCache.Load("65C02_extended_opcodes_test.bin");
-        var cpu = new Cpu<FlatBus, Rockwell65C02Variant>(new FlatBus(ram));
+        var cpu = new Cpu<FlatBus, TVariant>(new FlatBus(ram));
         cpu.State.PC = StartAddress;
         cpu.State.S = 0xFD;
         cpu.State.P = Flag.U | Flag.I;
@@ -50,7 +60,7 @@ public class Klaus65C02Tests(ITestOutputHelper output)
             if (cpu.IsJammed) break;
         }
 
-        output.WriteLine($"Trapped at ${cpu.State.PC:X4} after {cpu.Cycles:N0} cycles.");
+        output.WriteLine($"{TVariant.Variant}: trapped at ${cpu.State.PC:X4} after {cpu.Cycles:N0} cycles.");
 
         Assert.False(cpu.IsJammed,
             $"The processor jammed at ${cpu.State.PC:X4} — an opcode was decoded wrongly.");

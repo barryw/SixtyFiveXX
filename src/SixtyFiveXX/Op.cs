@@ -65,6 +65,12 @@ internal enum Op : byte
     /// </summary>
     Rmb, Smb, Bbr, Bbs,
 
+    /// <summary>WDC only. Halts until an interrupt is signalled.</summary>
+    Wai,
+
+    /// <summary>WDC only. Halts until reset.</summary>
+    Stp,
+
     /// <summary>
     /// The immediate form of BIT, which sets only Z. Every other addressing mode also
     /// copies the operand's top two bits into N and V; this one does not, so it needs its

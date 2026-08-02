@@ -77,6 +77,12 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// <summary>Set by <c>JamHold</c>; cleared only by <see cref="Reset"/>.</summary>
     private bool _jammed;
 
+    /// <summary>Set by <c>StpHold</c>; cleared only by <see cref="Reset"/>.</summary>
+    private bool _stopped;
+
+    /// <summary>Set by <c>WaiHold</c>; cleared by any interrupt signal, or by <see cref="Reset"/>.</summary>
+    private bool _waiting;
+
     /// <summary>Current level on the IRQ pin. Level-sensitive, not latched.</summary>
     private bool _irqLine;
 
@@ -136,6 +142,18 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// does, but never executes another instruction.
     /// </summary>
     public bool IsJammed => _jammed;
+
+    /// <summary>
+    /// True while <c>STP</c> has halted the processor. WDC only; nothing but
+    /// <see cref="Reset"/> clears it.
+    /// </summary>
+    public bool IsStopped => _stopped;
+
+    /// <summary>
+    /// True while <c>WAI</c> is holding the processor. WDC only. Cleared by IRQ being
+    /// asserted or an NMI latched, whether or not <c>I</c> allows the interrupt to be taken.
+    /// </summary>
+    public bool IsWaiting => _waiting;
 
     /// <summary>The bus. Exposed so a caller holding only the CPU can reach its memory.</summary>
     public ref TBus Bus => ref _bus;
@@ -285,6 +303,8 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
         _mpc = _table.ResetEntry;
         _jammed = false;
         _jamPhase = 0;
+        _stopped = false;
+        _waiting = false;
     }
 
     /// <summary>
@@ -293,7 +313,9 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// <remarks>
     /// Nothing inside this loop can release a held RDY line, so it never returns while
     /// RDY is expected to stay low on a read cycle. A caller driving RDY must step the
-    /// processor with <see cref="Tick"/> or <see cref="Run"/> instead.
+    /// processor with <see cref="Tick"/> or <see cref="Run"/> instead. For the same reason
+    /// it returns while <c>WAI</c> is holding: only the host can assert the interrupt that
+    /// releases it, so looping here would never terminate.
     /// </remarks>
     /// <returns>The number of cycles consumed.</returns>
     public long Step()
@@ -303,7 +325,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
         {
             Tick();
         }
-        while (_mpc >= 0 && !_jammed);
+        while (_mpc >= 0 && !_jammed && !_stopped && !_waiting);
 
         return _cycles - before;
     }
@@ -890,6 +912,20 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             case MicroOp.StackDummyReadDec:
                 _bus.Read(0x0100 + _s.S);
                 _s.S--;
+                break;
+
+            case MicroOp.WaiHold:
+                // The wake condition is the interrupt SIGNAL, not the poll: WAI resumes even
+                // with I set, and the instruction after WAI then runs instead of a handler.
+                _bus.Read(_s.PC);
+                if (_nmiPending || _irqLine) _waiting = false;
+                else { _waiting = true; _mpc--; }
+                break;
+
+            case MicroOp.StpHold:
+                _stopped = true;
+                _bus.Read(_s.PC);
+                _mpc--;                 // hold position: only Reset escapes
                 break;
 
             case MicroOp.JamHold:
