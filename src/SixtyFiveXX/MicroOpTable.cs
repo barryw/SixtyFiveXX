@@ -24,19 +24,37 @@ internal sealed class MicroOpTable
 
     private static class Cache<TVariant> where TVariant : ICpuVariant
     {
-        public static readonly MicroOpTable Table = new(OpcodeTableFor(TVariant.Variant));
+        public static readonly MicroOpTable Table = new(OpcodeTableFor(TVariant.Variant), TVariant.Variant);
     }
 
     /// <summary>
     /// Maps a <see cref="CpuVariant"/> to its opcode descriptors. The one place a new core
-    /// wires its table in — Phase 4 adds a variant here. <c>TVariant.Variant</c> is a
-    /// compile-time constant per closed generic type, so <see cref="Cache{TVariant}"/>'s
-    /// field initialiser runs this switch once per variant, not on every access.
+    /// wires its table in. <c>TVariant.Variant</c> is a compile-time constant per closed
+    /// generic type, so <see cref="Cache{TVariant}"/>'s field initialiser runs this switch
+    /// once per variant, not on every access.
     /// </summary>
     private static OpcodeInfo[] OpcodeTableFor(CpuVariant variant) => variant switch
     {
         CpuVariant.Mos6502 => Opcodes6502.Table,
+        CpuVariant.Wdc65C02 or CpuVariant.Rockwell65C02 or CpuVariant.Synertek65C02 => Opcodes65C02.Table,
         _ => throw new NotSupportedException($"No opcode table for {variant} yet."),
+    };
+
+    /// <summary>
+    /// Which P-push micro-op a variant's BRK and hardware-interrupt sequences use.
+    /// </summary>
+    /// <remarks>
+    /// The NMOS and CMOS families differ on exactly one cycle of every interrupt entry —
+    /// CMOS clears <c>D</c> and performs no NMI hijack — so the difference is resolved
+    /// here, once per variant at table-build time, by emitting a different micro-op. The
+    /// alternative, a variant test inside the micro-op itself, would put a branch on the
+    /// interrupt path and defeat the reason the variant is a type parameter at all.
+    /// </remarks>
+    private static (MicroOp Brk, MicroOp Interrupt) InterruptPushesFor(CpuVariant variant) => variant switch
+    {
+        CpuVariant.Wdc65C02 or CpuVariant.Rockwell65C02 or CpuVariant.Synertek65C02 =>
+            (MicroOp.PushPBrkCmos, MicroOp.PushPIntCmos),
+        _ => (MicroOp.PushPBrk, MicroOp.PushPInt),
     };
 
     /// <summary>Every opcode's micro-op sequence, concatenated, each terminated by <see cref="MicroOp.End"/>.</summary>
@@ -61,17 +79,18 @@ internal sealed class MicroOpTable
     /// <summary>Index of the reset sequence in <see cref="Ops"/>.</summary>
     public readonly ushort ResetEntry;
 
-    private MicroOpTable(OpcodeInfo[] info)
+    private MicroOpTable(OpcodeInfo[] info, CpuVariant variant)
     {
         Info = info;
         Entry = new ushort[256];
 
+        var pushes = InterruptPushesFor(variant);
         var ops = new List<MicroOp>(2048);
 
         for (var opcode = 0; opcode < 256; opcode++)
         {
             Entry[opcode] = (ushort)ops.Count;
-            Emit(ops, info[opcode]);
+            Emit(ops, info[opcode], pushes.Brk);
             ops.Add(MicroOp.End);
         }
 
@@ -80,7 +99,7 @@ internal sealed class MicroOpTable
             MicroOp.IntDummy,
             MicroOp.PushPch,
             MicroOp.PushPcl,
-            MicroOp.PushPInt,
+            pushes.Interrupt,
             MicroOp.VectorLo,
             MicroOp.VectorHi,
         ]);
@@ -115,7 +134,7 @@ internal sealed class MicroOpTable
         return count;
     }
 
-    private static void Emit(List<MicroOp> ops, OpcodeInfo info)
+    private static void Emit(List<MicroOp> ops, OpcodeInfo info, MicroOp brkPushP)
     {
         if (info.Operation == Op.Undefined) return;
 
@@ -123,7 +142,7 @@ internal sealed class MicroOpTable
         // into an addressing phase plus an access phase.
         if (info.Mode == AddrMode.Stack)
         {
-            EmitStack(ops, info.Operation);
+            EmitStack(ops, info.Operation, brkPushP);
             return;
         }
 
@@ -257,7 +276,8 @@ internal sealed class MicroOpTable
         }
     }
 
-    private static void EmitStack(List<MicroOp> ops, Op op)
+    // brkPushP is the P-push micro-op BRK uses, NMOS or CMOS — see InterruptPushesFor.
+    private static void EmitStack(List<MicroOp> ops, Op op, MicroOp brkPushP)
     {
         switch (op)
         {
@@ -289,7 +309,7 @@ internal sealed class MicroOpTable
             case Op.Brk:
                 ops.AddRange([
                     MicroOp.BrkPad, MicroOp.PushPch, MicroOp.PushPcl,
-                    MicroOp.PushPBrk, MicroOp.VectorLo, MicroOp.VectorHi,
+                    brkPushP, MicroOp.VectorLo, MicroOp.VectorHi,
                 ]);
                 break;
 

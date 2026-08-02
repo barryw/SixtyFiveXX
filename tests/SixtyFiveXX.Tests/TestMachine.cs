@@ -26,25 +26,35 @@ public sealed class LoggingBus(byte[] ram, List<BusAccess> log) : IBus
 /// <summary>Builds CPUs for unit tests.</summary>
 public static class TestMachine
 {
-    /// <summary>A CPU over a plain 64 KB array, with <paramref name="program"/> loaded at PC.</summary>
-    public static (Cpu<FlatBus, Mos6502Variant> Cpu, byte[] Ram) Flat(ushort pc, params byte[] program)
+    /// <summary>A 6502 over a plain 64 KB array, with <paramref name="program"/> loaded at PC.</summary>
+    public static (Cpu<FlatBus, Mos6502Variant> Cpu, byte[] Ram) Flat(ushort pc, params byte[] program) =>
+        Flat<Mos6502Variant>(pc, program);
+
+    /// <summary>As <see cref="Flat(ushort, byte[])"/>, for any variant.</summary>
+    public static (Cpu<FlatBus, TVariant> Cpu, byte[] Ram) Flat<TVariant>(ushort pc, params byte[] program)
+        where TVariant : struct, ICpuVariant
     {
         var ram = new byte[0x10000];
         program.CopyTo(ram, pc);
-        var cpu = new Cpu<FlatBus, Mos6502Variant>(new FlatBus(ram));
+        var cpu = new Cpu<FlatBus, TVariant>(new FlatBus(ram));
         cpu.State.PC = pc;
         cpu.State.S = 0xFD;
         cpu.State.P = Flag.U | Flag.I;
         return (cpu, ram);
     }
 
-    /// <summary>A CPU whose every bus access is recorded, for cycle-by-cycle assertions.</summary>
-    public static (Cpu<RefBus, Mos6502Variant> Cpu, byte[] Ram, List<BusAccess> Log) Logged(ushort pc, params byte[] program)
+    /// <summary>A 6502 whose every bus access is recorded, for cycle-by-cycle assertions.</summary>
+    public static (Cpu<RefBus, Mos6502Variant> Cpu, byte[] Ram, List<BusAccess> Log) Logged(ushort pc, params byte[] program) =>
+        Logged<Mos6502Variant>(pc, program);
+
+    /// <summary>As <see cref="Logged(ushort, byte[])"/>, for any variant.</summary>
+    public static (Cpu<RefBus, TVariant> Cpu, byte[] Ram, List<BusAccess> Log) Logged<TVariant>(ushort pc, params byte[] program)
+        where TVariant : struct, ICpuVariant
     {
         var ram = new byte[0x10000];
         program.CopyTo(ram, pc);
         var log = new List<BusAccess>();
-        var cpu = new Cpu<RefBus, Mos6502Variant>(new RefBus(new LoggingBus(ram, log)));
+        var cpu = new Cpu<RefBus, TVariant>(new RefBus(new LoggingBus(ram, log)));
         cpu.State.PC = pc;
         cpu.State.S = 0xFD;
         cpu.State.P = Flag.U | Flag.I;

@@ -702,6 +702,33 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 _s.I = true;
                 break;
 
+            case MicroOp.PushPBrkCmos:
+                // The CMOS BRK push. The vector is still committed on this cycle, but the
+                // hijack the NMOS form performs here is simply absent — the 65C02 removed
+                // the anomaly, so a latched NMI stays latched and is taken after the
+                // handler's first instruction instead of stealing BRK's vector.
+                //
+                // The push happens before D is cleared, and that order is the behaviour:
+                // the byte on the stack carries D as the interrupted code left it, so RTI
+                // restores it, while the handler itself runs with D clear. Clearing first
+                // would silently corrupt the restored flag on every CMOS BRK.
+                _vector = IrqVector;
+                _bus.Write(0x0100 + _s.S, (byte)(_s.P | Flag.B | Flag.U));
+                _s.S--;
+                _s.I = true;
+                _s.D = false;
+                break;
+
+            case MicroOp.PushPIntCmos:
+                // The CMOS hardware-interrupt push. As PushPBrkCmos: no hijack, and D
+                // cleared after the push. _vector is left alone for the same reason
+                // PushPInt leaves it — only the dispatcher knows IRQ from NMI.
+                _bus.Write(0x0100 + _s.S, (byte)((_s.P | Flag.U) & ~Flag.B));
+                _s.S--;
+                _s.I = true;
+                _s.D = false;
+                break;
+
             case MicroOp.VectorLo:
                 // No hijack test here: by this cycle the vector-low address has already
                 // been formed (see PushPBrk). This is the plain read.

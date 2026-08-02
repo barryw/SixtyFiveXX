@@ -157,6 +157,22 @@ internal enum MicroOp : byte
     PushPInt,
 
     /// <summary>
+    /// The CMOS form of <see cref="PushPBrk"/>. Two deltas, both on this one cycle: no NMI
+    /// hijack, and <c>D</c> is cleared. The pushed byte still carries <c>D</c> as it was —
+    /// the flag is cleared for the handler, not for the pushed copy — so <c>RTI</c> restores
+    /// it. Write(0x100 + S, P) with B set; S--; set I; clear D.
+    /// </summary>
+    PushPBrkCmos,
+
+    /// <summary>
+    /// The CMOS form of <see cref="PushPInt"/>. As <see cref="PushPBrkCmos"/>: no hijack,
+    /// and <c>D</c> cleared after the push. A latched NMI is left latched, so it is taken
+    /// after the handler's first instruction rather than stealing this sequence's vector.
+    /// Write(0x100 + S, P) with B clear; S--; set I; clear D.
+    /// </summary>
+    PushPIntCmos,
+
+    /// <summary>
     /// tmp = Read(vector). On the BRK/interrupt path the vector was committed on the
     /// preceding <see cref="PushPBrk"/> or <see cref="PushPInt"/>. The reset sequence has no
     /// P push — it reaches this micro-op straight from <c>StackDummyReadDec</c> — so there
@@ -197,6 +213,7 @@ internal static class MicroOps
                      MicroOp.ExecWrite, MicroOp.RmwModifyWrite, MicroOp.RmwWrite,
                      MicroOp.PushPch, MicroOp.PushPcl, MicroOp.Push,
                      MicroOp.PushPBrk, MicroOp.PushPInt,
+                     MicroOp.PushPBrkCmos, MicroOp.PushPIntCmos,
                  })
         {
             writes[(int)op] = true;
