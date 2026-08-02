@@ -1,0 +1,193 @@
+#!/usr/bin/env bash
+# Tests for stamp-version.sh. Run: scripts/test-stamp-version.sh
+set -uo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+failures=0
+
+check() {
+    local version="$1" want_assembly="$2" want_file="$3"
+    local tmp; tmp="$(mktemp)"
+    cat > "$tmp" <<'EOF'
+<Project>
+  <PropertyGroup>
+    <Version>0.0.0</Version>
+    <AssemblyVersion>0.0.0.0</AssemblyVersion>
+    <FileVersion>0.0.0.0</FileVersion>
+  </PropertyGroup>
+</Project>
+EOF
+    "$here/stamp-version.sh" "$version" "$tmp"
+
+    local got_version got_assembly got_file
+    got_version=$(sed -n 's|.*<Version>\(.*\)</Version>.*|\1|p' "$tmp")
+    got_assembly=$(sed -n 's|.*<AssemblyVersion>\(.*\)</AssemblyVersion>.*|\1|p' "$tmp")
+    got_file=$(sed -n 's|.*<FileVersion>\(.*\)</FileVersion>.*|\1|p' "$tmp")
+
+    if [ "$got_version" = "$version" ] && [ "$got_assembly" = "$want_assembly" ] && [ "$got_file" = "$want_file" ]; then
+        echo "ok   $version -> Version=$got_version Assembly=$got_assembly File=$got_file"
+    else
+        echo "FAIL $version"
+        echo "     want Version=$version Assembly=$want_assembly File=$want_file"
+        echo "     got  Version=$got_version Assembly=$got_assembly File=$got_file"
+        failures=$((failures + 1))
+    fi
+    rm -f "$tmp"
+}
+
+check 0.3.1     0.3.0.0    0.3.1.0
+check 0.10.2    0.10.0.0   0.10.2.0
+check 0.1.0     0.1.0.0    0.1.0.0
+check 1.4.2     1.0.0.0    1.4.2.0
+check 1.0.0     1.0.0.0    1.0.0.0
+check 10.20.30  10.0.0.0   10.20.30.0
+check 2.0.1     2.0.0.0    2.0.1.0
+
+# A malformed version must fail loudly rather than writing nonsense.
+tmp="$(mktemp)"; echo "<Project></Project>" > "$tmp"
+if "$here/stamp-version.sh" "not-a-version" "$tmp" 2>/dev/null; then
+    echo "FAIL rejects malformed version"; failures=$((failures + 1))
+else
+    echo "ok   rejects malformed version"
+fi
+rm -f "$tmp"
+
+# A missing props file must fail loudly.
+if "$here/stamp-version.sh" "1.0.0" "/nonexistent/path" 2>/dev/null; then
+    echo "FAIL rejects missing props file"; failures=$((failures + 1))
+else
+    echo "ok   rejects missing props file"
+fi
+
+# A props file missing <AssemblyVersion> entirely must fail loudly, not
+# report success while leaving the element unwritten.
+tmp="$(mktemp)"
+cat > "$tmp" <<'EOF'
+<Project>
+  <PropertyGroup>
+    <Version>0.0.0</Version>
+    <FileVersion>0.0.0.0</FileVersion>
+  </PropertyGroup>
+</Project>
+EOF
+if "$here/stamp-version.sh" "1.0.0" "$tmp" 2>/dev/null; then
+    echo "FAIL rejects props file missing AssemblyVersion"; failures=$((failures + 1))
+else
+    echo "ok   rejects props file missing AssemblyVersion"
+fi
+rm -f "$tmp"
+
+# A <Version> element carrying an attribute (e.g. a Condition=) must not be
+# silently left untouched.
+tmp="$(mktemp)"
+cat > "$tmp" <<'EOF'
+<Project>
+  <PropertyGroup>
+    <Version Condition="'$(Foo)'=='bar'">0.0.0</Version>
+    <AssemblyVersion>0.0.0.0</AssemblyVersion>
+    <FileVersion>0.0.0.0</FileVersion>
+  </PropertyGroup>
+</Project>
+EOF
+if "$here/stamp-version.sh" "1.0.0" "$tmp" 2>/dev/null; then
+    echo "FAIL rejects Version element with an attribute"; failures=$((failures + 1))
+else
+    echo "ok   rejects Version element with an attribute"
+fi
+rm -f "$tmp"
+
+# A props file missing <FileVersion> entirely must fail loudly.
+tmp="$(mktemp)"
+cat > "$tmp" <<'EOF'
+<Project>
+  <PropertyGroup>
+    <Version>0.0.0</Version>
+    <AssemblyVersion>0.0.0.0</AssemblyVersion>
+  </PropertyGroup>
+</Project>
+EOF
+if "$here/stamp-version.sh" "1.0.0" "$tmp" 2>/dev/null; then
+    echo "FAIL rejects props file missing FileVersion"; failures=$((failures + 1))
+else
+    echo "ok   rejects props file missing FileVersion"
+fi
+rm -f "$tmp"
+
+# A stale comment carrying the value we're about to stamp, sitting before
+# the real (attributed, thus unstampable) <Version>, must not let the
+# verification pass just because the first textual match in the file
+# happens to already say the right thing.
+tmp="$(mktemp)"
+cat > "$tmp" <<'EOF'
+<Project>
+  <PropertyGroup>
+    <!-- <Version>1.0.0</Version> -->
+    <Version Condition="'$(Foo)'=='bar'">0.0.0</Version>
+    <AssemblyVersion>0.0.0.0</AssemblyVersion>
+    <FileVersion>0.0.0.0</FileVersion>
+  </PropertyGroup>
+</Project>
+EOF
+if "$here/stamp-version.sh" "1.0.0" "$tmp" 2>/dev/null; then
+    echo "FAIL rejects decoy comment masking an unstamped attributed Version"; failures=$((failures + 1))
+else
+    echo "ok   rejects decoy comment masking an unstamped attributed Version"
+fi
+rm -f "$tmp"
+
+# A second, conditional PropertyGroup with a stray <Version> alongside the
+# real one is ambiguous -- the script must refuse rather than guess which
+# element governs, even though both end up holding a value.
+tmp="$(mktemp)"
+cat > "$tmp" <<'EOF'
+<Project>
+  <PropertyGroup>
+    <Version>0.0.0</Version>
+    <AssemblyVersion>0.0.0.0</AssemblyVersion>
+    <FileVersion>0.0.0.0</FileVersion>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Debug'">
+    <Version>0.0.0</Version>
+  </PropertyGroup>
+</Project>
+EOF
+if "$here/stamp-version.sh" "1.0.0" "$tmp" 2>/dev/null; then
+    echo "FAIL rejects a second PropertyGroup with a stray Version"; failures=$((failures + 1))
+else
+    echo "ok   rejects a second PropertyGroup with a stray Version"
+fi
+rm -f "$tmp"
+
+# A decoy comment carrying a WRONG value, before an otherwise correctly
+# stampable bare <Version>, must be reported as ambiguous (a duplicate
+# occurrence) -- not as a wrong value -- so the operator is pointed at the
+# real problem (a second occurrence) rather than a red herring.
+tmp="$(mktemp)"
+cat > "$tmp" <<'EOF'
+<Project>
+  <PropertyGroup>
+    <!-- <Version>9.9.9</Version> -->
+    <Version>0.0.0</Version>
+    <AssemblyVersion>0.0.0.0</AssemblyVersion>
+    <FileVersion>0.0.0.0</FileVersion>
+  </PropertyGroup>
+</Project>
+EOF
+err="$("$here/stamp-version.sh" "1.0.0" "$tmp" 2>&1 >/dev/null)"
+rc=$?
+if [ "$rc" -eq 0 ]; then
+    echo "FAIL rejects decoy comment ambiguity (exited 0)"; failures=$((failures + 1))
+elif ! echo "$err" | grep -q "ambiguous"; then
+    echo "FAIL rejects decoy comment ambiguity (message did not say ambiguous)"
+    echo "     got: $err"
+    failures=$((failures + 1))
+else
+    echo "ok   rejects decoy comment ambiguity, with an ambiguous (not wrong-value) message"
+fi
+rm -f "$tmp"
+
+if [ "$failures" -eq 0 ]; then
+    echo "All stamp-version tests passed."
+else
+    echo "$failures test(s) failed."; exit 1
+fi

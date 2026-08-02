@@ -47,6 +47,7 @@
 - **The plugin has a bats test suite** at `plugin/test/*.bats` covering `changelog`, `cog`, `git`, `github_release`.
 - **`cog changelog --at <tag>` emits exactly one version's section.** The tag argument must include the `v` prefix, matching `tag_prefix = "v"`.
 - **SixtyFiveXX compiles clean on `net8.0`** — proven by building both TFMs under `TreatWarningsAsErrors`: zero warnings, no `#if`.
+- **Both test projects are multi-targeted, so `net8.0` is genuinely certified.** Multi-targeting only the library would have published a target nothing executed: a test project keeps its own TFM, and its `ProjectReference` resolves whichever TFM the *test* project targets. Measured after the change — unit 307/307 and conformance 259/259 on **each** TFM, with no behavioural difference between them. The benchmarks stay single-targeted; running them twice measures nothing extra.
 - **SixtyFiveXX has no git tags**, so cog starts clean at `v0.1.0` per `woodpecker-release/README.md` Step 2.
 - **`apt-get install -y --no-install-recommends 64tass` works** in `mcr.microsoft.com/dotnet/sdk:10.0`, verified end-to-end in Docker.
 - **The SDK 10 image has no .NET 8 runtime**, so `dotnet test` against the `net8.0` TFM fails without one being installed.
@@ -87,6 +88,8 @@ NovaVM has moved to short-lived **GitHub App installation tokens** (`/plugin/min
 | `scripts/test-stamp-version.sh` | Create: its test |
 | `Directory.Build.props` | Modify: version block, fix `RepositoryUrl`, drop `TargetFramework` |
 | `src/SixtyFiveXX/SixtyFiveXX.csproj` | Modify: multi-target, package metadata |
+| `tests/SixtyFiveXX.Tests/SixtyFiveXX.Tests.csproj` | Modify: multi-target, so the net8.0 binary is actually tested |
+| `tests/SixtyFiveXX.Conformance/SixtyFiveXX.Conformance.csproj` | Modify: same, so the certification claim holds for both TFMs |
 | `cog.toml` | Create: house file + this repo's stamp hook |
 | `CONTRIBUTING.md` | Create: commit convention and hook install |
 | `docker/ci.Dockerfile` | Create: SDK 10 + .NET 8 runtime + 64tass |
@@ -328,8 +331,6 @@ steps:
     environment:
       NUGET_KEY:
         from_secret: nuget_api_key
-      GH_TOKEN:
-        from_secret: github_token
     commands:
       - 'VERSION=$(cat /woodpecker/version.txt 2>/dev/null || echo "NONE")'
       - 'test "$VERSION" != "NONE" || { echo "No new version, skipping publish"; exit 0; }'
@@ -338,17 +339,37 @@ steps:
       - 'git checkout "$VERSION"'
       - 'dotnet pack {{.pack_project}} -c Release -o ./artifacts -p:ContinuousIntegrationBuild=true'
       - 'dotnet nuget push "./artifacts/*.nupkg" -k $NUGET_KEY -s https://api.nuget.org/v3/index.json --skip-duplicate'
-      - 'gh release upload "$VERSION" ./artifacts/*.nupkg ./artifacts/*.snupkg --repo "$CI_REPO" --clobber'
-      - 'gh release edit "$VERSION" --draft=false --repo "$CI_REPO"'
     depends_on: [release]
+
+  - name: finalize-release
+    image: ghcr.io/barryw/woodpecker-release:latest
+    pull: true
+    when:
+      - event: push
+        branch: main
+    environment:
+      GH_TOKEN:
+        from_secret: github_token
+    commands:
+      - 'VERSION=$(cat /woodpecker/version.txt 2>/dev/null || echo "NONE")'
+      - 'test "$VERSION" != "NONE" || { echo "No new version, nothing to finalize"; exit 0; }'
+      - '. /plugin/lib/github_release.sh'
+      - 'ASSETS=$(ls ./artifacts/*.nupkg ./artifacts/*.snupkg 2>/dev/null | tr "\n" " " || true)'
+      - 'if [ -n "$ASSETS" ]; then github_release_upload "$VERSION" $ASSETS; fi'
+      - 'github_release_publish "$VERSION"'
+    depends_on: [nuget-publish]
 {{end}}
 ```
 
-Two details that are load-bearing:
+Three details that are load-bearing:
 
 `git checkout "$VERSION"` — the release step created a commit (the stamped `Directory.Build.props`) and a tag. The workspace is still on the pre-bump commit, so packing without checking out the tag would build the *previous* version's files. This is how the tag, the project files and the package are guaranteed to carry the same version.
 
-`gh release edit --draft=false` is the **last** command. Everything that can fail has already succeeded.
+**`finalize-release` runs on the plugin image, not `sdk_image`.** The `gh` CLI is **not** present in `mcr.microsoft.com/dotnet/sdk:10.0` — verified by running it — so calling `gh` from the publish step would fail with `command not found` for any repo using a stock SDK image. The plugin image carries `gh` 2.67.0 and exposes its helpers at `/plugin/lib/*.sh` (`plugin/Dockerfile:31`), so sourcing `github_release.sh` gives this step `github_release_upload` and `github_release_publish` — the same implementations the plugin itself uses, rather than a second hand-rolled copy of the same `gh` invocations.
+
+`github_release_publish` is the **last** command in the pipeline. Everything that can fail has already succeeded, so the Release only becomes public once the package is genuinely on nuget.org.
+
+**The asset list is built with `ls`, not passed as a bare glob.** A project that does not set `IncludeSymbols` produces no `.snupkg`, and an unmatched shell glob is passed through *literally* — `gh` would then fail on a nonexistent path, aborting the step before `github_release_publish` runs. The package would be on nuget.org while its Release stayed a draft forever. Guarding with `if [ -n "$ASSETS" ]` also covers the case where neither file exists, and keeps the step from failing under `set -e` when the test is false.
 
 - [ ] **Step 2: Verify the template renders**
 
@@ -379,7 +400,7 @@ EOF
 go run /tmp/render_test.go
 ```
 
-Expected: both render. **Check by eye:** the minimal output has no `conformance` step and no `nuget-publish` step, and its `release` step has `PLUGIN_DRAFT: "false"`; the maximal output has both steps, `PLUGIN_DRAFT: "true"`, and `depends_on: [validate-commits, test, conformance]`.
+Expected: both render. **Check by eye:** the minimal output has no `conformance`, `nuget-publish` or `finalize-release` step, and its `release` step has `PLUGIN_DRAFT: "false"`; the maximal output has all three, `PLUGIN_DRAFT: "true"`, `depends_on: [validate-commits, test, conformance]` on `release`, and a `finalize-release` step running on `ghcr.io/barryw/woodpecker-release:latest` rather than on `sdk_image`.
 
 - [ ] **Step 3: Verify both renderings are valid YAML**
 
@@ -451,7 +472,7 @@ data:
 In the "Available Templates" table, after the `release-docker` row:
 
 ```markdown
-| `release-dotnet-library` | validate-commits → build → test → [conformance] → release (draft) → nuget-publish | .NET libraries published to NuGet |
+| `release-dotnet-library` | validate-commits → build → test → [conformance] → release (draft) → nuget-publish → finalize-release | .NET libraries published to NuGet |
 ```
 
 - [ ] **Step 3: Add `nuget_api_key` to the secrets table**
@@ -1099,10 +1120,11 @@ python3 -c "import yaml; yaml.safe_load(open('/tmp/rendered.yaml')); print('vali
 
 Then read `/tmp/rendered.yaml` and confirm, by eye:
 
-- `release` and `nuget-publish` both carry `when: event: push, branch: main`.
-- `nuget-publish` has `depends_on: [release]`.
+- `release`, `nuget-publish` and `finalize-release` all carry `when: event: push, branch: main`.
+- `nuget-publish` has `depends_on: [release]`; `finalize-release` has `depends_on: [nuget-publish]`.
 - `release` has `PLUGIN_DRAFT: "true"`.
-- The last command in `nuget-publish` is `gh release edit ... --draft=false`.
+- `finalize-release` runs on `ghcr.io/barryw/woodpecker-release:latest`, **not** on `sdk_image` — the SDK image has no `gh` CLI.
+- The last command in `finalize-release` is `github_release_publish "$VERSION"`.
 - The conformance step runs `klaus/build.sh` before `dotnet test`.
 
 ```bash
@@ -1148,6 +1170,24 @@ These cannot be done from the plan; they need UI access or credentials.
 5. **Install the commit hook** on each development machine: `cog install-hook --all`.
 6. **Land Part B.** The first merge to `main` carrying a `feat:` or `fix:` releases `v0.1.0` — cog's clean-start value for a repo with no tags.
 7. **Watch the first release end to end** and confirm: the tag exists; `Directory.Build.props` on `main` shows the released version; the GitHub Release is public with grouped notes; nuget.org lists the package with both TFMs; and the `.nupkg`/`.snupkg` are attached to the Release.
+
+### Recovering a half-completed release
+
+**Re-running the pipeline is a silent no-op, not a recovery.** `cog bump` finds the
+tag already exists, writes `NONE` to `/woodpecker/version.txt`, and every downstream
+step exits 0 early on that guard — the pipeline goes green while the Release may
+still be an unpublished draft and no package exists. Diagnose the actual state by
+hand before re-running anything:
+
+- **Tag pushed, package published, Release still a draft** — the publish succeeded
+  but `finalize-release` didn't run or didn't complete. Publish it by hand:
+  `gh release edit vX.Y.Z --draft=false --repo barryw/SixtyFiveXX`.
+- **Tag pushed, package never published** — the version number is burned: nuget.org
+  will accept it later, but the tag already claims it, and a re-run will not retry
+  the publish. Either publish the package manually from that tag
+  (`git checkout vX.Y.Z && dotnet pack ... && dotnet nuget push ...`), or delete the
+  tag and the draft Release and let the next merge to `main` redo the release from
+  scratch.
 
 ## Self-review notes
 

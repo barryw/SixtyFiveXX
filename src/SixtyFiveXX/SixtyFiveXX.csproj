@@ -1,14 +1,25 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
   <PropertyGroup>
-    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PackageId>SixtyFiveXX</PackageId>
+    <Description>A cycle-accurate NMOS 6502 emulator core. All 256 opcodes, including the undocumented ones, certified against 2,560,000 SingleStepTests vectors, Klaus Dormann's functional test, and a port of his interrupt test validating NMOS BRK/NMI hijack behaviour. Interrupts, RDY and SO with hardware-correct timing.</Description>
+    <PackageTags>6502;emulator;nmos;cpu;retro;c64;nes;cycle-accurate</PackageTags>
+    <PackageProjectUrl>https://github.com/barryw/SixtyFiveXX</PackageProjectUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
 
   <ItemGroup>
     <InternalsVisibleTo Include="SixtyFiveXX.Tests" />
