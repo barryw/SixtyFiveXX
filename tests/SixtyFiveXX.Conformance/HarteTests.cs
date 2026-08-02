@@ -5,12 +5,20 @@ using Xunit.Abstractions;
 namespace SixtyFiveXX.Conformance;
 
 /// <summary>
-/// Runs every SingleStepTests vector for all 256 6502 opcodes, checking the final
+/// Runs every SingleStepTests vector for all 256 opcodes of one variant, checking the final
 /// register file, the named RAM bytes, and the exact per-cycle bus activity.
 /// </summary>
-public class Harte6502Tests(ITestOutputHelper output)
+/// <typeparam name="TVariant">The core under test. Also selects which vector set to run.</typeparam>
+/// <remarks>
+/// Generic so each variant is a gate of its own rather than a copy of this harness. A
+/// derived class supplies nothing but the variant and its expected coverage — the vector
+/// set name and the opcode table both follow from <typeparamref name="TVariant"/>, so a
+/// core cannot be certified against the wrong set by a copy-paste slip.
+/// </remarks>
+public abstract class HarteTests<TVariant>(ITestOutputHelper output)
+    where TVariant : struct, ICpuVariant
 {
-    /// <summary>Every opcode. All 256 are implemented as of Phase 2a.</summary>
+    /// <summary>Every opcode. All 256 are tested; a variant leaving some undefined still has vectors for them.</summary>
     public static TheoryData<byte> AllOpcodes
     {
         get
@@ -21,18 +29,50 @@ public class Harte6502Tests(ITestOutputHelper output)
         }
     }
 
+    /// <summary>
+    /// How many of the 256 opcodes this variant is expected to implement. Stated by the
+    /// derived class rather than measured, so a table that silently loses entries fails
+    /// instead of quietly reporting a smaller number.
+    /// </summary>
+    protected abstract int ExpectedImplementedOpcodes { get; }
+
+    /// <summary>
+    /// The opcode descriptors the core actually resolved, rather than a table named
+    /// directly. Asserting against the resolved table means a variant wired to the wrong
+    /// table cannot pass by having the test look at the right one.
+    /// </summary>
+    private static OpcodeInfo[] Table => MicroOpTable.For<TVariant>().Info;
+
+    /// <summary>
+    /// The SingleStepTests directory for this variant. Derived from the variant so it
+    /// cannot drift from the core being run.
+    /// </summary>
+    private static string Set => TVariant.Variant switch
+    {
+        CpuVariant.Mos6502 => "6502",
+        CpuVariant.Wdc65C02 => "wdc65c02",
+        CpuVariant.Rockwell65C02 => "rockwell65c02",
+        CpuVariant.Synertek65C02 => "synertek65c02",
+        var v => throw new NotSupportedException($"No SingleStepTests set for {v}."),
+    };
+
     [Theory]
     [MemberData(nameof(AllOpcodes))]
     public void Opcode_MatchesEveryVector(byte opcode)
     {
-        var cases = HarteCache.Load("6502", opcode);
+        var cases = HarteCache.Load(Set, opcode);
         Assert.NotEmpty(cases);
 
         // One 64 KB buffer and one log for the whole file. Allocating per vector would
         // mean 10,000 64 KB arrays per opcode, which dominates the suite's runtime.
         var ram = new byte[0x10000];
         var log = new List<Cycle>(16);
-        Cpu<HarteBus, Mos6502Variant> cpu = new(new HarteBus(ram, log));
+        Cpu<HarteBus, TVariant> cpu = new(new HarteBus(ram, log));
+
+        // A JAM opcode never reaches an instruction boundary, so Step() cannot drive it.
+        // Read from the resolved table rather than assuming: the NMOS core has twelve, and
+        // no 65C02 has any.
+        var jams = Table[opcode].Operation == Op.Jam;
 
         foreach (var test in cases)
         {
@@ -51,10 +91,9 @@ public class Harte6502Tests(ITestOutputHelper output)
                 P = test.Initial.P,
             };
 
-            // A JAM opcode never reaches an instruction boundary, so Step() cannot drive
-            // it. Tick exactly as many cycles as the vector records instead.
-            if (Opcodes6502.Table[opcode].Operation == Op.Jam)
+            if (jams)
             {
+                // Tick exactly as many cycles as the vector records instead.
                 for (var i = 0; i < test.Cycles.Length; i++) cpu.Tick();
             }
             else
@@ -67,26 +106,26 @@ public class Harte6502Tests(ITestOutputHelper output)
             AssertCycles(test, log);
 
             // A jammed core never executes again. Replace it so the next vector starts
-            // from a working CPU. Only the twelve JAM opcodes ever take this path.
-            if (cpu.IsJammed) cpu = new Cpu<HarteBus, Mos6502Variant>(new HarteBus(ram, log));
+            // from a working CPU. Only JAM opcodes ever take this path.
+            if (cpu.IsJammed) cpu = new Cpu<HarteBus, TVariant>(new HarteBus(ram, log));
         }
 
-        output.WriteLine($"${opcode:X2} {Opcodes6502.Table[opcode].Mnemonic}: {cases.Length} vectors passed.");
+        output.WriteLine($"{Set} ${opcode:X2} {Table[opcode].Mnemonic}: {cases.Length} vectors passed.");
     }
 
     /// <summary>
-    /// Records how much of the opcode space this phase covers, so a green suite is
+    /// Records how much of the opcode space this variant covers, so a green suite is
     /// never mistaken for complete coverage.
     /// </summary>
     [Fact]
     public void Coverage_IsReportedHonestly()
     {
-        var implemented = Opcodes6502.Table.Count(e => e.Operation != Op.Undefined);
+        var implemented = Table.Count(e => e.Operation != Op.Undefined);
 
-        output.WriteLine($"Phase 2a runs all 256 opcodes ({256 * 10_000:N0} vectors).");
+        output.WriteLine($"{Set}: {256 * 10_000:N0} vectors across 256 opcodes.");
         output.WriteLine($"{implemented} of 256 opcodes are implemented.");
 
-        Assert.Equal(256, implemented);
+        Assert.Equal(ExpectedImplementedOpcodes, implemented);
     }
 
     private static void AssertRegisters(HarteCase test, in CpuState actual)
@@ -132,4 +171,11 @@ public class Harte6502Tests(ITestOutputHelper output)
     private static string Describe(HarteCase test) =>
         string.Join(" ", test.Cycles.Select(c =>
             $"[${c[0].GetInt32():X4}, ${c[1].GetByte():X2}, {c[2].GetString()}]"));
+}
+
+/// <summary>The NMOS 6502 against the <c>6502</c> vector set. Certified since phase 2a.</summary>
+public class Harte6502Tests(ITestOutputHelper output) : HarteTests<Mos6502Variant>(output)
+{
+    /// <inheritdoc />
+    protected override int ExpectedImplementedOpcodes => 256;
 }
