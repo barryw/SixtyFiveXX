@@ -60,13 +60,26 @@ public static class HarteCache
             response.EnsureSuccessStatusCode();
 
             // Write via a temporary file so a cancelled run cannot leave a truncated
-            // cache entry that later passes File.Exists.
-            var temp = destination + ".partial";
-            using (var file = File.Create(temp))
+            // cache entry that later passes File.Exists. The name is unique per writer,
+            // not a fixed ".partial": a multi-targeted `dotnet test` runs its frameworks
+            // concurrently against one cache directory, and in CI that directory is a
+            // shared volume — two writers on one fixed path would interleave into a
+            // corrupt file that both then published. The move is atomic and the content
+            // identical, so whichever lands last is still correct.
+            var temp = $"{destination}.{Environment.ProcessId}-{Environment.CurrentManagedThreadId}.partial";
+            try
             {
-                response.Content.CopyToAsync(file).GetAwaiter().GetResult();
+                using (var file = File.Create(temp))
+                {
+                    response.Content.CopyToAsync(file).GetAwaiter().GetResult();
+                }
+                File.Move(temp, destination, overwrite: true);
             }
-            File.Move(temp, destination, overwrite: true);
+            catch
+            {
+                if (File.Exists(temp)) File.Delete(temp);
+                throw;
+            }
         }
         catch (Exception ex)
         {

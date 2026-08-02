@@ -16,5 +16,13 @@ data:
   conformance_project: "tests/SixtyFiveXX.Conformance"
   conformance_setup:
     - "tests/SixtyFiveXX.Conformance/klaus/build.sh"
+  # The SingleStepTests vectors are ~1 GB per certified core and are never
+  # committed, so without a cache every conformance run re-downloads all four
+  # sets — ~3.8 GB, and a fetch failure fails the run rather than the code.
+  # harte-cache is a ReadWriteMany PVC in the woodpecker namespace; RWX because
+  # the two target frameworks run concurrently and both mount it.
+  conformance_cache_volume: "harte-cache"
+  conformance_cache_path: "/harte-cache"
+  conformance_cache_env: "SIXTYFIVEXX_HARTE_DIR"
   pack_project: "src/SixtyFiveXX"
   nuget_publish: true
