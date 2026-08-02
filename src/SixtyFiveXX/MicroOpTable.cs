@@ -69,10 +69,18 @@ internal sealed class MicroOpTable
         MicroOp.RmwModifyRead, MicroOp.IndexFixupCmos,
         MicroOp.ReadPageCrossCmos, MicroOp.RmwPageCrossCmos);
 
+    /// <remarks>
+    /// Every variant is listed rather than defaulting to <see cref="Nmos"/>, so this fails
+    /// as loudly as <see cref="OpcodeTableFor"/> does. A silent default is the worse
+    /// failure here: a variant wired into the table switch and forgotten in this one would
+    /// get NMOS interrupt, indexing and read-modify-write behaviour with no build-time
+    /// signal at all — only a conformance failure, thousands of vectors later.
+    /// </remarks>
     private static Sequences SequencesFor(CpuVariant variant) => variant switch
     {
         CpuVariant.Wdc65C02 or CpuVariant.Rockwell65C02 or CpuVariant.Synertek65C02 => Cmos,
-        _ => Nmos,
+        CpuVariant.Mos6502 or CpuVariant.Mos6510 => Nmos,
+        _ => throw new NotSupportedException($"No micro-op sequences for {variant} yet."),
     };
 
     /// <summary>

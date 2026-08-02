@@ -331,6 +331,20 @@ internal static class MicroOps
     /// <summary>True when this micro-op drives a write. RDY does not halt a write cycle.</summary>
     public static bool IsWriteCycle(MicroOp op) => Writes[(int)op];
 
+    /// <summary>
+    /// True for the micro-ops that read PC and can be held indefinitely, so a cycle halted
+    /// by RDY must drive PC rather than the effective-address register.
+    /// </summary>
+    /// <remarks>
+    /// Only <c>WAI</c> and <c>STP</c> qualify. Every other read micro-op runs for a bounded
+    /// number of cycles, so the stale address the halt path drives for those is a single
+    /// wrong cycle — a known limitation recorded at the halt branch in <c>Cpu.Tick</c>.
+    /// These two are unbounded: a hold lasts until an interrupt or a reset, so the wrong
+    /// address would be driven for the entire wait. That matters most for exactly the case
+    /// <c>WAI</c> exists to serve, synchronising with hardware that also drives RDY.
+    /// </remarks>
+    public static bool HoldsAtPc(MicroOp op) => op is MicroOp.WaiHold or MicroOp.StpHold;
+
     private static bool[] BuildWriteTable()
     {
         var writes = new bool[Enum.GetValues<MicroOp>().Length];

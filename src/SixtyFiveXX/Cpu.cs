@@ -222,10 +222,11 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             // that actually read it (ReadExec, RmwRead, ReadPageCross, DummyReadFixup,
             // UnstableStoreFixup, ZpIndex*). Every other read micro-op — PC, stack, pointer
             // or vector reads — gets _addr's stale value here instead of its own, which is
-            // a real hazard on a bus with read side effects. No test pins the halted
-            // address yet. Upgrade path: derive the pending micro-op's true read address
-            // (a switch mirroring Execute) instead of hard-coding _addr.
-            _bus.Read(_mpc < 0 ? _s.PC : _addr);
+            // a real hazard on a bus with read side effects. Upgrade path: derive the
+            // pending micro-op's true read address (a switch mirroring Execute) instead of
+            // hard-coding _addr. WAI and STP are already handled below, because their holds
+            // are unbounded — see MicroOps.HoldsAtPc.
+            _bus.Read(_mpc < 0 || MicroOps.HoldsAtPc(_ops[_mpc]) ? _s.PC : _addr);
             return;
         }
 

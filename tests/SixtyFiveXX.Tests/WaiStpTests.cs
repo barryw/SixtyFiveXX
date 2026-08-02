@@ -234,6 +234,77 @@ public class WaiStpTests
         Assert.True(cycles > 0);
     }
 
+    // ---- RDY during a hold ----
+
+    [Fact]
+    public void Wai_HeldByRdy_DrivesPcRatherThanAStaleAddress()
+    {
+        // WAI exists to synchronise with hardware that also drives RDY, so the overlap is
+        // the expected case, not a corner. A held cycle re-drives the bus without
+        // advancing, and for an unbounded hold it must drive PC: the effective-address
+        // register is stale here — WAI is an implied instruction and never sets it — so a
+        // naive halt would drive the *previous* instruction's address for the entire wait,
+        // on a bus that may have read side effects.
+        var (cpu, ram, log) = TestMachine.Logged<Wdc65C02Variant>(0x0200, 0xAD, 0x00, 0x40, 0xCB);
+        ram[0x4000] = 0x7E;                       // LDA $4000 leaves $4000 in the address latch
+        cpu.State.P = Flag.U;
+
+        cpu.Step();                                // LDA $4000
+        Assert.Equal(0x7E, cpu.State.A);
+
+        cpu.Step();                                // WAI, now holding
+        Assert.True(cpu.IsWaiting);
+
+        log.Clear();
+        cpu.SetRdy(false);
+        cpu.Tick();
+        cpu.Tick();
+
+        Assert.All(log, a => Assert.Equal(0x0204, a.Address));   // PC, not the stale $4000
+        Assert.DoesNotContain(log, a => a.IsWrite);
+    }
+
+    [Fact]
+    public void Stp_HeldByRdy_AlsoDrivesPc()
+    {
+        var (cpu, ram, log) = TestMachine.Logged<Wdc65C02Variant>(0x0200, 0xAD, 0x00, 0x40, 0xDB);
+        ram[0x4000] = 0x7E;
+
+        cpu.Step();
+        cpu.Step();
+        Assert.True(cpu.IsStopped);
+
+        log.Clear();
+        cpu.SetRdy(false);
+        cpu.Tick();
+
+        Assert.All(log, a => Assert.Equal(0x0204, a.Address));
+    }
+
+    [Fact]
+    public void Wai_ReleasedWhileRdyIsLow_StaysHeldUntilRdyReturns()
+    {
+        // The two hold conditions are independent. An interrupt clears the wait, but a low
+        // RDY still halts the processor, so nothing advances until both are satisfied.
+        var (cpu, _) = Machine(0xCB, 0xEA);
+        cpu.State.P = Flag.U;
+
+        cpu.Step();
+        Assert.True(cpu.IsWaiting);
+
+        cpu.SetRdy(false);
+        cpu.SetIrq(true);
+        for (var i = 0; i < 10; i++) cpu.Tick();
+
+        Assert.Equal(0x0201, cpu.State.PC);        // RDY still holds it at the WAI
+        Assert.True(cpu.IsWaiting);                // the hold micro-op never ran to clear it
+
+        cpu.SetRdy(true);
+        cpu.Tick();
+
+        Assert.False(cpu.IsWaiting);
+    }
+
     // ---- The other sub-variants do not have them ----
 
     [Fact]

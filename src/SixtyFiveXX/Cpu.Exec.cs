@@ -279,7 +279,6 @@ public sealed partial class Cpu<TBus, TVariant>
         _s.A = (byte)((hi << 4) | (lo & 0x0F));
     }
 
-    /// <summary>Subtract with borrow, in binary or NMOS decimal mode.</summary>
     /// <summary>
     /// CMOS ADC. Binary mode is identical to NMOS. Decimal mode keeps NMOS's C and V — V
     /// still comes from the partially corrected high nibble, not from the binary sum — but
@@ -325,6 +324,7 @@ public sealed partial class Cpu<TBus, TVariant>
         SetZN(_s.A);
     }
 
+    /// <summary>Subtract with borrow, in binary or NMOS decimal mode.</summary>
     private void Sbc(byte value)
     {
         var borrow = _s.C ? 0 : 1;
