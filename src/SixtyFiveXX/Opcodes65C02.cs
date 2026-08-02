@@ -14,8 +14,11 @@ namespace SixtyFiveXX;
 /// table is complete.
 /// </para>
 /// <para>
-/// What is here today is what the CMOS interrupt work needs: <c>BRK</c>, and the flag
-/// instructions its tests drive. The rest arrives with the base-CMOS task.
+/// What is here today is one opcode for every CMOS addressing mode and operation, so each
+/// is exercised by a unit test as it is added rather than first meeting a vector in a
+/// 2,560,000-case run. What is missing is the bulk: the instructions CMOS inherits
+/// unchanged from NMOS, and the undocumented opcodes that become NOPs with per-opcode
+/// timings. Those arrive with the base-CMOS task.
 /// </para>
 /// </remarks>
 internal static class Opcodes65C02
@@ -44,6 +47,49 @@ internal static class Opcodes65C02
         Set(0xF8, "SED", AddrMode.Implied, Op.Sed, Access.None);
 
         Set(0xEA, "NOP", AddrMode.Implied, Op.Nop, Access.None);
+
+        // The CMOS-only instructions and addressing modes. Enough of the table to exercise
+        // every new AddrMode and Op; the rest of the 256 arrives with the base-CMOS task.
+
+        Set(0x64, "STZ", AddrMode.ZeroPage,  Op.Stz, Access.Write);
+        Set(0x74, "STZ", AddrMode.ZeroPageX, Op.Stz, Access.Write);
+        Set(0x9C, "STZ", AddrMode.Absolute,  Op.Stz, Access.Write);
+        Set(0x9E, "STZ", AddrMode.AbsoluteX, Op.Stz, Access.Write);
+
+        Set(0x04, "TSB", AddrMode.ZeroPage, Op.Tsb, Access.ReadModifyWrite);
+        Set(0x0C, "TSB", AddrMode.Absolute, Op.Tsb, Access.ReadModifyWrite);
+        Set(0x14, "TRB", AddrMode.ZeroPage, Op.Trb, Access.ReadModifyWrite);
+        Set(0x1C, "TRB", AddrMode.Absolute, Op.Trb, Access.ReadModifyWrite);
+
+        Set(0x80, "BRA", AddrMode.Relative, Op.Bra, Access.None);
+
+        Set(0xDA, "PHX", AddrMode.Stack, Op.Phx, Access.None);
+        Set(0x5A, "PHY", AddrMode.Stack, Op.Phy, Access.None);
+        Set(0xFA, "PLX", AddrMode.Stack, Op.Plx, Access.None);
+        Set(0x7A, "PLY", AddrMode.Stack, Op.Ply, Access.None);
+
+        Set(0x1A, "INC", AddrMode.Accumulator, Op.IncA, Access.None);
+        Set(0x3A, "DEC", AddrMode.Accumulator, Op.DecA, Access.None);
+
+        // JMP (abs) loses the page-wrap bug and gains a cycle; JMP (abs,X) is new.
+        Set(0x4C, "JMP", AddrMode.Stack,                   Op.Jmp, Access.None);
+        Set(0x6C, "JMP", AddrMode.IndirectFixed,           Op.Jmp, Access.None);
+        Set(0x7C, "JMP", AddrMode.AbsoluteIndexedIndirect, Op.Jmp, Access.None);
+
+        // (zp) — every ALU instruction that has a (zp,X) form gains one.
+        Set(0x12, "ORA", AddrMode.ZeroPageIndirect, Op.Ora, Access.Read);
+        Set(0x32, "AND", AddrMode.ZeroPageIndirect, Op.And, Access.Read);
+        Set(0x52, "EOR", AddrMode.ZeroPageIndirect, Op.Eor, Access.Read);
+        Set(0x72, "ADC", AddrMode.ZeroPageIndirect, Op.Adc, Access.Read);
+        Set(0x92, "STA", AddrMode.ZeroPageIndirect, Op.Sta, Access.Write);
+        Set(0xB2, "LDA", AddrMode.ZeroPageIndirect, Op.Lda, Access.Read);
+        Set(0xD2, "CMP", AddrMode.ZeroPageIndirect, Op.Cmp, Access.Read);
+        Set(0xF2, "SBC", AddrMode.ZeroPageIndirect, Op.Sbc, Access.Read);
+
+        // BIT gains an immediate form and two indexed ones.
+        Set(0x89, "BIT", AddrMode.Immediate, Op.BitImm, Access.Read);
+        Set(0x34, "BIT", AddrMode.ZeroPageX, Op.Bit, Access.Read);
+        Set(0x3C, "BIT", AddrMode.AbsoluteX, Op.Bit, Access.Read);
 
         return t;
     }

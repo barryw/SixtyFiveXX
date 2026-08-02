@@ -33,6 +33,38 @@ internal enum Op : byte
     // Control flow
     Jmp, Jsr, Rts, Rti, Brk, Nop,
 
+    // CMOS additions.
+
+    /// <summary>Stores zero. CMOS only.</summary>
+    Stz,
+
+    /// <summary>Test and reset bits: Z from A AND M, then M &amp;= ~A. Read-modify-write. CMOS only.</summary>
+    Trb,
+
+    /// <summary>Test and set bits: Z from A AND M, then M |= A. Read-modify-write. CMOS only.</summary>
+    Tsb,
+
+    /// <summary>Branch always. CMOS only.</summary>
+    Bra,
+
+    /// <summary>
+    /// The immediate form of BIT, which sets only Z. Every other addressing mode also
+    /// copies the operand's top two bits into N and V; this one does not, so it needs its
+    /// own member rather than a mode test inside <see cref="Bit"/>. Confirmed against all
+    /// 10,000 <c>$89</c> vectors, none of which alters N or V. CMOS only.
+    /// </summary>
+    BitImm,
+
+    // Index-register stack operations. CMOS only.
+    Phx, Phy, Plx, Ply,
+
+    /// <summary>
+    /// Increment and decrement the accumulator. Separate members for the same reason
+    /// <see cref="AslA"/> is separate from <see cref="Asl"/> — they take no effective
+    /// address. CMOS only.
+    /// </summary>
+    IncA, DecA,
+
     /// <summary>
     /// An undocumented NOP that still performs its addressing mode's read and discards
     /// the result. Distinct from <see cref="Nop"/> so the discarded read is deliberate.

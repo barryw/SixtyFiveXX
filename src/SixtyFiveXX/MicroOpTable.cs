@@ -159,6 +159,28 @@ internal sealed class MicroOpTable
             return;
         }
 
+        if (info.Mode == AddrMode.IndirectFixed)
+        {
+            // CMOS JMP ($nnnn). One cycle longer than the NMOS form because the buggy
+            // address is still read before the correct one — see MicroOp.JmpIndBugDummy.
+            ops.AddRange([
+                MicroOp.FetchAddrLo, MicroOp.FetchAddrHi,
+                MicroOp.JmpIndLo, MicroOp.JmpIndBugDummy, MicroOp.PtrJmpHi,
+            ]);
+            return;
+        }
+
+        if (info.Mode == AddrMode.AbsoluteIndexedIndirect)
+        {
+            // CMOS JMP ($nnnn,X). JmpAbsXDummy folds X into the address it just read, so
+            // JmpIndLo's own `_ptr = _addr` picks up the indexed pointer unchanged.
+            ops.AddRange([
+                MicroOp.FetchAddrLo, MicroOp.FetchAddrHi,
+                MicroOp.JmpAbsXDummy, MicroOp.JmpIndLo, MicroOp.PtrJmpHi,
+            ]);
+            return;
+        }
+
         if (info.Operation == Op.Jam)
         {
             // Cycle 2 is a dummy read at PC; every cycle after that is held by JamHold,
@@ -237,6 +259,12 @@ internal sealed class MicroOpTable
                 ops.AddRange([MicroOp.FetchAddrLo, MicroOp.ZpIndexX, MicroOp.PtrReadLo, MicroOp.PtrReadHi]);
                 break;
 
+            case AddrMode.ZeroPageIndirect:
+                // (zp) is (zp,X) without the indexing cycle. PtrReadHi already wraps the
+                // pointer's high byte within page zero, which is what this mode needs too.
+                ops.AddRange([MicroOp.FetchAddrLo, MicroOp.PtrReadLo, MicroOp.PtrReadHi]);
+                break;
+
             case AddrMode.IndirectIndexed:
                 ops.AddRange([MicroOp.FetchAddrLo, MicroOp.PtrReadLo, MicroOp.PtrReadHiY]);
                 if (access != Access.Read) ops.Add(MicroOp.DummyReadFixup);
@@ -313,11 +341,11 @@ internal sealed class MicroOpTable
                 ]);
                 break;
 
-            case Op.Pha or Op.Php:
+            case Op.Pha or Op.Php or Op.Phx or Op.Phy:
                 ops.AddRange([MicroOp.ImpliedDummy, MicroOp.Push]);
                 break;
 
-            case Op.Pla or Op.Plp:
+            case Op.Pla or Op.Plp or Op.Plx or Op.Ply:
                 ops.AddRange([MicroOp.ImpliedDummy, MicroOp.StackDummyReadInc, MicroOp.Pull]);
                 break;
 

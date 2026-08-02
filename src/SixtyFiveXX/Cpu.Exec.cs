@@ -42,12 +42,20 @@ public sealed partial class Cpu<TBus, TVariant>
             case Op.Sta: _data = _s.A; break;
             case Op.Stx: _data = _s.X; break;
             case Op.Sty: _data = _s.Y; break;
+            case Op.Stz: _data = 0; break;
+
+            // Test-and-modify. Z comes from the AND, as for BIT, but N and V are left
+            // alone — unlike BIT, which takes them from the operand's top two bits.
+            case Op.Trb: _s.Z = (_s.A & _data) == 0; _data = (byte)(_data & ~_s.A); break;
+            case Op.Tsb: _s.Z = (_s.A & _data) == 0; _data = (byte)(_data | _s.A); break;
 
             // Memory increment and decrement, operating on _data in place.
             case Op.Inc: _data = (byte)(_data + 1); SetZN(_data); break;
             case Op.Dec: _data = (byte)(_data - 1); SetZN(_data); break;
 
             // Register increment and decrement.
+            case Op.IncA: _s.A = (byte)(_s.A + 1); SetZN(_s.A); break;
+            case Op.DecA: _s.A = (byte)(_s.A - 1); SetZN(_s.A); break;
             case Op.Inx: _s.X = (byte)(_s.X + 1); SetZN(_s.X); break;
             case Op.Dex: _s.X = (byte)(_s.X - 1); SetZN(_s.X); break;
             case Op.Iny: _s.Y = (byte)(_s.Y + 1); SetZN(_s.Y); break;
@@ -58,6 +66,10 @@ public sealed partial class Cpu<TBus, TVariant>
             case Op.Php: _data = (byte)(_s.P | Flag.B | Flag.U); break;
             case Op.Pla: _s.A = _data; SetZN(_s.A); break;
             case Op.Plp: _s.P = (byte)((_data & ~Flag.B) | Flag.U); break;
+            case Op.Phx: _data = _s.X; break;
+            case Op.Phy: _data = _s.Y; break;
+            case Op.Plx: _s.X = _data; SetZN(_s.X); break;
+            case Op.Ply: _s.Y = _data; SetZN(_s.Y); break;
 
             // Logic
             case Op.And: _s.A &= _data; SetZN(_s.A); break;
@@ -71,6 +83,9 @@ public sealed partial class Cpu<TBus, TVariant>
                 _s.N = (_data & 0x80) != 0;
                 _s.V = (_data & 0x40) != 0;
                 break;
+
+            // BIT immediate sets Z alone — see Op.BitImm.
+            case Op.BitImm: _s.Z = (_s.A & _data) == 0; break;
 
             // Compares
             case Op.Cmp: Compare(_s.A); break;

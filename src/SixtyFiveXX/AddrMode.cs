@@ -33,6 +33,19 @@ internal enum AddrMode : byte
     /// <summary>Indirect, used only by JMP. Reproduces the NMOS page-wrap bug.</summary>
     Indirect,
 
+    /// <summary>
+    /// Indirect JMP with the page-wrap bug fixed — the CMOS form, and a cycle longer than
+    /// <see cref="Indirect"/>. A separate mode rather than a variant test at emission time,
+    /// so the table stays the single source of truth for both timing and behaviour.
+    /// </summary>
+    IndirectFixed,
+
+    /// <summary>(zp) — indirect through a page-zero pointer, with no indexing. CMOS only.</summary>
+    ZeroPageIndirect,
+
+    /// <summary>(abs,X) — absolute indexed indirect, used only by JMP. CMOS only.</summary>
+    AbsoluteIndexedIndirect,
+
     /// <summary>(zp,X) — indexed indirect.</summary>
     IndexedIndirect,
 

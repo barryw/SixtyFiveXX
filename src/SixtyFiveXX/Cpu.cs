@@ -403,6 +403,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
         Op.Bmi => _s.N,
         Op.Bvc => !_s.V,
         Op.Bvs => _s.V,
+        Op.Bra => true,
         _ => throw new InvalidOperationException($"{_op} is not a branch."),
     };
 
@@ -607,6 +608,26 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 // NMOS bug: the vector's high byte is fetched from the same page, so
                 // JMP ($xxFF) reads its high byte from $xx00.
                 _s.PC = (ushort)((_bus.Read((_ptr & 0xFF00) | ((_ptr + 1) & 0xFF)) << 8) | _tmp);
+                break;
+
+            case MicroOp.JmpIndBugDummy:
+                // Read and discard, at exactly the address JmpIndHi would have used. When
+                // the pointer's low byte is not $FF this is the same address the next
+                // micro-op reads, which is why the non-wrapping case shows two adjacent
+                // reads of one location rather than an obviously wasted cycle.
+                _bus.Read((_ptr & 0xFF00) | ((_ptr + 1) & 0xFF));
+                break;
+
+            case MicroOp.PtrJmpHi:
+                _s.PC = (ushort)((_bus.Read((_ptr + 1) & 0xFFFF) << 8) | _tmp);
+                break;
+
+            case MicroOp.JmpAbsXDummy:
+                // The discarded read is at the first operand byte. PC has already advanced
+                // past both operand bytes, so that is PC - 2. Its address does not depend
+                // on the indexing, so there is no page-cross penalty to account for.
+                _bus.Read((_s.PC - 2) & 0xFFFF);
+                _addr = (_addr + _s.X) & 0xFFFF;
                 break;
 
             case MicroOp.PullPcl:

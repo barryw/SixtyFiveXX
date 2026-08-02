@@ -127,6 +127,33 @@ internal enum MicroOp : byte
     /// <summary>Dummy read at PC; PC++. Final cycle of RTS.</summary>
     RtsFinish,
 
+    /// <summary>
+    /// The discarded read the CMOS <c>JMP (abs)</c> performs at the address the NMOS core
+    /// would have taken its high byte from — <c>(ptr &amp; $FF00) | ((ptr + 1) &amp; $FF)</c>.
+    /// </summary>
+    /// <remarks>
+    /// This is the whole shape of the CMOS fix, and it is not what "the page-wrap bug is
+    /// fixed, at the cost of one cycle" suggests. The 65C02 still reads the buggy address;
+    /// it then reads the correct one and keeps that. When the pointer's low byte is not
+    /// <c>$FF</c> the two addresses coincide, which is why every vector — wrapping or not —
+    /// shows six cycles with the fifth and sixth reads adjacent. Adding a generic dummy
+    /// cycle instead would produce the right cycle count and the wrong addresses.
+    /// </remarks>
+    JmpIndBugDummy,
+
+    /// <summary>
+    /// PC = (Read((ptr + 1) &amp; $FFFF) &lt;&lt; 8) | tmp — the high byte with no page wrap.
+    /// The CMOS counterpart of <see cref="JmpIndHi"/>.
+    /// </summary>
+    PtrJmpHi,
+
+    /// <summary>
+    /// The discarded read <c>JMP (abs,X)</c> performs at the first operand byte, then
+    /// indexes the pointer by X. The dummy is at that fixed address whether or not the
+    /// indexing crosses a page, so this mode has no page-cross penalty.
+    /// </summary>
+    JmpAbsXDummy,
+
     /// <summary>P = Read(0x100 + S) with B cleared and U set; S++.</summary>
     PullP,
 
