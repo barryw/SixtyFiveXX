@@ -1,4 +1,5 @@
 using SixtyFiveXX;
+using SixtyFiveXX.Variants;
 using Xunit;
 
 namespace SixtyFiveXX.Tests;
@@ -29,7 +30,7 @@ public class ControlApiTests
         ram[0xFFFC] = 0x34;
         ram[0xFFFD] = 0x12;
         var log = new List<BusAccess>();
-        var cpu = new Cpu<RefBus>(new RefBus(new LoggingBus(ram, log)));
+        var cpu = new Cpu<RefBus, Mos6502Variant>(new RefBus(new LoggingBus(ram, log)));
         cpu.State.PC = 0x0200;
         cpu.State.S = 0xFD;
 

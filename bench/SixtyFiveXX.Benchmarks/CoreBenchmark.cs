@@ -1,4 +1,5 @@
 using BenchmarkDotNet.Attributes;
+using SixtyFiveXX.Variants;
 
 namespace SixtyFiveXX.Benchmarks;
 
@@ -6,7 +7,7 @@ namespace SixtyFiveXX.Benchmarks;
 [MemoryDiagnoser]
 public class CoreBenchmark
 {
-    private Cpu<FlatBus> _cpu = null!;
+    private Cpu<FlatBus, Mos6502Variant> _cpu = null!;
 
     /// <summary>Cycles executed per invocation.</summary>
     [Params(10_000_000)]

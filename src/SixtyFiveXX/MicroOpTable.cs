@@ -12,14 +12,6 @@ namespace SixtyFiveXX;
 internal sealed class MicroOpTable
 {
     /// <summary>
-    /// The MOS 6502 table, built once, on first use. Retained alongside
-    /// <see cref="For{TVariant}"/> because <c>Cpu{TBus}</c> still binds to it directly; Task 2
-    /// switches that binding to <c>For&lt;Mos6502Variant&gt;()</c>, at which point this field
-    /// becomes redundant with it and can be removed.
-    /// </summary>
-    public static readonly MicroOpTable Mos6502 = new(Opcodes6502.Table);
-
-    /// <summary>
     /// The micro-op table for <typeparamref name="TVariant"/>, built once per variant and
     /// cached for the lifetime of the process.
     /// </summary>
@@ -32,8 +24,20 @@ internal sealed class MicroOpTable
 
     private static class Cache<TVariant> where TVariant : ICpuVariant
     {
-        public static readonly MicroOpTable Table = new(TVariant.OpcodeTable);
+        public static readonly MicroOpTable Table = new(OpcodeTableFor(TVariant.Variant));
     }
+
+    /// <summary>
+    /// Maps a <see cref="CpuVariant"/> to its opcode descriptors. The one place a new core
+    /// wires its table in — Phase 4 adds a variant here. <c>TVariant.Variant</c> is a
+    /// compile-time constant per closed generic type, so <see cref="Cache{TVariant}"/>'s
+    /// field initialiser runs this switch once per variant, not on every access.
+    /// </summary>
+    private static OpcodeInfo[] OpcodeTableFor(CpuVariant variant) => variant switch
+    {
+        CpuVariant.Mos6502 => Opcodes6502.Table,
+        _ => throw new NotSupportedException($"No opcode table for {variant} yet."),
+    };
 
     /// <summary>Every opcode's micro-op sequence, concatenated, each terminated by <see cref="MicroOp.End"/>.</summary>
     public readonly MicroOp[] Ops;

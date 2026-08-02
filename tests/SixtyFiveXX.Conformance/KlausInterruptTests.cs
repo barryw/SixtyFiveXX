@@ -1,3 +1,4 @@
+using SixtyFiveXX.Variants;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -38,7 +39,7 @@ public class KlausInterruptTests(ITestOutputHelper output)
         Assert.Equal(0x10000, ram.Length);
 
         var feedback = new FeedbackBus(ram);
-        var cpu = new Cpu<RefBus>(new RefBus(feedback));
+        var cpu = new Cpu<RefBus, Mos6502Variant>(new RefBus(feedback));
         feedback.Attach(cpu);
 
         cpu.State.PC = StartAddress;

@@ -2,7 +2,7 @@ using System.Runtime.CompilerServices;
 
 namespace SixtyFiveXX;
 
-public sealed partial class Cpu<TBus>
+public sealed partial class Cpu<TBus, TVariant>
 {
     /// <summary>
     /// Applies the current instruction's operation. Called once per instruction, from

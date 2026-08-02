@@ -1,4 +1,5 @@
 using SixtyFiveXX;
+using SixtyFiveXX.Variants;
 using Xunit;
 
 namespace SixtyFiveXX.Tests;
@@ -6,7 +7,7 @@ namespace SixtyFiveXX.Tests;
 public class InterruptTests
 {
     /// <summary>A CPU with an IRQ handler vector at $9000 and NOPs to execute.</summary>
-    private static (Cpu<FlatBus> Cpu, byte[] Ram) Machine(params byte[] program)
+    private static (Cpu<FlatBus, Mos6502Variant> Cpu, byte[] Ram) Machine(params byte[] program)
     {
         var (cpu, ram) = TestMachine.Flat(0x0200, program);
         ram[0xFFFE] = 0x00;

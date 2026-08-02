@@ -1,11 +1,12 @@
 using SixtyFiveXX;
+using SixtyFiveXX.Variants;
 using Xunit;
 
 namespace SixtyFiveXX.Tests;
 
 public class DecimalModeTests
 {
-    private static Cpu<FlatBus> Adc(byte a, byte operand, bool carryIn)
+    private static Cpu<FlatBus, Mos6502Variant> Adc(byte a, byte operand, bool carryIn)
     {
         var (cpu, _) = TestMachine.Flat(0x0200, 0x69, operand);
         cpu.State.A = a;
@@ -15,7 +16,7 @@ public class DecimalModeTests
         return cpu;
     }
 
-    private static Cpu<FlatBus> Sbc(byte a, byte operand, bool carryIn)
+    private static Cpu<FlatBus, Mos6502Variant> Sbc(byte a, byte operand, bool carryIn)
     {
         var (cpu, _) = TestMachine.Flat(0x0200, 0xE9, operand);
         cpu.State.A = a;
@@ -25,7 +26,7 @@ public class DecimalModeTests
         return cpu;
     }
 
-    private static Cpu<FlatBus> Arr(byte a, byte operand, bool carryIn)
+    private static Cpu<FlatBus, Mos6502Variant> Arr(byte a, byte operand, bool carryIn)
     {
         var (cpu, _) = TestMachine.Flat(0x0200, 0x6B, operand);
         cpu.State.A = a;

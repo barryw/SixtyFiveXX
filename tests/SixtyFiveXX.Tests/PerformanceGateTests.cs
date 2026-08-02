@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using SixtyFiveXX;
+using SixtyFiveXX.Variants;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -40,7 +41,7 @@ public class PerformanceGateTests(ITestOutputHelper output)
             $"Throughput fell to {hz / 1_000_000:F1} MHz, below the {FloorHz / 1_000_000} MHz floor.");
     }
 
-    private static Cpu<FlatBus> BuildWorkload()
+    private static Cpu<FlatBus, Mos6502Variant> BuildWorkload()
     {
         var ram = new byte[0x10000];
         byte[] program =
@@ -54,7 +55,7 @@ public class PerformanceGateTests(ITestOutputHelper output)
         ram[0x0020] = 0x00; ram[0x0021] = 0x34;
         ram[0x0022] = 0x00; ram[0x0023] = 0x35;
 
-        var cpu = new Cpu<FlatBus>(new FlatBus(ram));
+        var cpu = new Cpu<FlatBus, Mos6502Variant>(new FlatBus(ram));
         cpu.State.PC = 0x0200;
         cpu.State.S = 0xFD;
         cpu.State.P = Flag.U | Flag.I;

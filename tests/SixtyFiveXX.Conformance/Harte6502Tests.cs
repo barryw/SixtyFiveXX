@@ -1,3 +1,4 @@
+using SixtyFiveXX.Variants;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -31,7 +32,7 @@ public class Harte6502Tests(ITestOutputHelper output)
         // mean 10,000 64 KB arrays per opcode, which dominates the suite's runtime.
         var ram = new byte[0x10000];
         var log = new List<Cycle>(16);
-        Cpu<HarteBus> cpu = new(new HarteBus(ram, log));
+        Cpu<HarteBus, Mos6502Variant> cpu = new(new HarteBus(ram, log));
 
         foreach (var test in cases)
         {
@@ -67,7 +68,7 @@ public class Harte6502Tests(ITestOutputHelper output)
 
             // A jammed core never executes again. Replace it so the next vector starts
             // from a working CPU. Only the twelve JAM opcodes ever take this path.
-            if (cpu.IsJammed) cpu = new Cpu<HarteBus>(new HarteBus(ram, log));
+            if (cpu.IsJammed) cpu = new Cpu<HarteBus, Mos6502Variant>(new HarteBus(ram, log));
         }
 
         output.WriteLine($"${opcode:X2} {Opcodes6502.Table[opcode].Mnemonic}: {cases.Length} vectors passed.");

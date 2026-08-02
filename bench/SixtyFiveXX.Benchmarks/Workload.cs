@@ -1,3 +1,5 @@
+using SixtyFiveXX.Variants;
+
 namespace SixtyFiveXX.Benchmarks;
 
 /// <summary>
@@ -7,7 +9,7 @@ namespace SixtyFiveXX.Benchmarks;
 public static class Workload
 {
     /// <summary>Builds a CPU running the benchmark loop, ready to tick.</summary>
-    public static Cpu<FlatBus> Build()
+    public static Cpu<FlatBus, Mos6502Variant> Build()
     {
         var ram = new byte[0x10000];
 
@@ -34,7 +36,7 @@ public static class Workload
         ram[0x0020] = 0x00; ram[0x0021] = 0x34;
         ram[0x0022] = 0x00; ram[0x0023] = 0x35;
 
-        var cpu = new Cpu<FlatBus>(new FlatBus(ram));
+        var cpu = new Cpu<FlatBus, Mos6502Variant>(new FlatBus(ram));
         cpu.State.PC = 0x0200;
         cpu.State.S = 0xFD;
         cpu.State.P = Flag.U | Flag.I;

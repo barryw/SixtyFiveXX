@@ -1,4 +1,5 @@
 using SixtyFiveXX;
+using SixtyFiveXX.Variants;
 
 namespace SixtyFiveXX.Tests;
 
@@ -26,11 +27,11 @@ public sealed class LoggingBus(byte[] ram, List<BusAccess> log) : IBus
 public static class TestMachine
 {
     /// <summary>A CPU over a plain 64 KB array, with <paramref name="program"/> loaded at PC.</summary>
-    public static (Cpu<FlatBus> Cpu, byte[] Ram) Flat(ushort pc, params byte[] program)
+    public static (Cpu<FlatBus, Mos6502Variant> Cpu, byte[] Ram) Flat(ushort pc, params byte[] program)
     {
         var ram = new byte[0x10000];
         program.CopyTo(ram, pc);
-        var cpu = new Cpu<FlatBus>(new FlatBus(ram));
+        var cpu = new Cpu<FlatBus, Mos6502Variant>(new FlatBus(ram));
         cpu.State.PC = pc;
         cpu.State.S = 0xFD;
         cpu.State.P = Flag.U | Flag.I;
@@ -38,12 +39,12 @@ public static class TestMachine
     }
 
     /// <summary>A CPU whose every bus access is recorded, for cycle-by-cycle assertions.</summary>
-    public static (Cpu<RefBus> Cpu, byte[] Ram, List<BusAccess> Log) Logged(ushort pc, params byte[] program)
+    public static (Cpu<RefBus, Mos6502Variant> Cpu, byte[] Ram, List<BusAccess> Log) Logged(ushort pc, params byte[] program)
     {
         var ram = new byte[0x10000];
         program.CopyTo(ram, pc);
         var log = new List<BusAccess>();
-        var cpu = new Cpu<RefBus>(new RefBus(new LoggingBus(ram, log)));
+        var cpu = new Cpu<RefBus, Mos6502Variant>(new RefBus(new LoggingBus(ram, log)));
         cpu.State.PC = pc;
         cpu.State.S = 0xFD;
         cpu.State.P = Flag.U | Flag.I;

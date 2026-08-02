@@ -2,10 +2,11 @@ namespace SixtyFiveXX.Variants;
 
 /// <summary>
 /// The NMOS MOS 6502: the 151 documented opcodes plus the 105 undocumented NMOS opcodes
-/// modelled in <see cref="Opcodes6502"/>.
+/// modelled internally by this package. Name this type as <c>TVariant</c> to build a
+/// <see cref="Cpu{TBus, TVariant}"/> that models the plain NMOS 6502.
 /// </summary>
-internal readonly struct Mos6502Variant : ICpuVariant
+public readonly struct Mos6502Variant : ICpuVariant
 {
     /// <inheritdoc />
-    public static OpcodeInfo[] OpcodeTable => Opcodes6502.Table;
+    public static CpuVariant Variant => CpuVariant.Mos6502;
 }
