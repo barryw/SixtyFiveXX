@@ -11,7 +11,12 @@ namespace SixtyFiveXX;
 /// the core and inlines every memory access; use <see cref="RefBus"/> to adapt a bus
 /// chosen at run time.
 /// </typeparam>
-public sealed partial class Cpu<TBus> where TBus : struct, IBus
+/// <typeparam name="TVariant">
+/// The member of the 65xx family this core models. A <c>struct</c> type parameter, like
+/// <typeparamref name="TBus"/>, so <see cref="ICpuVariant"/>'s <c>static abstract</c>
+/// members resolve at compile time with no virtual dispatch on the per-cycle path.
+/// </typeparam>
+public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where TVariant : struct, ICpuVariant
 {
     /// <summary>Address of the NMI vector.</summary>
     public const int NmiVector = 0xFFFA;
@@ -101,7 +106,7 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     public Cpu(TBus bus)
     {
         _bus = bus;
-        _table = MicroOpTable.Mos6502;
+        _table = MicroOpTable.For<TVariant>();
         _ops = _table.Ops;
         _entry = _table.Entry;
     }
@@ -330,7 +335,7 @@ public sealed partial class Cpu<TBus> where TBus : struct, IBus
     /// <see cref="Tick"/> or <see cref="Run"/> instead.
     /// </remarks>
     /// <returns>The number of cycles consumed.</returns>
-    public long RunUntil(Func<Cpu<TBus>, bool> stop, long maxCycles = long.MaxValue)
+    public long RunUntil(Func<Cpu<TBus, TVariant>, bool> stop, long maxCycles = long.MaxValue)
     {
         ArgumentNullException.ThrowIfNull(stop);
 

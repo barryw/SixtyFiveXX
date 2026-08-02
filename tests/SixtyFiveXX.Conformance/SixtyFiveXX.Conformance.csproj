@@ -22,4 +22,12 @@
     <ProjectReference Include="..\..\src\SixtyFiveXX\SixtyFiveXX.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- PublicSurfaceTests packs the library and reflects over the result, so it needs the
+         repository root. Stamped here because the output directory is not guaranteed to sit
+         inside the checkout — UseArtifactsOutput moves it out — and a runtime walk up from
+         the test binary would then find nothing. -->
+    <AssemblyMetadata Include="RepositoryRoot" Value="$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..'))" />
+  </ItemGroup>
+
 </Project>

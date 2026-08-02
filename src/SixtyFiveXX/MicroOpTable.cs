@@ -11,8 +11,33 @@ namespace SixtyFiveXX;
 /// </remarks>
 internal sealed class MicroOpTable
 {
-    /// <summary>The MOS 6502 table. Built once, on first use.</summary>
-    public static readonly MicroOpTable Mos6502 = new(Opcodes6502.Table);
+    /// <summary>
+    /// The micro-op table for <typeparamref name="TVariant"/>, built once per variant and
+    /// cached for the lifetime of the process.
+    /// </summary>
+    /// <remarks>
+    /// A <c>static</c> field on a generic type is a distinct storage location per closed
+    /// generic type, so <see cref="Cache{TVariant}"/> gives each variant its own
+    /// lazily-built table with no dictionary lookup.
+    /// </remarks>
+    public static MicroOpTable For<TVariant>() where TVariant : ICpuVariant => Cache<TVariant>.Table;
+
+    private static class Cache<TVariant> where TVariant : ICpuVariant
+    {
+        public static readonly MicroOpTable Table = new(OpcodeTableFor(TVariant.Variant));
+    }
+
+    /// <summary>
+    /// Maps a <see cref="CpuVariant"/> to its opcode descriptors. The one place a new core
+    /// wires its table in — Phase 4 adds a variant here. <c>TVariant.Variant</c> is a
+    /// compile-time constant per closed generic type, so <see cref="Cache{TVariant}"/>'s
+    /// field initialiser runs this switch once per variant, not on every access.
+    /// </summary>
+    private static OpcodeInfo[] OpcodeTableFor(CpuVariant variant) => variant switch
+    {
+        CpuVariant.Mos6502 => Opcodes6502.Table,
+        _ => throw new NotSupportedException($"No opcode table for {variant} yet."),
+    };
 
     /// <summary>Every opcode's micro-op sequence, concatenated, each terminated by <see cref="MicroOp.End"/>.</summary>
     public readonly MicroOp[] Ops;

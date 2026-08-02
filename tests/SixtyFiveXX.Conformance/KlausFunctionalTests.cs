@@ -1,3 +1,4 @@
+using SixtyFiveXX.Variants;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -26,7 +27,7 @@ public class KlausFunctionalTests(ITestOutputHelper output)
     public void FunctionalTest_RunsToTheSuccessTrap()
     {
         var ram = KlausCache.Load("6502_functional_test.bin");
-        var cpu = new Cpu<FlatBus>(new FlatBus(ram));
+        var cpu = new Cpu<FlatBus, Mos6502Variant>(new FlatBus(ram));
         cpu.State.PC = StartAddress;
         cpu.State.S = 0xFD;
         cpu.State.P = Flag.U | Flag.I;

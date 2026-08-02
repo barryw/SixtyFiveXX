@@ -187,21 +187,61 @@ blocks.
 ### 5.5 Public API surface
 
 ```csharp
-long Cycles { get; }
-void ResetCycleCount();
-void Reset();
+public sealed partial class Cpu<TBus, TVariant>
+    where TBus : struct, IBus
+    where TVariant : struct, ICpuVariant
+{
+    public const int NmiVector   = 0xFFFA;
+    public const int ResetVector = 0xFFFC;
+    public const int IrqVector   = 0xFFFE;
 
-void Tick();                                 // one clock cycle
-void Step();                                 // run to the next instruction boundary
-long Run(long cycles);
-long RunUntil(Func<ICpu, bool> stop);
+    public Cpu(TBus bus);
 
-ref CpuState State { get; }                  // A, X, Y, S, P, PC (+ C, DBR, PBR, DP, E on 65816)
-void SetIrq(bool asserted);
-void SetNmi(bool asserted);
-void SetRdy(bool ready);
-void SetSo();
+    long Cycles { get; }
+    void ResetCycleCount();
+    void Reset();
+
+    void Tick();                                 // one clock cycle
+    long Step();                                 // run to the next instruction boundary
+    long Run(long cycles);
+    long RunUntil(Func<Cpu<TBus, TVariant>, bool> stop, long maxCycles = long.MaxValue);
+
+    ref CpuState State { get; }                  // A, X, Y, S, P, PC (+ C, DBR, PBR, DP, E on 65816)
+    ref TBus Bus { get; }
+    bool AtInstructionBoundary { get; }
+    bool IsJammed { get; }
+
+    void SetIrq(bool asserted);                  // level-sensitive
+    bool IrqAsserted { get; }                    // the current pin level
+
+    void SetNmi(bool asserted);                  // edge-latched: only a low-to-high transition
+    bool NmiAsserted { get; }                    // the line, NOT the pending latch — false here
+                                                 // does not mean no NMI is pending
+
+    void SetRdy(bool ready);
+    bool Ready { get; }
+
+    void SetSo();
+}
+
+public interface ICpuVariant
+{
+    static abstract CpuVariant Variant { get; }  // resolved through the type parameter
+}
 ```
+
+Both type parameters are `struct`, so `TBus`'s bus calls and `TVariant`'s `static abstract`
+member resolve at JIT time per closed generic type — no interface dispatch on the
+per-cycle path. `RunUntil`'s predicate is typed on the closed CPU rather than an `ICpu`
+interface for the same reason: an interface here would reintroduce the dispatch the
+generic exists to avoid, and there is no consumer that needs to hold two differently-typed
+cores in one variable. Phase 6's adapter pays that cost once, at machine construction,
+where it maps sim6502's runtime `CpuVariant` onto a closed `Cpu<,>`.
+
+`ICpuVariant` carries exactly one member. Behavioural flags are added only when a phase is
+blocked without them; the opcode descriptors themselves stay internal, mapped from
+`TVariant.Variant` inside the library, so phase 4 can reshape `OpcodeInfo` without it
+being public API.
 
 Higher-level control flow — sim6502's `ExecuteJsr(address, stopOnAddress, stopOnRts,
 failOnBrk)` — is built on `RunUntil` plus stack-depth tracking **in the adapter**, not in
@@ -247,6 +287,28 @@ existing 6502 suites, and its `$00`/`$01` delta by the VICE `cpuport` test. The 
 decay behaviours (`bitfade`, `delaytime`) are a deliberate non-goal — VICE's own authors
 describe their timing as guesswork — the same posture this project takes toward the
 unstable NMOS opcodes' magic constants.
+
+- **The packed-assembly public-surface test.** `dotnet pack` the library, then reflect over
+  the packed assembly and assert the intended surface: `Cpu<,>`, `ICpuVariant`, `IBus`,
+  `FlatBus`, `RefBus`, `CpuState`, `CpuVariant` and each variant struct **public**;
+  `OpcodeInfo`, `AddrMode`, `Op`, `Access`, `MicroOp` and `MicroOpTable` **not visible**.
+
+  This exists because of a real regression. During the phase 3 refactor, `OpcodeInfo` being
+  internal forced `ICpuVariant` internal, which forced `Cpu` internal (CS0703 — a public
+  type cannot be constrained on an internal one). The published package would have shipped
+  with its only entry point invisible to every consumer, and **all 569 tests still passed**,
+  because every test project has `InternalsVisibleTo`. No behavioural suite can catch this
+  class of defect; only a test that looks at the artifact a consumer actually receives can.
+
+  It also guards the inverse — a descriptor type accidentally made public becomes API this
+  project would then owe compatibility to. Keeping `OpcodeInfo` internal is what lets phase
+  4 reshape it freely. The assertion is therefore an **exact set**, not a checklist of named
+  types: a checklist can only catch the leaks someone thought to list.
+
+  Implemented as `tests/SixtyFiveXX.Conformance/PublicSurfaceTests.cs`, and proven to
+  discriminate in both directions — `Cpu` made internal (with the consumer ripple demoted,
+  reproducing the original regression) and a documented descriptor enum made public each
+  turn it red on both packaged TFMs.
 
 - **Unit tests** per addressing mode, flag, stack wrap, page cross, and interrupt timing.
 - **Benchmarks** as a gate: ≥50 MHz simulated 6502 single-threaded with `FlatBus`,
@@ -355,7 +417,7 @@ Each phase is gated by green suites, not by a subjective sense of completion.
 | --- | --- | --- | --- |
 | 1 | Micro-op engine, `IBus`, `FlatBus`, 6502 legal opcodes | Harte 6502 legal-opcode subset | **Complete** — 1,510,000 vectors |
 | 2 | Undocumented opcodes; interrupts, RDY, SO | **Full** Harte 6502 (all 256); Klaus functional + interrupt | **Complete** — 2,560,000 vectors |
-| 3 | `ICpuVariant` refactor | **Zero behaviour change** — every phase 1–2 suite still green | |
+| 3 | `ICpuVariant` refactor; public-surface gate | **Zero behaviour change** — every phase 1–2 suite still green — **plus** the packed-assembly surface test below | **Complete** — 311 unit + 264 conformance on both TFMs |
 | 4 | 65C02, three sub-variants | Harte `wdc65c02` / `rockwell65c02` / `synertek65c02`; Klaus 65C02 extended (WDC + Rockwell only) | |
 | 5 | 6510 core (`$00`/`$01` port) | Existing 6502 suites for inherited opcodes; VICE `cpuport` for the port delta | |
 | 6 | Disassembler; sim6502 adapter | **sim6502 swaps over.** Its own suite green; `sim6502/Proc/` deleted | |
@@ -381,10 +443,10 @@ cores side by side. Second, `ICpuVariant` necessarily changes the public API, so
 adapter written before the refactor would be rewritten after it. Building the cores first
 costs later API feedback and buys a single clean cutover with full parity.
 
-**Why the variant refactor is its own phase.** `Cpu<TBus>` currently binds the 6502
-micro-op table at construction, so no second variant can exist until that changes. Doing
-it alone, gated on *zero behaviour change* against 2.56 M vectors and two Klaus programs,
-means any regression it introduces is attributable to the refactor and nothing else.
+**Why the variant refactor was its own phase.** `Cpu<TBus>` bound the 6502 micro-op table
+at construction, so no second variant could exist until that changed. Doing it alone, gated
+on *zero behaviour change* against 2.56 M vectors and two Klaus programs, meant any
+regression it introduced was attributable to the refactor and nothing else.
 
 Apple IIe, NES, and Apple IIgs personalities are follow-on work against the contract
 frozen in phase 8, and are out of scope for this spec.

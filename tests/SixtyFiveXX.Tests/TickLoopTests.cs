@@ -1,4 +1,5 @@
 using SixtyFiveXX;
+using SixtyFiveXX.Variants;
 using Xunit;
 
 namespace SixtyFiveXX.Tests;
@@ -6,18 +7,18 @@ namespace SixtyFiveXX.Tests;
 public class TickLoopTests
 {
     /// <summary>Builds a CPU over 64 KB of RAM with the given bytes loaded at $0200 and PC there.</summary>
-    private static (Cpu<FlatBus> Cpu, byte[] Ram) Machine(params byte[] program)
+    private static (Cpu<FlatBus, Mos6502Variant> Cpu, byte[] Ram) Machine(params byte[] program)
     {
         var ram = new byte[0x10000];
         program.CopyTo(ram, 0x0200);
-        var cpu = new Cpu<FlatBus>(new FlatBus(ram));
+        var cpu = new Cpu<FlatBus, Mos6502Variant>(new FlatBus(ram));
         cpu.State.PC = 0x0200;
         cpu.State.S = 0xFD;
         cpu.State.P = Flag.U | Flag.I;
         return (cpu, ram);
     }
 
-    private static void Ticks(Cpu<FlatBus> cpu, int count)
+    private static void Ticks(Cpu<FlatBus, Mos6502Variant> cpu, int count)
     {
         for (var i = 0; i < count; i++) cpu.Tick();
     }
@@ -78,7 +79,7 @@ public class TickLoopTests
         ram[0x0200] = 0xEA;
         ram[0x0201] = 0x42;
         var reads = new List<int>();
-        var cpu = new Cpu<RefBus>(new RefBus(new WatchBus(ram, reads)));
+        var cpu = new Cpu<RefBus, Mos6502Variant>(new RefBus(new WatchBus(ram, reads)));
         cpu.State.PC = 0x0200;
 
         cpu.Tick();

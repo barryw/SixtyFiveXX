@@ -1,3 +1,5 @@
+using SixtyFiveXX.Variants;
+
 namespace SixtyFiveXX.Conformance;
 
 /// <summary>
@@ -33,7 +35,7 @@ public sealed class FeedbackBus : IBus
     public const int FeedbackPort = 0xBFFC;
 
     private readonly byte[] _ram;
-    private Cpu<RefBus>? _cpu;
+    private Cpu<RefBus, Mos6502Variant>? _cpu;
 
     /// <summary>Wraps a 64 KB image.</summary>
     public FeedbackBus(byte[] ram)
@@ -51,7 +53,7 @@ public sealed class FeedbackBus : IBus
     /// Connects the CPU whose pins this register drives. Set after construction because
     /// the CPU needs the bus and the bus needs the CPU.
     /// </summary>
-    public void Attach(Cpu<RefBus> cpu) => _cpu = cpu;
+    public void Attach(Cpu<RefBus, Mos6502Variant> cpu) => _cpu = cpu;
 
     /// <inheritdoc />
     public byte Read(int address) => _ram[address & 0xFFFF];

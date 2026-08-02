@@ -1,11 +1,12 @@
 using SixtyFiveXX;
+using SixtyFiveXX.Variants;
 using Xunit;
 
 namespace SixtyFiveXX.Tests;
 
 public class MicroOpTableTests
 {
-    private static readonly MicroOpTable Table = MicroOpTable.Mos6502;
+    private static readonly MicroOpTable Table = MicroOpTable.For<Mos6502Variant>();
 
     // Sequence length excludes the opcode-fetch cycle, so the instruction's minimum
     // cycle count is SequenceLength + 1.

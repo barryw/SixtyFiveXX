@@ -1,11 +1,12 @@
 using SixtyFiveXX;
+using SixtyFiveXX.Variants;
 using Xunit;
 
 namespace SixtyFiveXX.Tests;
 
 public class HijackTests
 {
-    private static (Cpu<FlatBus> Cpu, byte[] Ram) Machine(params byte[] program)
+    private static (Cpu<FlatBus, Mos6502Variant> Cpu, byte[] Ram) Machine(params byte[] program)
     {
         var (cpu, ram) = TestMachine.Flat(0x0200, program);
         ram[0xFFFE] = 0x00; ram[0xFFFF] = 0x90;   // IRQ/BRK -> $9000
