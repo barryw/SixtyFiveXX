@@ -248,6 +248,22 @@ decay behaviours (`bitfade`, `delaytime`) are a deliberate non-goal — VICE's o
 describe their timing as guesswork — the same posture this project takes toward the
 unstable NMOS opcodes' magic constants.
 
+- **The packed-assembly public-surface test.** `dotnet pack` the library, then reflect over
+  the packed assembly and assert the intended surface: `Cpu<,>`, `ICpuVariant`, `IBus`,
+  `FlatBus`, `RefBus`, `CpuState`, `CpuVariant` and each variant struct **public**;
+  `OpcodeInfo`, `AddrMode`, `Op`, `Access`, `MicroOp` and `MicroOpTable` **not visible**.
+
+  This exists because of a real regression. During the phase 3 refactor, `OpcodeInfo` being
+  internal forced `ICpuVariant` internal, which forced `Cpu` internal (CS0703 — a public
+  type cannot be constrained on an internal one). The published package would have shipped
+  with its only entry point invisible to every consumer, and **all 569 tests still passed**,
+  because every test project has `InternalsVisibleTo`. No behavioural suite can catch this
+  class of defect; only a test that looks at the artifact a consumer actually receives can.
+
+  It also guards the inverse — a descriptor type accidentally made public becomes API this
+  project would then owe compatibility to. Keeping `OpcodeInfo` internal is what lets phase
+  4 reshape it freely.
+
 - **Unit tests** per addressing mode, flag, stack wrap, page cross, and interrupt timing.
 - **Benchmarks** as a gate: ≥50 MHz simulated 6502 single-threaded with `FlatBus`,
   target 100 MHz.
@@ -355,7 +371,7 @@ Each phase is gated by green suites, not by a subjective sense of completion.
 | --- | --- | --- | --- |
 | 1 | Micro-op engine, `IBus`, `FlatBus`, 6502 legal opcodes | Harte 6502 legal-opcode subset | **Complete** — 1,510,000 vectors |
 | 2 | Undocumented opcodes; interrupts, RDY, SO | **Full** Harte 6502 (all 256); Klaus functional + interrupt | **Complete** — 2,560,000 vectors |
-| 3 | `ICpuVariant` refactor | **Zero behaviour change** — every phase 1–2 suite still green | |
+| 3 | `ICpuVariant` refactor; public-surface gate | **Zero behaviour change** — every phase 1–2 suite still green — **plus** the packed-assembly surface test below | |
 | 4 | 65C02, three sub-variants | Harte `wdc65c02` / `rockwell65c02` / `synertek65c02`; Klaus 65C02 extended (WDC + Rockwell only) | |
 | 5 | 6510 core (`$00`/`$01` port) | Existing 6502 suites for inherited opcodes; VICE `cpuport` for the port delta | |
 | 6 | Disassembler; sim6502 adapter | **sim6502 swaps over.** Its own suite green; `sim6502/Proc/` deleted | |
