@@ -20,6 +20,35 @@ internal static class Opcodes65C02
     /// <summary>Opcode byte to descriptor. Always 256 entries, all defined.</summary>
     public static readonly OpcodeInfo[] Table = BuildTable();
 
+    /// <summary>
+    /// The Rockwell 65C02: the shared table plus <c>RMB</c>, <c>SMB</c>, <c>BBR</c> and
+    /// <c>BBS</c>, which occupy thirty-two opcodes that are NOPs on Synertek.
+    /// </summary>
+    /// <remarks>
+    /// Built by copying the shared table and overwriting those thirty-two, so the 224 rows
+    /// the two sub-variants agree on cannot drift apart. Two independently maintained
+    /// tables would be two places for a typo to hide behind a green suite for the other.
+    /// </remarks>
+    public static readonly OpcodeInfo[] RockwellTable = BuildRockwellTable();
+
+    private static OpcodeInfo[] BuildRockwellTable()
+    {
+        var t = (OpcodeInfo[])Table.Clone();
+
+        // The bit index is encoded in bits 4-6 of the opcode, so each group is eight
+        // opcodes sixteen apart. RMB/SMB are zero-page read-modify-writes; BBR/BBS read a
+        // zero-page byte, test one bit, and branch.
+        for (var bit = 0; bit < 8; bit++)
+        {
+            t[0x07 + bit * 0x10] = new OpcodeInfo($"RMB{bit}", AddrMode.ZeroPage, Op.Rmb, Access.ReadModifyWrite);
+            t[0x87 + bit * 0x10] = new OpcodeInfo($"SMB{bit}", AddrMode.ZeroPage, Op.Smb, Access.ReadModifyWrite);
+            t[0x0F + bit * 0x10] = new OpcodeInfo($"BBR{bit}", AddrMode.ZeroPageRelative, Op.Bbr, Access.None);
+            t[0x8F + bit * 0x10] = new OpcodeInfo($"BBS{bit}", AddrMode.ZeroPageRelative, Op.Bbs, Access.None);
+        }
+
+        return t;
+    }
+
     private static OpcodeInfo[] BuildTable()
     {
         var t = new OpcodeInfo[256];

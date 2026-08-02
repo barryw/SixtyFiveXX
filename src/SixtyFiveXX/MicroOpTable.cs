@@ -36,7 +36,8 @@ internal sealed class MicroOpTable
     private static OpcodeInfo[] OpcodeTableFor(CpuVariant variant) => variant switch
     {
         CpuVariant.Mos6502 => Opcodes6502.Table,
-        CpuVariant.Wdc65C02 or CpuVariant.Rockwell65C02 or CpuVariant.Synertek65C02 => Opcodes65C02.Table,
+        CpuVariant.Synertek65C02 => Opcodes65C02.Table,
+        CpuVariant.Rockwell65C02 => Opcodes65C02.RockwellTable,
         _ => throw new NotSupportedException($"No opcode table for {variant} yet."),
     };
 
@@ -196,6 +197,17 @@ internal sealed class MicroOpTable
         if (info.Mode == AddrMode.NopAbsoluteExtra)
         {
             ops.AddRange([MicroOp.FetchAddrLo, MicroOp.FetchAddrHi, MicroOp.NopAbsExtraRead]);
+            return;
+        }
+
+        if (info.Mode == AddrMode.ZeroPageRelative)
+        {
+            // Five cycles when the branch is not taken, six when it is, seven across a page
+            // — the ordinary branch tail does the last two.
+            ops.AddRange([
+                MicroOp.FetchAddrLo, MicroOp.RmwRead, MicroOp.BitBranchDummy,
+                MicroOp.BitBranchFetch, MicroOp.BranchTaken, MicroOp.BitBranchFixup,
+            ]);
             return;
         }
 

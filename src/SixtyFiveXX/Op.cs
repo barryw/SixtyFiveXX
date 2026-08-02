@@ -58,6 +58,14 @@ internal enum Op : byte
     AdcCmos, SbcCmos,
 
     /// <summary>
+    /// Rockwell's bit operations: reset or set one bit of a page-zero byte, and branch on
+    /// one bit of it being clear or set. The bit index is not part of the operation — it
+    /// comes from bits 4-6 of the opcode, exactly as the hardware decodes it, which is why
+    /// these are four members rather than thirty-two.
+    /// </summary>
+    Rmb, Smb, Bbr, Bbs,
+
+    /// <summary>
     /// The immediate form of BIT, which sets only Z. Every other addressing mode also
     /// copies the operand's top two bits into N and V; this one does not, so it needs its
     /// own member rather than a mode test inside <see cref="Bit"/>. Confirmed against all

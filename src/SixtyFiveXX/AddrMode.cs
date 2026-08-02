@@ -58,6 +58,13 @@ internal enum AddrMode : byte
     /// <summary>Hand-written sequence: pushes, pulls, JSR, RTS, RTI, BRK, JMP absolute.</summary>
     Stack,
 
+    /// <summary>
+    /// Two operands: a page-zero address then a signed branch displacement. Used only by
+    /// Rockwell's <c>BBR</c> and <c>BBS</c>, which read a byte, test one bit of it, and
+    /// branch — the only 65xx addressing mode that both reads memory and branches.
+    /// </summary>
+    ZeroPageRelative,
+
     // The CMOS NOP timing shapes. Every opcode the NMOS parts left undocumented became a
     // NOP on the 65C02, but not a uniform one: the shapes below were measured from the
     // vectors and cover all 76 of them, alongside Implied (one, $CB), Immediate (seven),

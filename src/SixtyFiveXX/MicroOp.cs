@@ -189,6 +189,24 @@ internal enum MicroOp : byte
     /// </remarks>
     RmwPageCrossCmos,
 
+    /// <summary>The discarded re-read of the byte BBR/BBS is testing.</summary>
+    BitBranchDummy,
+
+    /// <summary>
+    /// BBR/BBS's page-cross cycle. An ordinary branch re-reads the half-corrected PC here;
+    /// these re-read the byte after the displacement instead — the same address the
+    /// preceding cycle read. Measured from the vectors, which show that address twice.
+    /// </summary>
+    BitBranchFixup,
+
+    /// <summary>
+    /// Fetches BBR/BBS's displacement and ends the instruction unless the tested bit selects
+    /// the branch. The bit index comes from bits 4-6 of the opcode. The tested byte arrives
+    /// in <c>data</c> from <see cref="RmwRead"/>; this replaces it with the displacement, so
+    /// the ordinary <see cref="BranchTaken"/> and <see cref="BranchFixup"/> finish the job.
+    /// </summary>
+    BitBranchFetch,
+
     /// <summary>
     /// A discarded re-read of the high operand byte, used only by the three-byte
     /// four-cycle CMOS NOPs.

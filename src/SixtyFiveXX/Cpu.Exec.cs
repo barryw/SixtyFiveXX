@@ -44,6 +44,16 @@ public sealed partial class Cpu<TBus, TVariant>
             case Op.Sty: _data = _s.Y; break;
             case Op.Stz: _data = 0; break;
 
+            // Rockwell's bit set and reset, read-modify-writes over data. The bit index
+            // comes from the opcode, as it does in hardware. Neither touches any flag.
+            case Op.Rmb: _data = (byte)(_data & ~(1 << ((_opcode >> 4) & 7))); break;
+            case Op.Smb: _data = (byte)(_data | (1 << ((_opcode >> 4) & 7))); break;
+
+            // BBR and BBS do their work in BitBranchFetch; nothing remains for Exec.
+            case Op.Bbr:
+            case Op.Bbs:
+                break;
+
             // Test-and-modify. Z comes from the AND, as for BIT, but N and V are left
             // alone — unlike BIT, which takes them from the operand's top two bits.
             case Op.Trb: _s.Z = (_s.A & _data) == 0; _data = (byte)(_data & ~_s.A); break;

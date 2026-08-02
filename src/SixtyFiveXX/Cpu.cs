@@ -40,6 +40,13 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
 
     private Op _op;
 
+    /// <summary>
+    /// The opcode currently executing. Only the Rockwell bit operations consult it, to
+    /// recover the bit index the hardware decodes from bits 4-6 rather than carrying
+    /// thirty-two near-identical operations.
+    /// </summary>
+    private byte _opcode;
+
     /// <summary>The value being read, written, or modified by the current instruction.</summary>
     private byte _data;
 
@@ -390,6 +397,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
         if (info.Operation == Op.Undefined) throw new UndefinedOpcodeException(opcode, pc);
 
         _op = info.Operation;
+        _opcode = opcode;
         _mpc = _ops[entry] == MicroOp.End ? -1 : entry;
     }
 
@@ -698,6 +706,30 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 // JMP ($xxFF) reads its high byte from $xx00.
                 _s.PC = (ushort)((_bus.Read((_ptr & 0xFF00) | ((_ptr + 1) & 0xFF)) << 8) | _tmp);
                 break;
+
+            case MicroOp.BitBranchDummy:
+                _bus.Read(_addr);
+                break;
+
+            case MicroOp.BitBranchFixup:
+                // Reads the address stashed by BitBranchFetch rather than the half-corrected
+                // PC an ordinary branch uses.
+                _bus.Read(_addr);
+                _s.PC = (ushort)(_s.PC + _branchFix);
+                break;
+
+            case MicroOp.BitBranchFetch:
+            {
+                var tested = _data;
+                _data = _bus.Read(_s.PC);
+                _s.PC++;
+                // The byte after the displacement, which both remaining cycles read. _addr
+                // held the zero-page address, which nothing needs from here on.
+                _addr = _s.PC;
+                var isSet = (tested & (1 << ((_opcode >> 4) & 7))) != 0;
+                if (_op == Op.Bbr ? isSet : !isSet) EndInstruction();
+                break;
+            }
 
             case MicroOp.NopAbsExtraRead:
                 // The fourth cycle of the three-byte, four-cycle CMOS NOPs: a discarded

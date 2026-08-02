@@ -223,6 +223,13 @@ public class Harte6502Tests(ITestOutputHelper output) : HarteTests<Mos6502Varian
     protected override int ExpectedImplementedOpcodes => 256;
 }
 
+/// <summary>The Rockwell 65C02 against the <c>rockwell65c02</c> vector set.</summary>
+public class HarteRockwell65C02Tests(ITestOutputHelper output) : HarteTests<Rockwell65C02Variant>(output)
+{
+    /// <inheritdoc />
+    protected override int ExpectedImplementedOpcodes => 256;
+}
+
 /// <summary>The Synertek 65C02 against the <c>synertek65c02</c> vector set.</summary>
 public class HarteSynertek65C02Tests(ITestOutputHelper output) : HarteTests<Synertek65C02Variant>(output)
 {
