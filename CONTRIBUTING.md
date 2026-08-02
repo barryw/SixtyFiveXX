@@ -43,11 +43,21 @@ redirect for a compatible release. `scripts/stamp-version.sh` implements that;
 
 ## Before you push
 
-The conformance suite runs 2,560,000 SingleStepTests vectors plus Klaus
-Dormann's functional and interrupt tests. It needs `64tass` to assemble the
-interrupt test binary *before* anything runs it — including the solution-wide
-test command below. Skip this and the first test command fails outright on a
-fresh clone:
+The conformance suite runs 10,220,000 SingleStepTests vectors across four cores,
+plus Klaus Dormann's functional, interrupt and 65C02 extended tests. Two things
+to know before the first run:
+
+**It downloads roughly 3.8 GB of vectors.** One set per core, fetched on first
+use and cached under `tests/SixtyFiveXX.Conformance/.harte-cache/`. They are
+never committed. If you already have a clone of
+[SingleStepTests/65x02](https://github.com/SingleStepTests/65x02), point
+`SIXTYFIVEXX_HARTE_DIR` at it and nothing is downloaded at all:
+
+    export SIXTYFIVEXX_HARTE_DIR=/path/to/65x02
+
+**It needs `64tass`** to assemble the interrupt test binary *before* anything
+runs it — including the solution-wide test command below. Skip this and the
+first test command fails outright on a fresh clone:
 
     brew install 64tass          # or: apt-get install 64tass
     tests/SixtyFiveXX.Conformance/klaus/build.sh
@@ -57,6 +67,10 @@ Once that binary exists:
 
     dotnet build -c Release
     dotnet test -c Release --filter "Category!=Performance"
+
+The conformance run takes roughly two to three minutes per target framework with
+the vectors already cached, and the two frameworks overlap. Nearly all of that is
+the vector comparison itself; the unit suite is under a second.
 
 `tests/SixtyFiveXX.Conformance/klaus/6502_interrupt_test.asm` is a byte-faithful
 port of Klaus Dormann's GPL-3.0 test, verified character-for-character against

@@ -36,7 +36,9 @@ existing `IBus` reference in `RefBus` and pay one virtual call per access.
 | --- | --- | --- |
 | 6502, documented opcodes | Complete | Harte SingleStepTests, per-cycle |
 | 6502, undocumented opcodes | Complete | Harte SingleStepTests, per-cycle |
-| 65C02 (Rockwell, Synertek, WDC) | Phase 4 | — |
+| 65C02 Synertek | Complete | Harte SingleStepTests, per-cycle |
+| 65C02 Rockwell | Complete | Harte SingleStepTests + Klaus 65C02 extended |
+| 65C02 WDC | Complete | Harte SingleStepTests + Klaus 65C02 extended |
 | 6510 | Phase 5 | — |
 | 65816 | Phase 7 | — |
 
@@ -52,8 +54,14 @@ for the implementation plans.
 
 Vectors from [SingleStepTests/65x02](https://github.com/SingleStepTests/65x02) (MIT) are
 downloaded on first use and cached under `tests/SixtyFiveXX.Conformance/.harte-cache/`.
-They are never committed. To run offline, clone that repository and set
+They are never committed. One set per core, so a full run needs roughly **3.8 GB**. To
+run offline — or to avoid the download entirely — clone that repository and set
 `SIXTYFIVEXX_HARTE_DIR` to point at it.
+
+`WAI` and `STP` are the only two opcodes with no vectors: SingleStepTests ships empty
+files for them, because an instruction that halts cannot be expressed as a
+before-and-after pair. They are covered by unit tests instead, and the conformance run
+names them in its output rather than passing over them silently.
 
 Klaus Dormann's interrupt test also needs `64tass` installed and
 `tests/SixtyFiveXX.Conformance/klaus/build.sh` run once to produce its binary; without
