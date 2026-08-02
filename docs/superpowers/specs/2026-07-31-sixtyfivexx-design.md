@@ -231,10 +231,22 @@ strength of unit tests alone.
 | --- | --- | --- | --- |
 | **Harte / SingleStepTests** `65x02`, `65816` | MIT | 10,000 per-cycle vectors per opcode, with full bus activity, for 6502, NES6502, Rockwell/Synertek/WDC 65c02, 65816 | ~1 GB across sets. Downloaded and cached to a gitignored directory, not committed. Offline path supported. |
 | **Klaus Dormann** functional + 65C02 extended | GPL (binaries only) | Broad behavioural coverage, full BCD | Pre-built binaries fetched by the runner. Running a GPL test binary does not affect our licence. |
-| **Wolfgang Lorenz** C64 suite | Freely distributed | NMOS undocumented opcodes, timing, `$00`/`$01` port | Needs a minimal KERNAL shim to host it. |
+| **Wolfgang Lorenz** C64 suite | Public domain | NMOS undocumented opcodes, timing | **Cannot certify the `$00`/`$01` port on a bare core** — see below. Retained only as a possible phase 8 gate, once a C64 personality exists to host it. |
+| **VICE `cpuport`** (`testprogs/CPU/cpuport/test1`) | GPL (binary only) | The 6510 `$00` DDR / `$01` port delta | Small, deterministic, needs no KERNAL, CIA or VIC-II. Same "execute a GPL binary" posture as Klaus. |
 | **Bruce Clark** decimal test | Freely distributed | Exhaustive BCD `ADC`/`SBC`, both NMOS and CMOS semantics | Small; catches the classic decimal bugs. |
 
 Plus:
+
+**Why Lorenz cannot gate the 6510.** Its CPU-port tests are not silicon tests. `MMU` and
+`MMUFETCH` assert on real Commodore ROM byte values visible through C64 banking, and
+`CPUPORT` exercises board-level analog behaviour — the unconnected-pin decay the C64's
+wiring produces, not anything the 6510 defines. Tom Harte's CLK harness excludes exactly
+those three for that reason. There is also **no 6510 vector set** anywhere in
+SingleStepTests. So the 6510 is certified in two parts: its inherited opcodes by the
+existing 6502 suites, and its `$00`/`$01` delta by the VICE `cpuport` test. The analog
+decay behaviours (`bitfade`, `delaytime`) are a deliberate non-goal — VICE's own authors
+describe their timing as guesswork — the same posture this project takes toward the
+unstable NMOS opcodes' magic constants.
 
 - **Unit tests** per addressing mode, flag, stack wrap, page cross, and interrupt timing.
 - **Benchmarks** as a gate: ≥50 MHz simulated 6502 single-threaded with `FlatBus`,
@@ -342,27 +354,37 @@ Each phase is gated by green suites, not by a subjective sense of completion.
 | # | Deliverable | Gate | Status |
 | --- | --- | --- | --- |
 | 1 | Micro-op engine, `IBus`, `FlatBus`, 6502 legal opcodes | Harte 6502 legal-opcode subset | **Complete** — 1,510,000 vectors |
-| 2 | `ICpuVariant` refactor; undocumented opcodes; interrupts, RDY, SO | **Full** Harte 6502 (all 256); Klaus functional; Bruce Clark | |
-| 3 | Disassembler; sim6502 adapter | **sim6502 swaps over.** Its own suite green; `sim6502/Proc/` deleted | |
-| 4 | 65C02, three sub-variants | Harte 65c02 ×3; Klaus 65C02 extended | |
-| 5 | 6510 core (`$00`/`$01` port) | Wolfgang Lorenz suite | |
-| 6 | 65816 | Harte 65816 | |
-| 7 | **Performance pass across all cores** | Every optimization: a measured delta **and** every Harte suite still green | |
-| 8 | Personality contract; C64 personality | Differential vs VICE and Ultimate64 | |
+| 2 | Undocumented opcodes; interrupts, RDY, SO | **Full** Harte 6502 (all 256); Klaus functional + interrupt | **Complete** — 2,560,000 vectors |
+| 3 | `ICpuVariant` refactor | **Zero behaviour change** — every phase 1–2 suite still green | |
+| 4 | 65C02, three sub-variants | Harte `wdc65c02` / `rockwell65c02` / `synertek65c02`; Klaus 65C02 extended (WDC + Rockwell only) | |
+| 5 | 6510 core (`$00`/`$01` port) | Existing 6502 suites for inherited opcodes; VICE `cpuport` for the port delta | |
+| 6 | Disassembler; sim6502 adapter | **sim6502 swaps over.** Its own suite green; `sim6502/Proc/` deleted | |
+| 7 | 65816 | Harte 65816 | Deferred — no consumer needs it yet |
+| 8 | **Performance pass across all cores** | Every optimization: a measured delta **and** every Harte suite still green | |
+| 9 | Personality contract; C64 personality | Differential vs VICE and Ultimate64 | |
 
-**Why the performance pass is phase 7 and not earlier.** All five cores share one engine,
-so an optimization written against that engine benefits every variant at once. Optimizing
-before the cores exist risks shapes the 65816 cannot use, and would mean re-validating
-each change against test suites that do not exist yet. Correctness first, across every
-core, then one pass that lifts all of them.
+**Why the performance pass comes after the cores.** All the cores share one engine, so an
+optimization written against that engine benefits every variant at once. Optimizing before
+the cores exist risks shapes a later variant cannot use, and would mean re-validating each
+change against test suites that do not exist yet. Correctness first, across every core,
+then one pass that lifts all of them.
 
-The phase 7 rule is absolute: **no optimization ships without both a measured improvement
-and a green run of every conformance suite the project has by then.** A change that is
-faster and wrong is a regression.
+That rule is absolute: **no optimization ships without both a measured improvement and a
+green run of every conformance suite the project has by then.** A change that is faster
+and wrong is a regression.
 
-Phase 3 is the point at which the current emulator is replaced. It stays early
-deliberately — it puts a real consumer against the public API before four more cores are
-built on top of it, so API problems surface while they are still cheap.
+**Why the swap moved from phase 3 to phase 6.** The original order put the sim6502 swap
+first, to get a real consumer against the public API early. Two facts changed it. First,
+sim6502 already supports 6502, 6510 **and** 65C02, selectable per test suite — so swapping
+before those cores exist would regress a working consumer, or force it to run two CPU
+cores side by side. Second, `ICpuVariant` necessarily changes the public API, so an
+adapter written before the refactor would be rewritten after it. Building the cores first
+costs later API feedback and buys a single clean cutover with full parity.
+
+**Why the variant refactor is its own phase.** `Cpu<TBus>` currently binds the 6502
+micro-op table at construction, so no second variant can exist until that changes. Doing
+it alone, gated on *zero behaviour change* against 2.56 M vectors and two Klaus programs,
+means any regression it introduces is attributable to the refactor and nothing else.
 
 Apple IIe, NES, and Apple IIgs personalities are follow-on work against the contract
 frozen in phase 8, and are out of scope for this spec.
