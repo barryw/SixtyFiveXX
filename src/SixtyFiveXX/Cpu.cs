@@ -382,10 +382,15 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
         _s.PC++;
 
         var entry = _entry[opcode];
-        if (_ops[entry] == MicroOp.End) throw new UndefinedOpcodeException(opcode, pc);
+        var info = _table.Info[opcode];
 
-        _op = _table.Info[opcode].Operation;
-        _mpc = entry;
+        // Keyed off the descriptor rather than an empty sequence: the CMOS single-cycle
+        // NOPs are defined opcodes that emit no micro-ops at all, so "no micro-ops" and
+        // "not implemented" are no longer the same thing.
+        if (info.Operation == Op.Undefined) throw new UndefinedOpcodeException(opcode, pc);
+
+        _op = info.Operation;
+        _mpc = _ops[entry] == MicroOp.End ? -1 : entry;
     }
 
     /// <summary>Ends the current instruction; the next tick fetches an opcode.</summary>
@@ -692,6 +697,12 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 // NMOS bug: the vector's high byte is fetched from the same page, so
                 // JMP ($xxFF) reads its high byte from $xx00.
                 _s.PC = (ushort)((_bus.Read((_ptr & 0xFF00) | ((_ptr + 1) & 0xFF)) << 8) | _tmp);
+                break;
+
+            case MicroOp.NopAbsExtraRead:
+                // The fourth cycle of the three-byte, four-cycle CMOS NOPs: a discarded
+                // re-read of the high operand byte, which PC has already passed.
+                _bus.Read((_s.PC - 1) & 0xFFFF);
                 break;
 
             case MicroOp.JmpIndBugDummy:

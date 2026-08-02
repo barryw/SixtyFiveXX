@@ -185,6 +185,20 @@ internal sealed class MicroOpTable
             return;
         }
 
+        if (info.Mode == AddrMode.NopSingleCycle) return;   // fetch only; no further cycles
+
+        if (info.Mode == AddrMode.NopAbsolute)
+        {
+            ops.AddRange([MicroOp.FetchAddrLo, MicroOp.FetchAddrHi]);
+            return;
+        }
+
+        if (info.Mode == AddrMode.NopAbsoluteExtra)
+        {
+            ops.AddRange([MicroOp.FetchAddrLo, MicroOp.FetchAddrHi, MicroOp.NopAbsExtraRead]);
+            return;
+        }
+
         if (info.Mode == AddrMode.Relative)
         {
             ops.AddRange([MicroOp.BranchFetch, MicroOp.BranchTaken, MicroOp.BranchFixup]);

@@ -190,6 +190,12 @@ internal enum MicroOp : byte
     RmwPageCrossCmos,
 
     /// <summary>
+    /// A discarded re-read of the high operand byte, used only by the three-byte
+    /// four-cycle CMOS NOPs.
+    /// </summary>
+    NopAbsExtraRead,
+
+    /// <summary>
     /// The discarded read the CMOS <c>JMP (abs)</c> performs at the address the NMOS core
     /// would have taken its high byte from — <c>(ptr &amp; $FF00) | ((ptr + 1) &amp; $FF)</c>.
     /// </summary>

@@ -62,6 +62,7 @@ public class PublicSurfaceTests
         "SixtyFiveXX.RefBus",
         "SixtyFiveXX.UndefinedOpcodeException",
         "SixtyFiveXX.Variants.Mos6502Variant",
+        "SixtyFiveXX.Variants.Synertek65C02Variant",
     ];
 
     /// <summary>
