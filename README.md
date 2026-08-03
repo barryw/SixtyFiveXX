@@ -16,7 +16,7 @@ Targets `net8.0` and `net10.0`. Zero dependencies.
 
 ```csharp
 var ram = new byte[0x10000];
-var cpu = new Cpu<FlatBus>(new FlatBus(ram));
+var cpu = new Cpu<FlatBus, Mos6502Variant>(new FlatBus(ram));
 
 cpu.Reset();
 cpu.Step();              // the 7-cycle reset sequence
@@ -25,6 +25,27 @@ cpu.Step();              // one instruction
 cpu.Run(1_000_000);      // a million cycles
 cpu.RunUntil(c => c.State.PC == 0xC000, maxCycles: 50_000);
 ```
+
+The variant is a type parameter too, so a core carries no runtime test for which
+processor it is. Swap `Mos6502Variant` for `Mos6510Variant`, `Synertek65C02Variant`,
+`Rockwell65C02Variant` or `Wdc65C02Variant`.
+
+## Disassembly
+
+```csharp
+var instruction = Disassembler.Decode<FlatBus, Mos6502Variant>(cpu.Bus, 0xC000);
+
+instruction.Mnemonic;    // "LDA"
+instruction.Operand;     // "$1234,X"
+instruction.Length;      // 3
+instruction.ToString();  // "LDA $1234,X"
+```
+
+Driven by the same opcode table the engine runs from, so the two cannot drift: adding an
+opcode to a variant makes it decodable in the commit that makes it executable. Walk memory
+by `Length`. Branches show the address they land on rather than the displacement they
+encode, and `BRK` is two bytes because its second byte is fetched and discarded rather
+than executed.
 
 `TBus` is a `struct` type parameter so the JIT specializes the core and inlines every
 memory access. Implement your own `struct` bus for address decoding, or wrap an
