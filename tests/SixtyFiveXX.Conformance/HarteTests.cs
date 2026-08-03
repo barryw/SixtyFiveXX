@@ -56,6 +56,12 @@ public abstract class HarteTests<TVariant>(ITestOutputHelper output)
     private static string Set => TVariant.Variant switch
     {
         CpuVariant.Mos6502 => "6502",
+
+        // Deliberate: SingleStepTests has no 6510 set anywhere, and the 6510's instruction
+        // set IS the 6502's. Running the 6502 vectors against the 6510 core is what
+        // certifies the inherited opcodes; the $00/$01 delta is gated separately, because
+        // no vector in this set touches those addresses in a way the port would intercept.
+        CpuVariant.Mos6510 => "6502",
         CpuVariant.Wdc65C02 => "wdc65c02",
         CpuVariant.Rockwell65C02 => "rockwell65c02",
         CpuVariant.Synertek65C02 => "synertek65c02",
@@ -280,6 +286,20 @@ public class HarteWdc65C02Tests(ITestOutputHelper output) : HarteTests<Wdc65C02V
 
     /// <inheritdoc />
     protected override IReadOnlySet<byte> OpcodesWithoutVectors => new HashSet<byte> { 0xCB, 0xDB };
+}
+
+/// <summary>
+/// The MOS 6510 against the <c>6502</c> vector set.
+/// </summary>
+/// <remarks>
+/// There is no <c>6510</c> vector set to run. This certifies that the 6510 inherits the
+/// 6502's instruction set exactly — 2,560,000 vectors through a different core — and
+/// nothing about the on-chip port, which has its own gate.
+/// </remarks>
+public class Harte6510Tests(ITestOutputHelper output) : HarteTests<Mos6510Variant>(output)
+{
+    /// <inheritdoc />
+    protected override int ExpectedImplementedOpcodes => 256;
 }
 
 /// <summary>The Rockwell 65C02 against the <c>rockwell65c02</c> vector set.</summary>

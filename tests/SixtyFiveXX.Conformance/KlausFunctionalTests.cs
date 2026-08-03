@@ -24,10 +24,20 @@ public class KlausFunctionalTests(ITestOutputHelper output)
     private const long CycleCeiling = 500_000_000;
 
     [Fact]
-    public void FunctionalTest_RunsToTheSuccessTrap()
+    public void FunctionalTest_RunsToTheSuccessTrap() => RunFunctionalTest<Mos6502Variant>();
+
+    /// <summary>
+    /// The 6510 inherits the 6502's instruction set entirely, so the same program must
+    /// reach the same success trap. The on-chip port is not exercised: the program never
+    /// writes $00 or $01.
+    /// </summary>
+    [Fact]
+    public void FunctionalTest_RunsToTheSuccessTrap_On6510() => RunFunctionalTest<Mos6510Variant>();
+
+    private void RunFunctionalTest<TVariant>() where TVariant : struct, ICpuVariant
     {
         var ram = KlausCache.Load("6502_functional_test.bin");
-        var cpu = new Cpu<FlatBus, Mos6502Variant>(new FlatBus(ram));
+        var cpu = new Cpu<FlatBus, TVariant>(new FlatBus(ram));
         cpu.State.PC = StartAddress;
         cpu.State.S = 0xFD;
         cpu.State.P = Flag.U | Flag.I;
