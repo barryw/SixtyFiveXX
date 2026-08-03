@@ -7,8 +7,8 @@
 
   <PropertyGroup>
     <PackageId>SixtyFiveXX</PackageId>
-    <Description>A cycle-accurate NMOS 6502 emulator core. All 256 opcodes, including the undocumented ones, certified against 2,560,000 SingleStepTests vectors, Klaus Dormann's functional test, and a port of his interrupt test validating NMOS BRK/NMI hijack behaviour. Interrupts, RDY and SO with hardware-correct timing.</Description>
-    <PackageTags>6502;emulator;nmos;cpu;retro;c64;nes;cycle-accurate</PackageTags>
+    <Description>Cycle-stepped emulator cores for the 65xx family: the NMOS 6502, the 6510 with its on-chip $00/$01 port, and the 65C02 in Synertek, Rockwell and WDC forms. Every Tick() advances exactly one clock cycle and performs at most one bus access, including the dummy reads and writes real silicon performs, so cycle counts fall out of the work rather than being tabulated after it. All 256 opcodes per core, undocumented ones included, certified against 10,220,000 SingleStepTests vectors plus Klaus Dormann's functional, interrupt and 65C02 extended tests and VICE's cpuport test. Ships a disassembler driven by the same opcode table the engine runs from. Zero dependencies.</Description>
+    <PackageTags>6502;6510;65c02;wdc65c02;emulator;nmos;cmos;cpu;retro;c64;nes;cycle-accurate;disassembler</PackageTags>
     <PackageProjectUrl>https://github.com/barryw/SixtyFiveXX</PackageProjectUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
