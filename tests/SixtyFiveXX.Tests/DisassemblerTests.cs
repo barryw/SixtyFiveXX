@@ -218,6 +218,24 @@ public class DisassemblerTests
         }
     }
 
+    /// <summary>
+    /// The README's example, compiled. Decoding straight from a running core's bus is the
+    /// obvious way to reach for this, and <c>Cpu.Bus</c> hands back a <c>ref</c> that has to
+    /// bind to the <c>in</c> parameter for that to work.
+    /// </summary>
+    [Fact]
+    public void DecodesFromALiveCoresBus()
+    {
+        var ram = new byte[0x10000];
+        ram[0xC000] = 0xBD; ram[0xC001] = 0x34; ram[0xC002] = 0x12;
+        var cpu = new Cpu<FlatBus, Mos6502Variant>(new FlatBus(ram));
+
+        var instruction = Disassembler.Decode<FlatBus, Mos6502Variant>(cpu.Bus, 0xC000);
+
+        Assert.Equal("LDA $1234,X", instruction.ToString());
+        Assert.Equal(3, instruction.Length);
+    }
+
     [Fact]
     public void ToString_JoinsTheMnemonicAndOperand()
     {

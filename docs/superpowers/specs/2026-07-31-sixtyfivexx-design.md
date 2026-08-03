@@ -248,7 +248,16 @@ failOnBrk)` — is built on `RunUntil` plus stack-depth tracking **in the adapte
 the core. The core stays a CPU.
 
 A `Disassembler` decodes from any `IBus` for a given variant, driven by the same opcode
-table as the engine, so the two cannot drift.
+table as the engine, so the two cannot drift. It returns an `Instruction` — mnemonic,
+operand text, and the bytes consumed — and nothing from the opcode descriptors, which stay
+internal. Two decisions are worth recording because neither is the obvious one:
+
+- **`BRK` is two bytes.** The byte after the opcode is fetched and discarded rather than
+  executed, so a caller walking memory by `Length` has to step over it exactly as the
+  processor does. Decoding it as one byte puts every instruction after it out of phase. It
+  renders as an immediate, which is both what it is and what 64tass accepts.
+- **Branches show the address they land on**, not the displacement they encode — matching
+  what a reader wants and what sim6502 already prints.
 
 ## 6. sim6502 integration
 
@@ -423,7 +432,8 @@ Each phase is gated by green suites, not by a subjective sense of completion.
 | 3 | `ICpuVariant` refactor; public-surface gate | **Zero behaviour change** — every phase 1–2 suite still green — **plus** the packed-assembly surface test below | **Complete** — 311 unit + 264 conformance on both TFMs |
 | 4 | 65C02, three sub-variants | Harte `wdc65c02` / `rockwell65c02` / `synertek65c02`; Klaus 65C02 extended (WDC + Rockwell only) | **Complete** — 7,660,000 vectors; 1,041 conformance tests on both TFMs |
 | 5 | 6510 core (`$00`/`$01` port) | Existing 6502 suites for inherited opcodes; VICE `cpuport/test1` for the port delta | **Complete** — 384 unit + 1,303 conformance on both TFMs. The 6502 vectors run against the 6510 core, less the 12,658 of 2,560,000 that use `$00`/`$01` as ordinary memory |
-| 6 | Disassembler; sim6502 adapter | **sim6502 swaps over.** Its own suite green; `sim6502/Proc/` deleted | |
+| 6a | Disassembler | 64tass reassembles the disassembly of every uniquely-encodable opcode back to the original bytes, on all five cores; decoded length matches what the processor consumes for every opcode | **Complete** — 431 unit + 1,309 conformance on both TFMs |
+| 6b | sim6502 adapter | **sim6502 swaps over.** Its own suite green; `sim6502/Proc/` deleted | Planned separately, and executed in the sim6502 repository |
 | 7 | 65816 | Harte 65816 | Deferred — no consumer needs it yet |
 | 8 | **Performance pass across all cores** | Every optimization: a measured delta **and** every Harte suite still green | |
 | 9 | Personality contract; C64 personality | Differential vs VICE and Ultimate64 | |
