@@ -34,44 +34,48 @@ public static class Disassembler
         // something else here.
         var info = MicroOpTable.For<TVariant>().Info[bus.Read(address & 0xFFFF)];
 
-        var operandByte = Operand8(bus, address, 1);
-        var operandWord = Operand16(bus, address);
-
+        // Each arm reads exactly the operand bytes its instruction has. Reading all three up
+        // front would be shorter, but it would touch addresses the instruction never touches
+        // — which matters on the side-effecting buses warned about above, and triples the
+        // reads for a caller decoding every instruction it executes.
         return info.Mode switch
         {
             AddrMode.Implied => new Instruction(info.Mnemonic, "", 1),
             AddrMode.Accumulator => new Instruction(info.Mnemonic, "A", 1),
-            AddrMode.Immediate => new Instruction(info.Mnemonic, $"#${operandByte:X2}", 2),
+            AddrMode.Immediate => new Instruction(info.Mnemonic, $"#${Operand8(bus, address, 1):X2}", 2),
 
-            AddrMode.ZeroPage => new Instruction(info.Mnemonic, $"${operandByte:X2}", 2),
-            AddrMode.ZeroPageX => new Instruction(info.Mnemonic, $"${operandByte:X2},X", 2),
-            AddrMode.ZeroPageY => new Instruction(info.Mnemonic, $"${operandByte:X2},Y", 2),
+            AddrMode.ZeroPage => new Instruction(info.Mnemonic, $"${Operand8(bus, address, 1):X2}", 2),
+            AddrMode.ZeroPageX => new Instruction(info.Mnemonic, $"${Operand8(bus, address, 1):X2},X", 2),
+            AddrMode.ZeroPageY => new Instruction(info.Mnemonic, $"${Operand8(bus, address, 1):X2},Y", 2),
 
-            AddrMode.Absolute => new Instruction(info.Mnemonic, $"${operandWord:X4}", 3),
-            AddrMode.AbsoluteX => new Instruction(info.Mnemonic, $"${operandWord:X4},X", 3),
-            AddrMode.AbsoluteY => new Instruction(info.Mnemonic, $"${operandWord:X4},Y", 3),
+            AddrMode.Absolute => new Instruction(info.Mnemonic, $"${Operand16(bus, address):X4}", 3),
+            AddrMode.AbsoluteX => new Instruction(info.Mnemonic, $"${Operand16(bus, address):X4},X", 3),
+            AddrMode.AbsoluteY => new Instruction(info.Mnemonic, $"${Operand16(bus, address):X4},Y", 3),
 
             // The NMOS page-wrap bug and its CMOS fix are the same three bytes and the same
             // notation; they differ only in where the second vector byte is fetched from.
             AddrMode.Indirect or AddrMode.IndirectFixed =>
-                new Instruction(info.Mnemonic, $"(${operandWord:X4})", 3),
+                new Instruction(info.Mnemonic, $"(${Operand16(bus, address):X4})", 3),
             AddrMode.AbsoluteIndexedIndirect =>
-                new Instruction(info.Mnemonic, $"(${operandWord:X4},X)", 3),
+                new Instruction(info.Mnemonic, $"(${Operand16(bus, address):X4},X)", 3),
 
-            AddrMode.ZeroPageIndirect => new Instruction(info.Mnemonic, $"(${operandByte:X2})", 2),
-            AddrMode.IndexedIndirect => new Instruction(info.Mnemonic, $"(${operandByte:X2},X)", 2),
-            AddrMode.IndirectIndexed => new Instruction(info.Mnemonic, $"(${operandByte:X2}),Y", 2),
+            AddrMode.ZeroPageIndirect =>
+                new Instruction(info.Mnemonic, $"(${Operand8(bus, address, 1):X2})", 2),
+            AddrMode.IndexedIndirect =>
+                new Instruction(info.Mnemonic, $"(${Operand8(bus, address, 1):X2},X)", 2),
+            AddrMode.IndirectIndexed =>
+                new Instruction(info.Mnemonic, $"(${Operand8(bus, address, 1):X2}),Y", 2),
 
             // Shown as the address landed on, not the displacement encoded. The base is the
             // byte after the instruction, which is why the length is added before the offset.
-            AddrMode.Relative =>
-                new Instruction(info.Mnemonic, $"${BranchTarget(address, 2, operandByte):X4}", 2),
+            AddrMode.Relative => new Instruction(
+                info.Mnemonic, $"${BranchTarget(address, 2, Operand8(bus, address, 1)):X4}", 2),
 
             // BBR/BBS: a page-zero address, then a displacement measured from the end of a
             // three-byte instruction.
             AddrMode.ZeroPageRelative => new Instruction(
                 info.Mnemonic,
-                $"${operandByte:X2},${BranchTarget(address, 3, Operand8(bus, address, 2)):X4}",
+                $"${Operand8(bus, address, 1):X2},${BranchTarget(address, 3, Operand8(bus, address, 2)):X4}",
                 3),
 
             // The 65C02's undefined opcodes are NOPs, but not uniform ones: these two shapes
@@ -79,12 +83,12 @@ public static class Disassembler
             // the bytes, so the operand is shown rather than hidden.
             AddrMode.NopSingleCycle => new Instruction(info.Mnemonic, "", 1),
             AddrMode.NopAbsolute or AddrMode.NopAbsoluteExtra =>
-                new Instruction(info.Mnemonic, $"${operandWord:X4}", 3),
+                new Instruction(info.Mnemonic, $"${Operand16(bus, address):X4}", 3),
 
             // An opcode this variant does not implement still occupies its one byte.
             AddrMode.Undefined => new Instruction(info.Mnemonic, "", 1),
 
-            AddrMode.Stack => DecodeStack(info, operandByte, operandWord),
+            AddrMode.Stack => DecodeStack(info, bus, address),
 
             // Never a silent default. Phase 4 shipped a switch that quietly handed an
             // unmapped variant the NMOS profile, and the only signal was a conformance
@@ -98,13 +102,14 @@ public static class Disassembler
     /// the pushes and pulls at one byte, <c>BRK</c> at two, and the absolute <c>JMP</c> and
     /// <c>JSR</c> at three. The operation tells them apart.
     /// </summary>
-    private static Instruction DecodeStack(OpcodeInfo info, int operandByte, int operandWord) =>
+    private static Instruction DecodeStack<TBus>(OpcodeInfo info, in TBus bus, int address)
+        where TBus : struct, IBus =>
         info.Operation switch
         {
             // The byte after BRK is fetched and discarded, never executed. Written as an
             // immediate because that is both what it is and what assemblers accept.
-            Op.Brk => new Instruction(info.Mnemonic, $"#${operandByte:X2}", 2),
-            Op.Jmp or Op.Jsr => new Instruction(info.Mnemonic, $"${operandWord:X4}", 3),
+            Op.Brk => new Instruction(info.Mnemonic, $"#${Operand8(bus, address, 1):X2}", 2),
+            Op.Jmp or Op.Jsr => new Instruction(info.Mnemonic, $"${Operand16(bus, address):X4}", 3),
             _ => new Instruction(info.Mnemonic, "", 1),
         };
 

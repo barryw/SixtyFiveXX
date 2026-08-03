@@ -37,6 +37,12 @@ public class RoundTripTests(ITestOutputHelper output)
     private const byte OperandLo = 0x34;
     private const byte OperandHi = 0x12;
 
+    /// <summary>
+    /// Stands in for the <c>.cpu</c> name until <see cref="Assemble"/> substitutes it, so
+    /// one disassembly can be assembled under whichever dialect the caller names.
+    /// </summary>
+    private const string CpuDirectivePlaceholder = "%CPU%";
+
     // The covered count is pinned per variant rather than floored, because how many opcodes
     // are uniquely encodable is a property of the instruction set and not a tuning knob. A
     // renderer change that quietly collapsed two opcodes into the same text would otherwise
@@ -110,10 +116,17 @@ public class RoundTripTests(ITestOutputHelper output)
         {
             if (ambiguous.Contains(opcode)) continue;
 
+            // Write only as many operand bytes as this opcode actually has. Filling all
+            // three unconditionally would let the next opcode overwrite them, so each
+            // instruction's operand would be whatever happened to follow it — decodable,
+            // but not what the layout says, and it would make anything written against
+            // these operands drift the moment the table gains an opcode. The length does
+            // not depend on the operand bytes, so decoding before writing them is safe.
             ram[cursor] = (byte)opcode;
-            ram[cursor + 1] = OperandLo;
-            ram[cursor + 2] = OperandHi;
-            cursor += Disassembler.Decode<FlatBus, TVariant>(new FlatBus(ram), cursor).Length;
+            var length = Disassembler.Decode<FlatBus, TVariant>(new FlatBus(ram), cursor).Length;
+            if (length > 1) ram[cursor + 1] = OperandLo;
+            if (length > 2) ram[cursor + 2] = OperandHi;
+            cursor += length;
         }
 
         var source = new StringBuilder()
@@ -228,12 +241,6 @@ public class RoundTripTests(ITestOutputHelper output)
             directory.Delete(recursive: true);
         }
     }
-
-    /// <summary>
-    /// Stands in for the <c>.cpu</c> name until <see cref="Assemble"/> substitutes it, so
-    /// that the corruption test can reassemble the same source under a different dialect.
-    /// </summary>
-    private const string CpuDirectivePlaceholder = "%CPU%";
 
     private static string ReplaceFirst(string text, string find, string replacement)
     {

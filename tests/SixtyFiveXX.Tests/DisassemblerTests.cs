@@ -219,6 +219,48 @@ public class DisassemblerTests
     }
 
     /// <summary>
+    /// Decoding touches the instruction's own bytes and nothing else. The class documents
+    /// that decoding reads the bus, so a caller with side-effecting reads can map a safe
+    /// window — but only if "reads the bus" means these bytes rather than two arbitrary
+    /// ones past the end of a one-byte opcode. It is also three times the reads for anyone
+    /// decoding every instruction they execute, which is what a trace does.
+    /// </summary>
+    [Theory]
+    [InlineData(0xEA, 1)]                   // NOP, implied
+    [InlineData(0x0A, 1)]                   // ASL A
+    [InlineData(0x48, 1)]                   // PHA, via the stack mode
+    [InlineData(0x60, 1)]                   // RTS
+    [InlineData(0xA9, 2)]                   // LDA immediate
+    [InlineData(0xA5, 2)]                   // LDA zero page
+    [InlineData(0xD0, 2)]                   // BNE, relative
+    [InlineData(0x00, 2)]                   // BRK and its discarded byte
+    [InlineData(0xAD, 3)]                   // LDA absolute
+    [InlineData(0x20, 3)]                   // JSR
+    public void Decode_ReadsExactlyTheInstructionsOwnBytes(byte opcode, int expected)
+    {
+        var reads = new List<int>();
+        var ram = new byte[0x10000];
+        ram[0x1000] = opcode;
+
+        Disassembler.Decode<RefBus, Mos6502Variant>(new RefBus(new LoggingBus(ram, reads)), 0x1000);
+
+        Assert.Equal(expected, reads.Distinct().Count());
+        Assert.All(reads, address => Assert.InRange(address, 0x1000, 0x1000 + expected - 1));
+    }
+
+    /// <summary>Records every address read, so a decode can be held to the bytes it needs.</summary>
+    private sealed class LoggingBus(byte[] ram, List<int> reads) : IBus
+    {
+        public byte Read(int address)
+        {
+            reads.Add(address & 0xFFFF);
+            return ram[address & 0xFFFF];
+        }
+
+        public void Write(int address, byte value) => ram[address & 0xFFFF] = value;
+    }
+
+    /// <summary>
     /// The README's example, compiled. Decoding straight from a running core's bus is the
     /// obvious way to reach for this, and <c>Cpu.Bus</c> hands back a <c>ref</c> that has to
     /// bind to the <c>in</c> parameter for that to work.
