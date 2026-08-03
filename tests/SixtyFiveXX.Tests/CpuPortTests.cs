@@ -75,10 +75,10 @@ public class CpuPortTests
     }
 
     [Fact]
-    public void InputBits_DoNotReadTheOutputLatch()
+    public void InputBits_ReadTheChargeLeftByTheLastDrive()
     {
-        // With every bit an input, the latch is invisible: bits 0-5 have no pin driving
-        // them here, so they read 0 rather than leaking what was written.
+        // Not the output latch — the pin. They coincide here, but the next test separates
+        // them, and that separation is the whole point of the floating-bit model.
         var (cpu, _, _) = Machine(
             0xA9, 0xFF, 0x85, 0x00,     // all output
             0xA9, 0x3F, 0x85, 0x01,     // drive $3F
@@ -87,7 +87,76 @@ public class CpuPortTests
 
         for (var i = 0; i < 7; i++) cpu.Step();
 
-        Assert.Equal(0x00, cpu.State.A & 0x3F);
+        Assert.Equal(0x3F, cpu.State.A);
+    }
+
+    [Fact]
+    public void AWriteWhileABitIsAnInput_DoesNotChangeWhatItReads()
+    {
+        // The property that separates the pin from the latch. A naive model that read the
+        // latch back would return $00 here; hardware returns the charge, still $FF.
+        var (cpu, _, _) = Machine(
+            0xA9, 0xFF, 0x85, 0x00,     // all output
+            0xA9, 0xFF, 0x85, 0x01,     // drive $FF - charges every pin
+            0xA9, 0x00, 0x85, 0x00,     // all input
+            0xA9, 0x00, 0x85, 0x01,     // write $00 while floating
+            0xA5, 0x01);                // LDA $01
+
+        for (var i = 0; i < 9; i++) cpu.Step();
+
+        Assert.Equal(0xFF, cpu.State.A);
+    }
+
+    [Fact]
+    public void SettingABitToOutputCharges_WhicheverOrderTheRegistersAreWritten()
+    {
+        // Writing the port before the direction must charge the pin just as the other
+        // order does: a bit switched to output starts driving whatever the latch holds.
+        var (cpu, _, _) = Machine(
+            0xA9, 0xFF, 0x85, 0x01,     // latch $FF while everything is still an input
+            0xA9, 0xFF, 0x85, 0x00,     // now make it all output - this is what charges
+            0xA9, 0x00, 0x85, 0x00,     // back to input
+            0xA5, 0x01);
+
+        for (var i = 0; i < 7; i++) cpu.Step();
+
+        Assert.Equal(0xFF, cpu.State.A);
+    }
+
+    /// <summary>
+    /// VICE's <c>cpuport/test1</c>, step for step, on bit 7.
+    /// </summary>
+    /// <remarks>
+    /// Mirrors the fetched <c>test1.s</c> exactly so a failure here points at the same step
+    /// number the VICE program reports at <c>$0400</c>. Four of the six steps test the
+    /// charge rather than the plain register semantics, which is why the design spec
+    /// calling the floating behaviour out of scope was wrong: without it, this fails.
+    /// </remarks>
+    [Fact]
+    public void VicePortTest1_StepForStep()
+    {
+        var (cpu, _, _) = Machine(
+            0xA9, 0xFF, 0x85, 0x00, 0x85, 0x01,   // output, write 1
+            0xA5, 0x01,                            // step 1: must read 1
+            0xA9, 0x00, 0x85, 0x00,                // set to input
+            0xA5, 0x01,                            // step 2: must still read 1
+            0xA9, 0x00, 0x85, 0x01,                // write 0 while input
+            0xA5, 0x01,                            // step 3: must still read 1
+            0xA9, 0xFF, 0x85, 0x00, 0xA9, 0x00, 0x85, 0x01,   // output, write 0
+            0xA5, 0x01,                            // step 4: must read 0
+            0xA9, 0x00, 0x85, 0x00,                // set to input
+            0xA5, 0x01,                            // step 5: must still read 0
+            0xA9, 0xFF, 0x85, 0x01,                // write 1 while input
+            0xA5, 0x01);                           // step 6: must still read 0
+
+        void RunTo(int instructions) { for (var i = 0; i < instructions; i++) cpu.Step(); }
+
+        RunTo(4); Assert.Equal(0x80, cpu.State.A & 0x80);   // 1
+        RunTo(3); Assert.Equal(0x80, cpu.State.A & 0x80);   // 2
+        RunTo(3); Assert.Equal(0x80, cpu.State.A & 0x80);   // 3
+        RunTo(5); Assert.Equal(0x00, cpu.State.A & 0x80);   // 4
+        RunTo(3); Assert.Equal(0x00, cpu.State.A & 0x80);   // 5
+        RunTo(3); Assert.Equal(0x00, cpu.State.A & 0x80);   // 6
     }
 
     [Fact]
