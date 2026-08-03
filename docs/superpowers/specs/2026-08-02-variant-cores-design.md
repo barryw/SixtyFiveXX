@@ -117,14 +117,33 @@ is the data-direction register and `$01` the I/O port, and they are intercepted 
 core before any bus access.
 
 The subtlety is that reads of `$01` combine driven and undriven bits according to `$00`,
-and unconnected pins on real hardware decay. **The decay is a deliberate non-goal** —
-VICE's own authors describe its timing as guesswork, and this project already takes that
-posture toward the unstable NMOS opcodes' magic constants. `bitfade` and `delaytime` are
-out of scope and will be recorded as such.
+and an undriven pin returns the charge left on it the last time it was driven.
 
-**Gates:** the inherited opcodes need no new suite — once `ICpuVariant` lands, the
-existing 6502 Harte and Klaus gates run against the 6510 unchanged. The `$00`/`$01` delta
-is certified by VICE's `cpuport` test, executed the same way Klaus's programs are.
+**The charge is modelled; the fade is not.** This distinction was sharpened during
+implementation, and the original wording — which put the analog behaviour as a whole
+outside the scope — would have produced a core that fails its only gate. Four of the six
+assertions in VICE's `cpuport/test1` test the charge directly: that a bit switched from
+output to input keeps reading what it was last driven to, and that writing the port while
+a bit is an input does not change what that bit reads. So the retention is mandatory.
+
+What is out of scope, and recorded as such:
+
+- **The fade timing.** VICE's own authors describe it as guesswork, the same posture this
+  project already takes toward the unstable NMOS opcodes' magic constants. `test1`
+  deliberately avoids it, reading back "within reasonable time, ie before it faded away",
+  so the part that is guesswork is also the part nothing gates. `bitfade` and `delaytime`
+  measure it and are not run.
+- **The C64's pull-up values.** `initvalue` asserts that `$01` reads `$17` from a reset
+  direction register, but that value comes from resistors on the C64 board rather than
+  from anything the CPU does. It also ships as a `.crt`. External drive on the port pins
+  belongs to a machine personality, not to a CPU core.
+
+**Gates:** the inherited opcodes need no new suite — the existing 6502 Harte and Klaus
+gates run against the 6510 unchanged, minus the vectors that use `$00`/`$01` as ordinary
+memory and therefore describe a 6502 rather than a 6510. The `$00`/`$01` delta is
+certified by VICE's `cpuport/test1`, executed the same way Klaus's programs are. Note that
+`testprogs/` is **absent from the `VICE-Team/svn-mirror` GitHub mirror**; it is fetched
+from the project's Subversion repository over plain HTTPS.
 
 ## Phase 6 — disassembler and the sim6502 swap
 

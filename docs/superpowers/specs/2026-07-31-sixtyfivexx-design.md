@@ -272,7 +272,7 @@ strength of unit tests alone.
 | **Harte / SingleStepTests** `65x02`, `65816` | MIT | 10,000 per-cycle vectors per opcode, with full bus activity, for 6502, NES6502, Rockwell/Synertek/WDC 65c02, 65816 | ~1 GB across sets. Downloaded and cached to a gitignored directory, not committed. Offline path supported. |
 | **Klaus Dormann** functional + 65C02 extended | GPL (binaries only) | Broad behavioural coverage, full BCD | Pre-built binaries fetched by the runner. Running a GPL test binary does not affect our licence. |
 | **Wolfgang Lorenz** C64 suite | Public domain | NMOS undocumented opcodes, timing | **Cannot certify the `$00`/`$01` port on a bare core** — see below. Retained only as a possible phase 8 gate, once a C64 personality exists to host it. |
-| **VICE `cpuport`** (`testprogs/CPU/cpuport/test1`) | GPL (binary only) | The 6510 `$00` DDR / `$01` port delta | Small, deterministic, needs no KERNAL, CIA or VIC-II. Same "execute a GPL binary" posture as Klaus. |
+| **VICE `cpuport`** (`testprogs/CPU/cpuport/test1`) | GPL (binary only) | The 6510 `$00` DDR / `$01` port delta, including the floating-pin charge | Small, deterministic, needs no KERNAL, CIA or VIC-II. Same "execute a GPL binary" posture as Klaus. Fetched from the project's SourceForge Subversion repository — `testprogs/` is **not** in the `VICE-Team/svn-mirror` GitHub mirror. |
 | **Bruce Clark** decimal test | Freely distributed | Exhaustive BCD `ADC`/`SBC`, both NMOS and CMOS semantics | Small; catches the classic decimal bugs. |
 
 Plus:
@@ -283,10 +283,13 @@ Plus:
 wiring produces, not anything the 6510 defines. Tom Harte's CLK harness excludes exactly
 those three for that reason. There is also **no 6510 vector set** anywhere in
 SingleStepTests. So the 6510 is certified in two parts: its inherited opcodes by the
-existing 6502 suites, and its `$00`/`$01` delta by the VICE `cpuport` test. The analog
-decay behaviours (`bitfade`, `delaytime`) are a deliberate non-goal — VICE's own authors
-describe their timing as guesswork — the same posture this project takes toward the
-unstable NMOS opcodes' magic constants.
+existing 6502 suites, and its `$00`/`$01` delta by the VICE `cpuport` test. The pin
+*decay* (`bitfade`, `delaytime`) is a deliberate non-goal — VICE's own authors describe its
+timing as guesswork — the same posture this project takes toward the unstable NMOS
+opcodes' magic constants. The **charge is not**: `cpuport/test1` spends four of its six
+assertions on it and cannot pass without it. `initvalue` is likewise out of scope, since
+the `$17` it expects comes from pull-up resistors on the C64 board rather than from the
+CPU.
 
 - **The packed-assembly public-surface test.** `dotnet pack` the library, then reflect over
   the packed assembly and assert the intended surface: `Cpu<,>`, `ICpuVariant`, `IBus`,
@@ -419,7 +422,7 @@ Each phase is gated by green suites, not by a subjective sense of completion.
 | 2 | Undocumented opcodes; interrupts, RDY, SO | **Full** Harte 6502 (all 256); Klaus functional + interrupt | **Complete** — 2,560,000 vectors |
 | 3 | `ICpuVariant` refactor; public-surface gate | **Zero behaviour change** — every phase 1–2 suite still green — **plus** the packed-assembly surface test below | **Complete** — 311 unit + 264 conformance on both TFMs |
 | 4 | 65C02, three sub-variants | Harte `wdc65c02` / `rockwell65c02` / `synertek65c02`; Klaus 65C02 extended (WDC + Rockwell only) | **Complete** — 7,660,000 vectors; 1,041 conformance tests on both TFMs |
-| 5 | 6510 core (`$00`/`$01` port) | Existing 6502 suites for inherited opcodes; VICE `cpuport` for the port delta | |
+| 5 | 6510 core (`$00`/`$01` port) | Existing 6502 suites for inherited opcodes; VICE `cpuport/test1` for the port delta | **Complete** — 384 unit + 1,303 conformance on both TFMs. The 6502 vectors run against the 6510 core, less the 12,658 of 2,560,000 that use `$00`/`$01` as ordinary memory |
 | 6 | Disassembler; sim6502 adapter | **sim6502 swaps over.** Its own suite green; `sim6502/Proc/` deleted | |
 | 7 | 65816 | Harte 65816 | Deferred — no consumer needs it yet |
 | 8 | **Performance pass across all cores** | Every optimization: a measured delta **and** every Harte suite still green | |
