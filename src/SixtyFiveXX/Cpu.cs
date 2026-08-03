@@ -33,6 +33,12 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     private readonly ushort[] _entry;
 
     private CpuState _s;
+
+    /// <summary>
+    /// The 6510's on-chip registers. Unused by every other variant, where the accesses
+    /// that would reach it are folded away at JIT time.
+    /// </summary>
+    private CpuPort _port;
     private long _cycles;
 
     /// <summary>Index into <see cref="_ops"/>; negative means the next tick fetches an opcode.</summary>
@@ -226,7 +232,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             // pending micro-op's true read address (a switch mirroring Execute) instead of
             // hard-coding _addr. WAI and STP are already handled below, because their holds
             // are unbounded — see MicroOps.HoldsAtPc.
-            _bus.Read(_mpc < 0 || MicroOps.HoldsAtPc(_ops[_mpc]) ? _s.PC : _addr);
+            ReadBus(_mpc < 0 || MicroOps.HoldsAtPc(_ops[_mpc]) ? _s.PC : _addr);
             return;
         }
 
@@ -264,6 +270,38 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
         // indexed read that did not cross a page). Otherwise the sequence ends when
         // the next slot is the terminator.
         if (_mpc >= 0 && _ops[_mpc] == MicroOp.End) _mpc = -1;
+    }
+
+    /// <summary>
+    /// Every read the core performs. On the 6510 the on-chip port answers <c>$00</c> and
+    /// <c>$01</c> itself and the access never reaches the bus.
+    /// </summary>
+    /// <remarks>
+    /// The variant test is a compile-time constant for each closed generic type, so for
+    /// every core without the port the JIT sees <c>if (false)</c> and the check costs
+    /// nothing. That is the reason it is written against <c>TVariant.Variant</c> rather
+    /// than a field.
+    /// </remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private byte ReadBus(int address)
+    {
+        if (TVariant.Variant == CpuVariant.Mos6510 && (uint)address <= 1)
+            return _port.Read(address);
+
+        return _bus.Read(address);
+    }
+
+    /// <summary>Every write the core performs. See <see cref="ReadBus"/>.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void WriteBus(int address, byte value)
+    {
+        if (TVariant.Variant == CpuVariant.Mos6510 && (uint)address <= 1)
+        {
+            _port.Write(address, value);
+            return;
+        }
+
+        _bus.Write(address, value);
     }
 
     /// <summary>True when the cycle about to run is a write. RDY cannot halt a write.</summary>
@@ -306,6 +344,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
         _jamPhase = 0;
         _stopped = false;
         _waiting = false;
+        _port.Reset();
     }
 
     /// <summary>
@@ -391,7 +430,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             // sequence's start, not past it. Reset() has no opcode to fetch and so cannot
             // rely on this free read — see MicroOpTable.ResetEntry, which spells out both
             // dummy reads itself.
-            _bus.Read(_s.PC);
+            ReadBus(_s.PC);
             // NMI outranks IRQ, and servicing it consumes the latch. IRQ is level-sensitive
             // and so needs no clearing — it fires again next boundary if still asserted.
             if (_nmiPending)
@@ -408,7 +447,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
         }
 
         var pc = _s.PC;
-        var opcode = _bus.Read(pc);
+        var opcode = ReadBus(pc);
         _s.PC++;
 
         var entry = _entry[opcode];
@@ -458,59 +497,59 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
         switch (micro)
         {
             case MicroOp.ImpliedExec:
-                _bus.Read(_s.PC);
+                ReadBus(_s.PC);
                 Exec();
                 break;
 
             case MicroOp.ImmExec:
-                _data = _bus.Read(_s.PC);
+                _data = ReadBus(_s.PC);
                 _s.PC++;
                 Exec();
                 break;
 
             case MicroOp.ImpliedDummy:
-                _bus.Read(_s.PC);
+                ReadBus(_s.PC);
                 break;
 
             case MicroOp.FetchAddrLo:
-                _addr = _bus.Read(_s.PC);
+                _addr = ReadBus(_s.PC);
                 _s.PC++;
                 break;
 
             case MicroOp.FetchAddrHi:
-                _addr |= _bus.Read(_s.PC) << 8;
+                _addr |= ReadBus(_s.PC) << 8;
                 _s.PC++;
                 break;
 
             case MicroOp.ReadExec:
-                _data = _bus.Read(_addr);
+                _data = ReadBus(_addr);
                 Exec();
                 break;
 
             case MicroOp.ExecWrite:
                 Exec();
-                _bus.Write(_addr, _data);
+                WriteBus(_addr, _data);
                 break;
 
             case MicroOp.RmwRead:
-                _data = _bus.Read(_addr);
+                _data = ReadBus(_addr);
                 break;
 
             case MicroOp.RmwModifyWrite:
                 // NMOS parts write the unmodified value back before writing the result.
-                _bus.Write(_addr, _data);
+                WriteBus(_addr, _data);
                 Exec();
                 break;
 
             case MicroOp.ReadExecCmosArith:
-                _data = _bus.Read(_addr);
+                _data = ReadBus(_addr);
                 if (_s.D) break;                 // decimal costs one more cycle: BcdExtra
                 Exec();
                 EndInstruction();
                 break;
 
             case MicroOp.ImmExecCmosArith:
-                _data = _bus.Read(_s.PC);
+                _data = ReadBus(_s.PC);
                 _s.PC++;
                 if (_s.D) break;
                 Exec();
@@ -522,18 +561,18 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 // addressing mode's vectors show. Immediate mode has no effective address
                 // and its vectors expect a fixed per-opcode constant instead — see
                 // CmosArithmeticTests. _addr is stale here for that mode.
-                _bus.Read(_addr);
+                ReadBus(_addr);
                 Exec();
                 break;
 
             case MicroOp.ReadPageCrossCmosArith:
                 if (_pageCross)
                 {
-                    _bus.Read((_s.PC - 1) & 0xFFFF);
+                    ReadBus((_s.PC - 1) & 0xFFFF);
                     _addr = (_addr + 0x100) & 0xFFFF;
                     break;
                 }
-                _data = _bus.Read(_addr);
+                _data = ReadBus(_addr);
                 if (_s.D) { _mpc++; break; }      // skip the read, land on BcdExtra
                 Exec();
                 EndInstruction();
@@ -542,17 +581,17 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             case MicroOp.RmwModifyRead:
                 // CMOS parts read instead. Same cycle, opposite direction — which matters
                 // to any bus with read or write side effects, not just to a cycle count.
-                _bus.Read(_addr);
+                ReadBus(_addr);
                 Exec();
                 break;
 
             case MicroOp.RmwWrite:
-                _bus.Write(_addr, _data);
+                WriteBus(_addr, _data);
                 break;
 
             case MicroOp.FetchAddrHiX:
             {
-                var hi = _bus.Read(_s.PC);
+                var hi = ReadBus(_s.PC);
                 _s.PC++;
                 var lo = (_addr & 0xFF) + _s.X;
                 _pageCross = lo > 0xFF;
@@ -562,7 +601,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
 
             case MicroOp.FetchAddrHiY:
             {
-                var hi = _bus.Read(_s.PC);
+                var hi = ReadBus(_s.PC);
                 _s.PC++;
                 var lo = (_addr & 0xFF) + _s.Y;
                 _pageCross = lo > 0xFF;
@@ -571,12 +610,12 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             }
 
             case MicroOp.ZpIndexX:
-                _bus.Read(_addr);                      // dummy read at the unindexed address
+                ReadBus(_addr);                      // dummy read at the unindexed address
                 _addr = (_addr + _s.X) & 0xFF;         // page zero indexing wraps within the page
                 break;
 
             case MicroOp.ZpIndexY:
-                _bus.Read(_addr);
+                ReadBus(_addr);
                 _addr = (_addr + _s.Y) & 0xFF;
                 break;
 
@@ -584,7 +623,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 // The read happens either way. Without a page cross it is the real read
                 // and the instruction is done; with one it was a read of the wrong
                 // address and the next micro-op re-reads the corrected one.
-                _data = _bus.Read(_addr);
+                _data = ReadBus(_addr);
                 if (_pageCross)
                 {
                     _addr = (_addr + 0x100) & 0xFFFF;
@@ -597,7 +636,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 break;
 
             case MicroOp.DummyReadFixup:
-                _bus.Read(_addr);
+                ReadBus(_addr);
                 if (_pageCross) _addr = (_addr + 0x100) & 0xFFFF;
                 break;
 
@@ -606,21 +645,21 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             // is PC - 1: $nnnn's high byte for the absolute-indexed modes, and the
             // zero-page operand for (zp),Y.
             case MicroOp.IndexFixupCmos:
-                _bus.Read((_s.PC - 1) & 0xFFFF);
+                ReadBus((_s.PC - 1) & 0xFFFF);
                 if (_pageCross) _addr = (_addr + 0x100) & 0xFFFF;
                 break;
 
             case MicroOp.ReadPageCrossCmos:
                 if (_pageCross)
                 {
-                    _bus.Read((_s.PC - 1) & 0xFFFF);
+                    ReadBus((_s.PC - 1) & 0xFFFF);
                     _addr = (_addr + 0x100) & 0xFFFF;
                 }
                 else
                 {
                     // No cross: this cycle is the real read, exactly as ReadPageCross does
                     // it. The saving is that CMOS never reads the wrong address first.
-                    _data = _bus.Read(_addr);
+                    _data = ReadBus(_addr);
                     Exec();
                     EndInstruction();
                 }
@@ -629,20 +668,20 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             case MicroOp.RmwPageCrossCmos:
                 if (_pageCross)
                 {
-                    _bus.Read((_s.PC - 1) & 0xFFFF);
+                    ReadBus((_s.PC - 1) & 0xFFFF);
                     _addr = (_addr + 0x100) & 0xFFFF;
                 }
                 else
                 {
                     // No cross: perform the RMW's own read here and skip the RmwRead that
                     // follows, which is what makes these six cycles rather than seven.
-                    _data = _bus.Read(_addr);
+                    _data = ReadBus(_addr);
                     _mpc++;
                 }
                 break;
 
             case MicroOp.UnstableStoreFixup:
-                _bus.Read(_addr);
+                ReadBus(_addr);
                 // The value these instructions store is ANDed with the target's high
                 // byte plus one. On a page cross the AND result also becomes the high
                 // byte, so the write lands somewhere other than the nominal address.
@@ -655,17 +694,17 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
 
             case MicroOp.PtrReadLo:
                 _ptr = _addr;
-                _tmp = _bus.Read(_ptr);
+                _tmp = ReadBus(_ptr);
                 break;
 
             case MicroOp.PtrReadHi:
                 // The pointer's high byte wraps within page zero.
-                _addr = (_bus.Read((_ptr + 1) & 0xFF) << 8) | _tmp;
+                _addr = (ReadBus((_ptr + 1) & 0xFF) << 8) | _tmp;
                 break;
 
             case MicroOp.PtrReadHiY:
             {
-                var hi = _bus.Read((_ptr + 1) & 0xFF);
+                var hi = ReadBus((_ptr + 1) & 0xFF);
                 var lo = _tmp + _s.Y;
                 _pageCross = lo > 0xFF;
                 _addr = (hi << 8) | (lo & 0xFF);
@@ -673,14 +712,14 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             }
 
             case MicroOp.BranchFetch:
-                _data = _bus.Read(_s.PC);
+                _data = ReadBus(_s.PC);
                 _s.PC++;
                 if (!IsBranchTaken()) EndInstruction();
                 break;
 
             case MicroOp.BranchTaken:
             {
-                _bus.Read(_s.PC);                       // dummy read at the byte after the branch
+                ReadBus(_s.PC);                       // dummy read at the byte after the branch
                 var lo = (_s.PC & 0xFF) + (sbyte)_data;
                 _branchFix = lo < 0 ? -0x100 : lo > 0xFF ? 0x100 : 0;
                 _s.PC = (ushort)((_s.PC & 0xFF00) | (lo & 0xFF));
@@ -689,26 +728,26 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             }
 
             case MicroOp.BranchFixup:
-                _bus.Read(_s.PC);                       // dummy read at the un-fixed PC
+                ReadBus(_s.PC);                       // dummy read at the un-fixed PC
                 _s.PC = (ushort)(_s.PC + _branchFix);
                 break;
 
             case MicroOp.StackDummyRead:
-                _bus.Read(0x0100 + _s.S);
+                ReadBus(0x0100 + _s.S);
                 break;
 
             case MicroOp.StackDummyReadInc:
-                _bus.Read(0x0100 + _s.S);
+                ReadBus(0x0100 + _s.S);
                 _s.S++;
                 break;
 
             case MicroOp.PushPch:
-                _bus.Write(0x0100 + _s.S, (byte)(_s.PC >> 8));
+                WriteBus(0x0100 + _s.S, (byte)(_s.PC >> 8));
                 _s.S--;
                 break;
 
             case MicroOp.PushPcl:
-                _bus.Write(0x0100 + _s.S, (byte)_s.PC);
+                WriteBus(0x0100 + _s.S, (byte)_s.PC);
                 _s.S--;
                 break;
 
@@ -716,35 +755,35 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             // combining it with the low byte already in _addr.
             case MicroOp.JmpAbs:
             case MicroOp.JsrFinish:
-                _s.PC = (ushort)((_bus.Read(_s.PC) << 8) | _addr);
+                _s.PC = (ushort)((ReadBus(_s.PC) << 8) | _addr);
                 break;
 
             case MicroOp.JmpIndLo:
                 _ptr = _addr;
-                _tmp = _bus.Read(_ptr);
+                _tmp = ReadBus(_ptr);
                 break;
 
             case MicroOp.JmpIndHi:
                 // NMOS bug: the vector's high byte is fetched from the same page, so
                 // JMP ($xxFF) reads its high byte from $xx00.
-                _s.PC = (ushort)((_bus.Read((_ptr & 0xFF00) | ((_ptr + 1) & 0xFF)) << 8) | _tmp);
+                _s.PC = (ushort)((ReadBus((_ptr & 0xFF00) | ((_ptr + 1) & 0xFF)) << 8) | _tmp);
                 break;
 
             case MicroOp.BitBranchDummy:
-                _bus.Read(_addr);
+                ReadBus(_addr);
                 break;
 
             case MicroOp.BitBranchFixup:
                 // Reads the address stashed by BitBranchFetch rather than the half-corrected
                 // PC an ordinary branch uses.
-                _bus.Read(_addr);
+                ReadBus(_addr);
                 _s.PC = (ushort)(_s.PC + _branchFix);
                 break;
 
             case MicroOp.BitBranchFetch:
             {
                 var tested = _data;
-                _data = _bus.Read(_s.PC);
+                _data = ReadBus(_s.PC);
                 _s.PC++;
                 // The byte after the displacement, which both remaining cycles read. _addr
                 // held the zero-page address, which nothing needs from here on.
@@ -757,7 +796,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             case MicroOp.NopAbsExtraRead:
                 // The fourth cycle of the three-byte, four-cycle CMOS NOPs: a discarded
                 // re-read of the high operand byte, which PC has already passed.
-                _bus.Read((_s.PC - 1) & 0xFFFF);
+                ReadBus((_s.PC - 1) & 0xFFFF);
                 break;
 
             case MicroOp.JmpIndBugDummy:
@@ -765,59 +804,59 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 // the pointer's low byte is not $FF this is the same address the next
                 // micro-op reads, which is why the non-wrapping case shows two adjacent
                 // reads of one location rather than an obviously wasted cycle.
-                _bus.Read((_ptr & 0xFF00) | ((_ptr + 1) & 0xFF));
+                ReadBus((_ptr & 0xFF00) | ((_ptr + 1) & 0xFF));
                 break;
 
             case MicroOp.PtrJmpHi:
-                _s.PC = (ushort)((_bus.Read((_ptr + 1) & 0xFFFF) << 8) | _tmp);
+                _s.PC = (ushort)((ReadBus((_ptr + 1) & 0xFFFF) << 8) | _tmp);
                 break;
 
             case MicroOp.JmpAbsXDummy:
                 // The discarded read is at the first operand byte. PC has already advanced
                 // past both operand bytes, so that is PC - 2. Its address does not depend
                 // on the indexing, so there is no page-cross penalty to account for.
-                _bus.Read((_s.PC - 2) & 0xFFFF);
+                ReadBus((_s.PC - 2) & 0xFFFF);
                 _addr = (_addr + _s.X) & 0xFFFF;
                 break;
 
             case MicroOp.PullPcl:
-                _tmp = _bus.Read(0x0100 + _s.S);
+                _tmp = ReadBus(0x0100 + _s.S);
                 _s.S++;
                 break;
 
             case MicroOp.PullPch:
-                _s.PC = (ushort)((_bus.Read(0x0100 + _s.S) << 8) | _tmp);
+                _s.PC = (ushort)((ReadBus(0x0100 + _s.S) << 8) | _tmp);
                 break;
 
             case MicroOp.RtsFinish:
-                _bus.Read(_s.PC);
+                ReadBus(_s.PC);
                 _s.PC++;
                 break;
 
             case MicroOp.PullP:
                 // B exists only in pushed copies of P; U always reads as set.
-                _s.P = (byte)((_bus.Read(0x0100 + _s.S) & ~Flag.B) | Flag.U);
+                _s.P = (byte)((ReadBus(0x0100 + _s.S) & ~Flag.B) | Flag.U);
                 _s.S++;
                 break;
 
             case MicroOp.Push:
                 Exec();
-                _bus.Write(0x0100 + _s.S, _data);
+                WriteBus(0x0100 + _s.S, _data);
                 _s.S--;
                 break;
 
             case MicroOp.Pull:
-                _data = _bus.Read(0x0100 + _s.S);
+                _data = ReadBus(0x0100 + _s.S);
                 Exec();
                 break;
 
             case MicroOp.BrkPad:
-                _bus.Read(_s.PC);      // BRK's signature byte, fetched and discarded
+                ReadBus(_s.PC);      // BRK's signature byte, fetched and discarded
                 _s.PC++;
                 break;
 
             case MicroOp.IntDummy:
-                _bus.Read(_s.PC);
+                ReadBus(_s.PC);
                 break;
 
             case MicroOp.PushPBrk:
@@ -848,7 +887,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                     _nmiPending = false;
                     _vector = NmiVector;
                 }
-                _bus.Write(0x0100 + _s.S, (byte)(_s.P | Flag.B | Flag.U));
+                WriteBus(0x0100 + _s.S, (byte)(_s.P | Flag.B | Flag.U));
                 _s.S--;
                 _s.I = true;
                 break;
@@ -868,7 +907,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                     _nmiPending = false;
                     _vector = NmiVector;
                 }
-                _bus.Write(0x0100 + _s.S, (byte)((_s.P | Flag.U) & ~Flag.B));
+                WriteBus(0x0100 + _s.S, (byte)((_s.P | Flag.U) & ~Flag.B));
                 _s.S--;
                 _s.I = true;
                 break;
@@ -884,7 +923,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 // restores it, while the handler itself runs with D clear. Clearing first
                 // would silently corrupt the restored flag on every CMOS BRK.
                 _vector = IrqVector;
-                _bus.Write(0x0100 + _s.S, (byte)(_s.P | Flag.B | Flag.U));
+                WriteBus(0x0100 + _s.S, (byte)(_s.P | Flag.B | Flag.U));
                 _s.S--;
                 _s.I = true;
                 _s.D = false;
@@ -894,7 +933,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 // The CMOS hardware-interrupt push. As PushPBrkCmos: no hijack, and D
                 // cleared after the push. _vector is left alone for the same reason
                 // PushPInt leaves it — only the dispatcher knows IRQ from NMI.
-                _bus.Write(0x0100 + _s.S, (byte)((_s.P | Flag.U) & ~Flag.B));
+                WriteBus(0x0100 + _s.S, (byte)((_s.P | Flag.U) & ~Flag.B));
                 _s.S--;
                 _s.I = true;
                 _s.D = false;
@@ -903,29 +942,29 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             case MicroOp.VectorLo:
                 // No hijack test here: by this cycle the vector-low address has already
                 // been formed (see PushPBrk). This is the plain read.
-                _tmp = _bus.Read(_vector);
+                _tmp = ReadBus(_vector);
                 break;
 
             case MicroOp.VectorHi:
-                _s.PC = (ushort)((_bus.Read(_vector + 1) << 8) | _tmp);
+                _s.PC = (ushort)((ReadBus(_vector + 1) << 8) | _tmp);
                 break;
 
             case MicroOp.StackDummyReadDec:
-                _bus.Read(0x0100 + _s.S);
+                ReadBus(0x0100 + _s.S);
                 _s.S--;
                 break;
 
             case MicroOp.WaiHold:
                 // The wake condition is the interrupt SIGNAL, not the poll: WAI resumes even
                 // with I set, and the instruction after WAI then runs instead of a handler.
-                _bus.Read(_s.PC);
+                ReadBus(_s.PC);
                 if (_nmiPending || _irqLine) _waiting = false;
                 else { _waiting = true; _mpc--; }
                 break;
 
             case MicroOp.StpHold:
                 _stopped = true;
-                _bus.Read(_s.PC);
+                ReadBus(_s.PC);
                 _mpc--;                 // hold position: only Reset escapes
                 break;
 
@@ -937,7 +976,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 // bus cycling. No test pins the halted address yet. If that ever matters,
                 // give the halt branch a jammed-aware read (or let JamHold run through RDY).
                 _jammed = true;
-                _bus.Read(_jamPhase switch
+                ReadBus(_jamPhase switch
                 {
                     0 => 0xFFFF,
                     1 => 0xFFFE,

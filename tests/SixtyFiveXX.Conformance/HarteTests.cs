@@ -43,6 +43,19 @@ public abstract class HarteTests<TVariant>(ITestOutputHelper output)
     protected virtual IReadOnlySet<byte> OpcodesWithoutVectors => new HashSet<byte>();
 
     /// <summary>
+    /// True when a vector cannot apply to this variant, because it assumes ordinary memory
+    /// at an address the core answers itself.
+    /// </summary>
+    /// <remarks>
+    /// Only the 6510 has any. Skipping is not a workaround: a vector that writes $01 and
+    /// expects to read it back is describing a 6502, and the 6510 is <em>correct</em> to
+    /// disagree. The count is reported per opcode so the coverage given up stays visible,
+    /// and a floor below asserts most of each opcode's vectors still ran — a filter that
+    /// silently widened would otherwise look like a green suite.
+    /// </remarks>
+    protected virtual bool VectorIsInapplicable(HarteCase test) => false;
+
+    /// <summary>
     /// The opcode descriptors the core actually resolved, rather than a table named
     /// directly. Asserting against the resolved table means a variant wired to the wrong
     /// table cannot pass by having the test look at the right one.
@@ -56,6 +69,13 @@ public abstract class HarteTests<TVariant>(ITestOutputHelper output)
     private static string Set => TVariant.Variant switch
     {
         CpuVariant.Mos6502 => "6502",
+
+        // Deliberate: SingleStepTests has no 6510 set anywhere, and the 6510's instruction
+        // set IS the 6502's. Running the 6502 vectors against the 6510 core certifies the
+        // inherited opcodes — but not every vector applies, because 12,658 of them use
+        // $00/$01 as ordinary memory and on a 6510 the CPU answers those itself. See
+        // VectorIsInapplicable.
+        CpuVariant.Mos6510 => "6502",
         CpuVariant.Wdc65C02 => "wdc65c02",
         CpuVariant.Rockwell65C02 => "rockwell65c02",
         CpuVariant.Synertek65C02 => "synertek65c02",
@@ -84,6 +104,14 @@ public abstract class HarteTests<TVariant>(ITestOutputHelper output)
 
         // One 64 KB buffer and one log for the whole file. Allocating per vector would
         // mean 10,000 64 KB arrays per opcode, which dominates the suite's runtime.
+        var applicable = cases.Where(c => !VectorIsInapplicable(c)).ToArray();
+        var skipped = cases.Length - applicable.Length;
+
+        // A filter that ran away would leave nothing to test while still reporting green.
+        Assert.True(applicable.Length >= cases.Length * 9 / 10,
+            $"{Set} ${opcode:X2}: only {applicable.Length} of {cases.Length} vectors are " +
+            $"applicable. That is far more than the ~0.5% expected; the filter is wrong.");
+
         var ram = new byte[0x10000];
         var log = new List<Cycle>(16);
         Cpu<HarteBus, TVariant> cpu = new(new HarteBus(ram, log));
@@ -93,7 +121,7 @@ public abstract class HarteTests<TVariant>(ITestOutputHelper output)
         // no 65C02 has any.
         var jams = Table[opcode].Operation == Op.Jam;
 
-        foreach (var test in cases)
+        foreach (var test in applicable)
         {
             Array.Clear(ram);
             log.Clear();
@@ -129,7 +157,8 @@ public abstract class HarteTests<TVariant>(ITestOutputHelper output)
             if (cpu.IsJammed) cpu = new Cpu<HarteBus, TVariant>(new HarteBus(ram, log));
         }
 
-        output.WriteLine($"{Set} ${opcode:X2} {Table[opcode].Mnemonic}: {cases.Length} vectors passed.");
+        output.WriteLine($"{Set} ${opcode:X2} {Table[opcode].Mnemonic}: {applicable.Length} vectors passed" +
+                         (skipped > 0 ? $", {skipped} skipped as inapplicable." : "."));
     }
 
     /// <summary>
@@ -280,6 +309,30 @@ public class HarteWdc65C02Tests(ITestOutputHelper output) : HarteTests<Wdc65C02V
 
     /// <inheritdoc />
     protected override IReadOnlySet<byte> OpcodesWithoutVectors => new HashSet<byte> { 0xCB, 0xDB };
+}
+
+/// <summary>
+/// The MOS 6510 against the <c>6502</c> vector set.
+/// </summary>
+/// <remarks>
+/// There is no <c>6510</c> vector set to run. This certifies that the 6510 inherits the
+/// 6502's instruction set exactly — 2,560,000 vectors through a different core — and
+/// nothing about the on-chip port, which has its own gate.
+/// </remarks>
+public class Harte6510Tests(ITestOutputHelper output) : HarteTests<Mos6510Variant>(output)
+{
+    /// <inheritdoc />
+    protected override int ExpectedImplementedOpcodes => 256;
+
+    /// <summary>
+    /// Skips the vectors that use <c>$00</c> or <c>$01</c> as memory. On a 6510 the CPU
+    /// answers both itself, so such a vector describes a 6502 and the 6510 is right to
+    /// disagree — 12,658 of 2,560,000, or 0.49%, spread across 185 opcodes.
+    /// </summary>
+    protected override bool VectorIsInapplicable(HarteCase test) =>
+        test.Cycles.Any(c => c[0].GetInt32() <= 1) ||
+        test.Initial.Ram.Any(entry => entry[0] <= 1) ||
+        test.Final.Ram.Any(entry => entry[0] <= 1);
 }
 
 /// <summary>The Rockwell 65C02 against the <c>rockwell65c02</c> vector set.</summary>

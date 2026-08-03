@@ -35,7 +35,9 @@ internal sealed class MicroOpTable
     /// </summary>
     private static OpcodeInfo[] OpcodeTableFor(CpuVariant variant) => variant switch
     {
-        CpuVariant.Mos6502 => Opcodes6502.Table,
+        // The 6510 is a 6502 with two on-chip registers. Same opcodes, same sequences —
+        // its delta is that $00 and $01 never reach the bus, which no table can express.
+        CpuVariant.Mos6502 or CpuVariant.Mos6510 => Opcodes6502.Table,
         CpuVariant.Synertek65C02 => Opcodes65C02.Table,
         CpuVariant.Rockwell65C02 => Opcodes65C02.RockwellTable,
         CpuVariant.Wdc65C02 => Opcodes65C02.WdcTable,

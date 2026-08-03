@@ -39,7 +39,7 @@ existing `IBus` reference in `RefBus` and pay one virtual call per access.
 | 65C02 Synertek | Complete | Harte SingleStepTests, per-cycle |
 | 65C02 Rockwell | Complete | Harte SingleStepTests + Klaus 65C02 extended |
 | 65C02 WDC | Complete | Harte SingleStepTests + Klaus 65C02 extended |
-| 6510 | Phase 5 | — |
+| 6510 | Complete | The 6502 suites for the inherited opcodes + VICE `cpuport/test1` for the `$00`/`$01` port |
 | 65816 | Phase 7 | — |
 
 IRQ and NMI (hardware-correct sampling, edge latching, and BRK/NMI hijacking), the RDY
@@ -62,6 +62,13 @@ run offline — or to avoid the download entirely — clone that repository and 
 files for them, because an instruction that halts cannot be expressed as a
 before-and-after pair. They are covered by unit tests instead, and the conformance run
 names them in its output rather than passing over them silently.
+
+**The 6510 has no vector set**, so its certification is a weaker claim than the other
+cores' and is worth stating plainly. SingleStepTests has no `6510` suite anywhere, so the
+inherited instruction set is covered by running the 6502's vectors against the 6510 core —
+minus the 12,658 of 2,560,000 that use `$00` or `$01` as ordinary memory and therefore
+describe a 6502 rather than a 6510 — and the port itself by VICE's `cpuport/test1`, 136
+bytes that check bit 7 only. Unit tests cover the rest of the port.
 
 Klaus Dormann's interrupt test also needs `64tass` installed and
 `tests/SixtyFiveXX.Conformance/klaus/build.sh` run once to produce its binary; without

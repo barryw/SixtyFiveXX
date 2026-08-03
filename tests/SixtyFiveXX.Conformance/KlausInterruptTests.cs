@@ -29,7 +29,16 @@ public class KlausInterruptTests(ITestOutputHelper output)
         AppContext.BaseDirectory, "..", "..", "..", "klaus", "6502_interrupt_test.bin"));
 
     [Fact]
-    public void InterruptTest_RunsToTheNmosHijackTrap()
+    public void InterruptTest_RunsToTheNmosHijackTrap() => RunInterruptTest<Mos6502Variant>();
+
+    /// <summary>
+    /// The 6510 is NMOS and shares the 6502's interrupt behaviour exactly, hijack included,
+    /// so it must reach the same trap after the same number of cycles.
+    /// </summary>
+    [Fact]
+    public void InterruptTest_RunsToTheNmosHijackTrap_On6510() => RunInterruptTest<Mos6510Variant>();
+
+    private void RunInterruptTest<TVariant>() where TVariant : struct, ICpuVariant
     {
         Assert.True(File.Exists(BinaryPath),
             $"{BinaryPath} is missing. Build it with " +
@@ -38,8 +47,8 @@ public class KlausInterruptTests(ITestOutputHelper output)
         var ram = File.ReadAllBytes(BinaryPath);
         Assert.Equal(0x10000, ram.Length);
 
-        var feedback = new FeedbackBus(ram);
-        var cpu = new Cpu<RefBus, Mos6502Variant>(new RefBus(feedback));
+        var feedback = new FeedbackBus<TVariant>(ram);
+        var cpu = new Cpu<RefBus, TVariant>(new RefBus(feedback));
         feedback.Attach(cpu);
 
         cpu.State.PC = StartAddress;

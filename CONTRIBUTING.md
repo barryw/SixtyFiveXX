@@ -55,6 +55,14 @@ never committed. If you already have a clone of
 
     export SIXTYFIVEXX_HARTE_DIR=/path/to/65x02
 
+**It fetches two much smaller things over HTTPS**, cached the same way and with
+the same escape hatch: Klaus Dormann's prebuilt binaries from GitHub
+(`SIXTYFIVEXX_KLAUS_DIR`), and VICE's `testprogs/CPU/cpuport/test1.prg` — 138
+bytes, and the only independent oracle the 6510's on-chip port has — from the
+VICE project's Subversion repository on SourceForge (`SIXTYFIVEXX_VICE_DIR`,
+pointing at a `testprogs` checkout). VICE's `testprogs/` is deliberately not
+taken from the `VICE-Team/svn-mirror` GitHub mirror, which does not contain it.
+
 **It needs `64tass`** to assemble the interrupt test binary *before* anything
 runs it — including the solution-wide test command below. Skip this and the
 first test command fails outright on a fresh clone:
