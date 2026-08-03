@@ -191,7 +191,7 @@ public class CpuPortTests
     }
 
     [Fact]
-    public void ZeroPageAddressesAboveTheePortAreUnaffected()
+    public void ZeroPageAddressesAboveThePortAreUnaffected()
     {
         // Only $00 and $01 are intercepted. $02 is ordinary memory on every variant, and
         // an off-by-one in the address test would take it too.
@@ -219,5 +219,58 @@ public class CpuPortTests
         Assert.Equal(0x9000, cpu.State.PC);
         Assert.Equal(0xFA, cpu.State.S);
         Assert.Equal(0x02, ram[0x01FD]);            // PCH reached the stack in RAM
+    }
+
+    [Fact]
+    public void Reset_ClearsBothRegistersButNotTheCharge()
+    {
+        // VICE's cpuport/readme.txt: "DDR and DATA are both initialized to 0 on
+        // powerup/reset". The charge is a capacitor and RES does not discharge it, so the
+        // pins simply stop being driven and read back what they last held.
+        var (cpu, ram, _) = Machine(
+            0xA9, 0xFF, 0x85, 0x00,     // DDR  = $FF, every bit an output
+            0xA9, 0x5A, 0x85, 0x01);    // DATA = $5A, charging every pin
+        ram[0xFFFC] = 0x00; ram[0xFFFD] = 0x90;
+
+        for (var i = 0; i < 4; i++) cpu.Step();
+
+        cpu.Reset();
+        cpu.Step();                     // the reset sequence itself
+        Assert.Equal(0x9000, cpu.State.PC);
+
+        // LDA $00 / LDA $01 at the reset vector.
+        ram[0x9000] = 0xA5; ram[0x9001] = 0x00;
+        ram[0x9002] = 0xA5; ram[0x9003] = 0x01;
+
+        cpu.Step();
+        Assert.Equal(0x00, cpu.State.A);
+
+        cpu.Step();
+        Assert.Equal(0x5A, cpu.State.A);
+    }
+
+    [Fact]
+    public void Reset_StopsOutputBitsFromDrivingTheirLatch()
+    {
+        // The half a cleared direction register alone would not catch: if RES cleared the
+        // direction but left the output latch, a later DDR = $FF would drive the stale
+        // value rather than the $00 a reset core holds.
+        var (cpu, ram, _) = Machine(
+            0xA9, 0xFF, 0x85, 0x00,
+            0xA9, 0x5A, 0x85, 0x01);
+        ram[0xFFFC] = 0x00; ram[0xFFFD] = 0x90;
+
+        for (var i = 0; i < 4; i++) cpu.Step();
+
+        cpu.Reset();
+        cpu.Step();
+
+        ram[0x9000] = 0xA9; ram[0x9001] = 0xFF;     // LDA #$FF
+        ram[0x9002] = 0x85; ram[0x9003] = 0x00;     // STA $00 - back to all outputs
+        ram[0x9004] = 0xA5; ram[0x9005] = 0x01;     // LDA $01
+
+        for (var i = 0; i < 3; i++) cpu.Step();
+
+        Assert.Equal(0x00, cpu.State.A);
     }
 }

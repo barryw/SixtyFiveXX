@@ -344,6 +344,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
         _jamPhase = 0;
         _stopped = false;
         _waiting = false;
+        _port.Reset();
     }
 
     /// <summary>

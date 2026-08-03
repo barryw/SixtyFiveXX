@@ -46,6 +46,25 @@ internal struct CpuPort
     /// </summary>
     private byte _charge;
 
+    /// <summary>
+    /// Clears both registers, which RES does: VICE's <c>cpuport/readme.txt</c> states that
+    /// "DDR and DATA are both initialized to 0 on powerup/reset", and its <c>initvalue</c>
+    /// test asserts a reset DDR reads <c>$00</c>. Every pin therefore becomes an input.
+    /// </summary>
+    /// <remarks>
+    /// The charge deliberately survives. It is a capacitor, and reset does not discharge
+    /// it — the pins merely stop being driven, which is what clearing the direction
+    /// register already expresses. On powerup the whole struct starts zeroed, so an
+    /// untouched core reads <c>$00</c> either way; the two differ only for a reset that
+    /// follows a drive, and there hardware keeps the charge for the same few hundred
+    /// microseconds it always does.
+    /// </remarks>
+    public void Reset()
+    {
+        _direction = 0;
+        _output = 0;
+    }
+
     /// <summary>Reads <c>$00</c> or <c>$01</c>.</summary>
     /// <param name="register">0 for the direction register, 1 for the port.</param>
     public readonly byte Read(int register) => register == 0 ? _direction : ReadPort();
