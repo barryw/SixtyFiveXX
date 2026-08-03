@@ -63,9 +63,12 @@ VICE project's Subversion repository on SourceForge (`SIXTYFIVEXX_VICE_DIR`,
 pointing at a `testprogs` checkout). VICE's `testprogs/` is deliberately not
 taken from the `VICE-Team/svn-mirror` GitHub mirror, which does not contain it.
 
-**It needs `64tass`** to assemble the interrupt test binary *before* anything
-runs it — including the solution-wide test command below. Skip this and the
-first test command fails outright on a fresh clone:
+**It needs `64tass`**, for two things. It assembles the interrupt test binary
+*before* anything runs it — including the solution-wide test command below, so
+skipping this fails the first test command outright on a fresh clone. It is also
+invoked *during* the run, by the disassembler round-trip gate, which reassembles
+the disassembly of every opcode and requires the original bytes back. Both need
+it on `PATH`:
 
     brew install 64tass          # or: apt-get install 64tass
     tests/SixtyFiveXX.Conformance/klaus/build.sh

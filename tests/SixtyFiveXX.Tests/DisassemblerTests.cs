@@ -224,4 +224,61 @@ public class DisassemblerTests
         Assert.Equal("LDA $1234,X", Decode(0xBD, 0x34, 0x12).ToString());
         Assert.Equal("NOP", Decode(0xEA).ToString());
     }
+
+    /// <summary>
+    /// The claim this phase makes is that the disassembler and the engine cannot disagree,
+    /// and length is where a disagreement would actually hurt: one wrong byte count puts
+    /// every instruction after it out of phase. So execute each opcode and require the
+    /// program counter to move by exactly what was decoded.
+    /// </summary>
+    /// <remarks>
+    /// This is the gate for the opcodes the 64tass round-trip cannot reach. That gate has to
+    /// exclude anything two opcodes render alike — the twelve NMOS JAMs, the undocumented
+    /// NOPs, all thirty-two of Synertek's Rockwell slots — which is precisely the set whose
+    /// length is least obvious. Here nothing is excluded for being ambiguous, because the
+    /// processor is not confused by two opcodes sharing a name.
+    /// </remarks>
+    [Fact]
+    public void DecodedLength_MatchesWhatTheProcessorConsumes()
+    {
+        AssertLengthsMatchExecution<Mos6502Variant>();
+        AssertLengthsMatchExecution<Mos6510Variant>();
+        AssertLengthsMatchExecution<Synertek65C02Variant>();
+        AssertLengthsMatchExecution<Rockwell65C02Variant>();
+        AssertLengthsMatchExecution<Wdc65C02Variant>();
+    }
+
+    /// <summary>
+    /// Instructions that do not fall through to the next one, so the program counter after
+    /// them says nothing about their length. Branches are absent deliberately: every operand
+    /// byte in this test is <c>$00</c>, and a branch with a zero displacement lands on the
+    /// instruction after itself whether it is taken or not.
+    /// </summary>
+    private static readonly HashSet<string> DoesNotFallThrough =
+        ["JMP", "JSR", "RTS", "RTI", "BRK", "JAM", "WAI", "STP"];
+
+    private static void AssertLengthsMatchExecution<TVariant>() where TVariant : struct, ICpuVariant
+    {
+        const ushort at = 0x0200;
+
+        for (var opcode = 0; opcode < 256; opcode++)
+        {
+            var ram = new byte[0x10000];
+            ram[at] = (byte)opcode;                 // operands stay $00, which keeps branches local
+
+            var decoded = Disassembler.Decode<FlatBus, TVariant>(new FlatBus(ram), at);
+            if (DoesNotFallThrough.Contains(decoded.Mnemonic)) continue;
+
+            var cpu = new Cpu<FlatBus, TVariant>(new FlatBus(ram));
+            cpu.State.PC = at;
+            cpu.State.S = 0xFD;
+            cpu.State.P = Flag.U | Flag.I;
+            cpu.Step();
+
+            Assert.True(cpu.State.PC - at == decoded.Length,
+                $"{typeof(TVariant).Name} ${opcode:X2} {decoded}: decoded as {decoded.Length} " +
+                $"byte(s), but the processor advanced {cpu.State.PC - at}. A linear " +
+                $"disassembly would lose sync here.");
+        }
+    }
 }
