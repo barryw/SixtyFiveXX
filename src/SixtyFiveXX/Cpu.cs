@@ -168,6 +168,12 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// <summary>Level on the RDY pin. Low halts the processor on read cycles.</summary>
     private bool _rdy = true;
 
+    /// <summary>Bus-qualifier pins the most recently completed cycle asserted. See <see cref="LastPins"/>.</summary>
+    private BusPins _lastPins;
+
+    /// <summary>Address the most recently completed cycle drove. See <see cref="LastAddress"/>.</summary>
+    private int _lastAddress;
+
     /// <summary>
     /// Interrupt poll result, recomputed at the start of every cycle that continues an
     /// in-progress instruction — except a fetch cycle, which only reads this, and a cycle
@@ -265,10 +271,32 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     public void SetRdy(bool ready) => _rdy = ready;
 
     /// <summary>
+    /// The <see cref="BusPins"/> the current or most recently completed cycle asserted. Set
+    /// by every <see cref="Tick"/>, including one halted by RDY, so a conformance harness
+    /// reading this after each call never misses a cycle. Internal rather than public: every
+    /// test project has <c>InternalsVisibleTo</c>, and this is readback for the harness, not
+    /// library surface a consumer needs.
+    /// </summary>
+    internal BusPins LastPins => _lastPins;
+
+    /// <summary>
+    /// The address the current or most recently completed cycle drove. Companion to
+    /// <see cref="LastPins"/>, set on the same cycles.
+    /// </summary>
+    internal int LastAddress => _lastAddress;
+
+    /// <summary>
     /// Pulses the SO pin, setting the overflow flag. Nothing clears it but an instruction
     /// that writes V.
     /// </summary>
     public void SetSo() => _s.V = true;
+
+    /// <summary>
+    /// The pins an opcode-fetch cycle asserts. Not a <see cref="MicroOp"/> classification —
+    /// the fetch is performed by this loop, not by a sequence member — so <see cref="Tick"/>
+    /// assigns it directly rather than through <see cref="MicroOps.PinsFor"/>.
+    /// </summary>
+    private const BusPins OpcodeFetchPins = BusPins.Vda | BusPins.Vpa;
 
     /// <summary>
     /// Advances the core by one clock cycle — or, while RDY is held low on a read cycle,
@@ -291,7 +319,10 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             // a real hazard on a bus with read side effects. Upgrade path: derive the
             // pending micro-op's true read address (a switch mirroring Execute) instead of
             // hard-coding _addr. WAI and STP are already handled below, because their holds
-            // are unbounded — see MicroOps.HoldsAtPc.
+            // are unbounded — see MicroOps.HoldsAtPc. LastPins inherits the same hazard: it
+            // reports the pending micro-op's classification (or the fetch pins, at a boundary)
+            // rather than pins derived from the address actually redriven.
+            _lastPins = _mpc < 0 ? OpcodeFetchPins : MicroOps.PinsFor(_ops[_mpc]);
             ReadBus(_mpc < 0 || MicroOps.HoldsAtPc(_ops[_mpc]) ? _s.PC : _addr);
             return;
         }
@@ -301,11 +332,13 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             // A fetch cycle does no polling of its own: it consults whatever _intPoll
             // was left holding by the instruction that just finished (see below), the
             // same instant real hardware samples during phase 2 of the penultimate cycle.
+            _lastPins = OpcodeFetchPins;
             FetchOpcode();
             return;
         }
 
         var micro = _ops[_mpc];
+        _lastPins = MicroOps.PinsFor(micro);
 
         // Poll before this cycle's own work. When this is the last cycle of the
         // instruction, the value computed here — using register state from before this
@@ -345,6 +378,8 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private byte ReadBus(int address)
     {
+        _lastAddress = address;
+
         if (TVariant.Variant == CpuVariant.Mos6510 && (uint)address <= 1)
             return _port.Read(address);
 
@@ -355,6 +390,8 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void WriteBus(int address, byte value)
     {
+        _lastAddress = address;
+
         if (TVariant.Variant == CpuVariant.Mos6510 && (uint)address <= 1)
         {
             _port.Write(address, value);

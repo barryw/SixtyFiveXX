@@ -334,7 +334,59 @@ internal enum MicroOp : byte
     Unimplemented816,
 }
 
-/// <summary>Classifies micro-ops by bus direction, for the RDY halt line.</summary>
+/// <summary>
+/// The 65816's four bus-qualifier pins, in ASSERTED polarity rather than the datasheet's
+/// electrical one. <c>VPB</c> and <c>MLB</c> are active-low on the real part — WDC's Table
+/// 5-7 (research §9) prints <c>1</c> on those two columns when they are inactive — but the
+/// SingleStepTests 65816 vectors encode them the other way round, a lowercase letter meaning
+/// active. These flags match the vectors: a set bit always means "this pin is asserted."
+/// </summary>
+/// <remarks>
+/// <see cref="Vda"/> and <see cref="Vpa"/> need no inversion when reading the datasheet — it
+/// already prints them true-asserted. Only <see cref="Vpb"/> and <see cref="Mlb"/> are
+/// inverted relative to Table 5-7's own column values.
+/// </remarks>
+[Flags]
+internal enum BusPins : byte
+{
+    /// <summary>
+    /// No bus-qualifier pin asserted: an internal cycle with no memory access at all. No
+    /// 8-bit-core micro-op is ever classified this way — see <see cref="MicroOps.PinsFor"/>.
+    /// </summary>
+    None = 0,
+
+    /// <summary>
+    /// Valid Data Address. Asserted on an opcode fetch (together with <see cref="Vpa"/>) and
+    /// on every other real or dummy read or write at an effective address, a pointer, the
+    /// stack, or an interrupt/reset vector.
+    /// </summary>
+    Vda = 1,
+
+    /// <summary>
+    /// Valid Program Address. Asserted on an opcode fetch (together with <see cref="Vda"/>)
+    /// and on every read of the live program counter — an operand fetch, or a dummy read that
+    /// rereads PC without advancing it.
+    /// </summary>
+    Vpa = 2,
+
+    /// <summary>
+    /// Vector Pull, active-low on the part. This flag is set on exactly the two cycles that
+    /// read an interrupt or reset vector: <see cref="MicroOp.VectorLo"/> and
+    /// <see cref="MicroOp.VectorHi"/>.
+    /// </summary>
+    Vpb = 4,
+
+    /// <summary>
+    /// Memory Lock, active-low on the part. This flag is set on the cycles of a
+    /// read-modify-write instruction that actually touch the target byte — the read, the
+    /// modify, and the final write — so an external bus arbiter knows not to interrupt the
+    /// sequence. Not set on the addressing-mode cycles that merely compute the target address,
+    /// even when they occur inside an RMW instruction.
+    /// </summary>
+    Mlb = 8,
+}
+
+/// <summary>Classifies micro-ops by bus direction and bus-qualifier pins, for the RDY halt line and for readback.</summary>
 internal static class MicroOps
 {
     private static readonly bool[] Writes = BuildWriteTable();
@@ -356,6 +408,28 @@ internal static class MicroOps
     /// </remarks>
     public static bool HoldsAtPc(MicroOp op) => op is MicroOp.WaiHold or MicroOp.StpHold;
 
+    private static readonly BusPins[] Pins = BuildPinsTable();
+
+    /// <summary>
+    /// The <see cref="BusPins"/> this micro-op asserts, in ASSERTED polarity. A fixed
+    /// property of the micro-op — looked up once per cycle, never recomputed from register
+    /// state — so <c>Cpu.Tick</c> can record it on the hot path at the cost of one array
+    /// index.
+    /// </summary>
+    public static BusPins PinsFor(MicroOp op) => Pins[(int)op];
+
+    private static readonly bool[] InternalCycles = BuildInternalCycleTable();
+
+    /// <summary>
+    /// True for the micro-ops legitimately classified <see cref="BusPins.None"/> by
+    /// <see cref="PinsFor"/> — a cycle that performs no bus access at all, rather than one
+    /// nobody got around to classifying. Kept as its own explicit table, not a fallback,
+    /// specifically so a genuinely unclassified micro-op still reads <see cref="BusPins.None"/>
+    /// from <see cref="Pins"/> and still fails the "every micro-op is classified" test instead
+    /// of silently passing it.
+    /// </summary>
+    public static bool IsInternalCycle(MicroOp op) => InternalCycles[(int)op];
+
     private static bool[] BuildWriteTable()
     {
         var writes = new bool[Enum.GetValues<MicroOp>().Length];
@@ -372,5 +446,105 @@ internal static class MicroOps
         }
 
         return writes;
+    }
+
+    /// <summary>
+    /// Every existing micro-op's bus-qualifier pins. The opcode-fetch cycle itself is not a
+    /// <see cref="MicroOp"/> member — it is performed by the tick loop before any sequence
+    /// runs, per the remark on <see cref="MicroOp"/> — so it is not listed here; <c>Cpu.Tick</c>
+    /// assigns its <see cref="BusPins.Vda"/> | <see cref="BusPins.Vpa"/> pins directly.
+    /// <para>
+    /// Every other micro-op splits on one question: does it read the <em>live</em> program
+    /// counter, or does it touch some other address? A read of live PC (an operand fetch, or
+    /// a dummy read that rereads PC without advancing it) is <see cref="BusPins.Vpa"/> alone.
+    /// Everything else — an effective address, a pointer, the stack, a vector, or a discarded
+    /// dummy read at a <em>computed</em> address such as <c>PC-1</c> or <c>PC-2</c> that does
+    /// not track the live PC — is <see cref="BusPins.Vda"/> alone. This is why the CMOS
+    /// indexing fixups (<see cref="MicroOp.IndexFixupCmos"/> and friends), which reread an
+    /// already-consumed operand byte rather than advance through the instruction stream, land
+    /// in the <see cref="BusPins.Vda"/> group: on the 65816 the analogous cycle is <c>IO</c>
+    /// (neither pin), and of the two real pins available to the 8-bit cores, <c>Vda</c> is the
+    /// nearer match for a discarded, non-advancing access.
+    /// </para>
+    /// <para>
+    /// No 8-bit-core micro-op is classified <see cref="BusPins.None"/> — on those parts every
+    /// cycle is a real bus access, so each is either a program fetch or a data access. Only
+    /// <see cref="IsInternalCycle"/>'s two members legitimately read <c>None</c>.
+    /// </para>
+    /// </summary>
+    private static BusPins[] BuildPinsTable()
+    {
+        var pins = new BusPins[Enum.GetValues<MicroOp>().Length];
+
+        foreach (var op in new[]
+                 {
+                     MicroOp.ImpliedExec, MicroOp.ImmExec, MicroOp.ImpliedDummy,
+                     MicroOp.FetchAddrLo, MicroOp.FetchAddrHi, MicroOp.FetchAddrHiX, MicroOp.FetchAddrHiY,
+                     MicroOp.BranchFetch, MicroOp.BranchTaken, MicroOp.BranchFixup,
+                     MicroOp.JmpAbs, MicroOp.JsrFinish, MicroOp.RtsFinish,
+                     MicroOp.ImmExecCmosArith, MicroOp.BitBranchFetch,
+                     MicroOp.BrkPad, MicroOp.IntDummy,
+                     MicroOp.WaiHold, MicroOp.StpHold,
+                 })
+        {
+            pins[(int)op] = BusPins.Vpa;
+        }
+
+        foreach (var op in new[]
+                 {
+                     MicroOp.ZpIndexX, MicroOp.ZpIndexY,
+                     MicroOp.PtrReadLo, MicroOp.PtrReadHi, MicroOp.PtrReadHiY,
+                     MicroOp.ReadExec, MicroOp.ReadPageCross, MicroOp.DummyReadFixup,
+                     MicroOp.UnstableStoreFixup, MicroOp.ExecWrite,
+                     MicroOp.JmpIndLo, MicroOp.JmpIndHi,
+                     MicroOp.StackDummyRead, MicroOp.StackDummyReadInc, MicroOp.StackDummyReadDec,
+                     MicroOp.PushPch, MicroOp.PushPcl, MicroOp.PullPcl, MicroOp.PullPch,
+                     MicroOp.ReadExecCmosArith, MicroOp.BcdExtra, MicroOp.ReadPageCrossCmosArith,
+                     MicroOp.IndexFixupCmos, MicroOp.ReadPageCrossCmos, MicroOp.RmwPageCrossCmos,
+                     MicroOp.BitBranchDummy, MicroOp.BitBranchFixup,
+                     MicroOp.NopAbsExtraRead, MicroOp.JmpIndBugDummy, MicroOp.PtrJmpHi, MicroOp.JmpAbsXDummy,
+                     MicroOp.PullP, MicroOp.Push, MicroOp.Pull,
+                     MicroOp.PushPBrk, MicroOp.PushPInt, MicroOp.PushPBrkCmos, MicroOp.PushPIntCmos,
+                     MicroOp.JamHold,
+                 })
+        {
+            pins[(int)op] = BusPins.Vda;
+        }
+
+        // The locked cycles of a read-modify-write — read, modify (NMOS writes here, CMOS
+        // reads), and the final write. See BusPins.Mlb.
+        foreach (var op in new[]
+                 {
+                     MicroOp.RmwRead, MicroOp.RmwModifyWrite, MicroOp.RmwModifyRead, MicroOp.RmwWrite,
+                 })
+        {
+            pins[(int)op] = BusPins.Vda | BusPins.Mlb;
+        }
+
+        // Vector pulls. See BusPins.Vpb.
+        pins[(int)MicroOp.VectorLo] = BusPins.Vda | BusPins.Vpb;
+        pins[(int)MicroOp.VectorHi] = BusPins.Vda | BusPins.Vpb;
+
+        return pins;
+    }
+
+    /// <summary>
+    /// The two micro-ops <see cref="PinsFor"/> legitimately classifies <see cref="BusPins.None"/>.
+    /// <see cref="MicroOp.End"/> consumes no cycle and is never dispatched to <c>Cpu.Execute</c>
+    /// at all. <see cref="MicroOp.Unimplemented816"/> is a placeholder that throws
+    /// <see cref="NotImplementedException"/> the moment it is reached, before driving any pin —
+    /// <c>None</c> is therefore the honest recording of what it asserts (nothing, because it
+    /// never gets that far), not a guess about what a future opcode in its slot will assert.
+    /// </summary>
+    private static bool[] BuildInternalCycleTable()
+    {
+        var internalCycles = new bool[Enum.GetValues<MicroOp>().Length];
+
+        foreach (var op in new[] { MicroOp.End, MicroOp.Unimplemented816 })
+        {
+            internalCycles[(int)op] = true;
+        }
+
+        return internalCycles;
     }
 }
