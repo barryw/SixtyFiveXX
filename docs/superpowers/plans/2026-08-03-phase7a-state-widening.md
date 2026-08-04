@@ -15,7 +15,7 @@
 
 ## Global Constraints
 
-- **Zero behaviour change.** Every existing suite green on **both** `net8.0` and `net10.0`. Baseline measured this session: **442 unit tests** (`Category!=Performance`). Conformance must stay at its current count — not measured locally, because a cold run downloads ~3.8 GB of vectors.
+- **Zero behaviour change.** Every existing suite green on **both** `net8.0` and `net10.0`. Baselines measured this session: **442 unit tests** (`Category!=Performance`) and **1,309 conformance tests**, both TFMs, zero failures.
 - `src/SixtyFiveXX` keeps **zero** NuGet dependencies. `TreatWarningsAsErrors` is on, so **every public member needs an XML doc comment** — a missing one is a build failure, not a warning.
 - Target frameworks are `net8.0;net10.0`. `dotnet test` runs both; a change that passes one and not the other is a failure.
 - Conventional Commits. Work on a branch off `main`. **Do not push `main` without `[skip ci]` in the commit subject** — a push cuts a public nuget.org release.
@@ -374,7 +374,7 @@ Expected: **PASS, 450 tests** on each TFM — the 442 baseline, plus 2 stack-wra
 - [ ] **Step 14: Run the conformance suite.** This is the real gate. A cold cache downloads ~3.8 GB; set `SIXTYFIVEXX_HARTE_DIR` to an existing checkout to avoid it.
 
 Run: `dotnet test tests/SixtyFiveXX.Conformance`
-Expected: **PASS, count unchanged from `main`.** Any failure here is a behaviour change and must be fixed, not accepted — this phase's entire contract is that there isn't one.
+Expected: **PASS, 1309 tests on each TFM, 0 failed** — the baseline measured on this branch before any code changed. Any failure here is a behaviour change and must be fixed, not accepted; this phase's entire contract is that there isn't one. Runtime is ~3 min on `net10.0` and ~4.5 min on `net8.0`.
 
 - [ ] **Step 15: Confirm the public type set did not move.**
 
@@ -572,7 +572,7 @@ git commit -m "docs: record what the widened state costs the 8-bit cores"
 ## Done when
 
 - `dotnet test tests/SixtyFiveXX.Tests --filter "Category!=Performance"` → 453 passed, both TFMs.
-- `dotnet test tests/SixtyFiveXX.Conformance` → passed, count unchanged from `main`.
+- `dotnet test tests/SixtyFiveXX.Conformance` → 1309 passed, 0 failed, both TFMs.
 - `PublicSurfaceTests.ExpectedPublicTypes` is byte-identical to `main`.
 - The throughput figure is recorded in the spec, and it clears the 50 MHz floor.
 - No file under `src/SixtyFiveXX` mentions the 65816 except in a doc comment.
