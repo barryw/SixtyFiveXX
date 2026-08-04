@@ -86,3 +86,37 @@ the vector comparison itself; the unit suite is under a second.
 `tests/SixtyFiveXX.Conformance/klaus/6502_interrupt_test.asm` is a byte-faithful
 port of Klaus Dormann's GPL-3.0 test, verified character-for-character against
 upstream. Only assembler directives differ. **Do not edit it.**
+
+## Releasing
+
+**Any push to `main` without `[skip ci]` in the commit *subject* cuts a public
+release.** There is no separate release command and no manual approval step, so
+the marker is the only thing standing between a merge and nuget.org. Merge
+commits need it in the subject line, not the body.
+
+The pipeline runs on Woodpecker at `ci.barrywalker.io`. It expands
+`.woodpecker/woodpecker-template.yaml` — a data block, not a pipeline — through
+the shared `release-dotnet-library` template, then runs: commit validation,
+build, the unit suite, conformance, and finally the release. Cocogitto derives
+the version from the Conventional Commit history, stamps it into
+`Directory.Build.props` via `scripts/stamp-version.sh`, tags it `vX.Y.Z`, and
+pushes a bump commit carrying `[skip ci]` so the release does not loop. The
+package is then packed **from the tag** and pushed to nuget.org.
+
+To see what the next version would be without cutting it:
+
+    cog bump --auto --dry-run
+
+Two things bite:
+
+- **nuget.org is append-only.** A published version can be unlisted but never
+  deleted or replaced, so package metadata in `src/SixtyFiveXX/SixtyFiveXX.csproj`
+  — description above all — is worth reading before a release rather than after.
+- **A pipeline that fails before its config is stored cannot be restarted.**
+  Woodpecker replays a restart from the stored definition, and a run that errored
+  during validation never persisted one, so it fails with "pipeline definition
+  not found" no matter how many times it is retried. Push again instead.
+
+The conformance step re-downloads the vectors on every run until the
+`harte-cache` PVC exists; the keys for it are already in the template and are
+inert without it.
