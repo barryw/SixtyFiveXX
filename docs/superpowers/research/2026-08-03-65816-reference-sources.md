@@ -658,3 +658,47 @@ explicitly: **`VPA` low, address bus `PC+1`**.
 Every cycle of every mode in the 7b slice now has a stated address, a stated VDA/VPA pair, and a
 stated condition. The plan can be written against these rows rather than against a cycle count, and a
 disagreement with the vectors becomes a specific row to re-read rather than a search.
+
+## 10. Reset initialization, and the one thing it leaves ambiguous
+
+Added 2026-08-04, during phase 7b's review. **Confirmed** — WDC datasheet §2.25, "Reset" (p. 15). This
+is the source `Cpu.Reset()`'s 65816 block should have been checked against from the start; it was not,
+which is how a missing `D` clear survived review once already (see the code fix this section
+accompanies).
+
+The datasheet gives reset initialization as two small tables. The register row, verbatim:
+
+```
+D=0000  SH=01, SL=—  DBR=00  XH=00, XL=—  PBR=00  YH=00, YL=—  A=—
+```
+
+And the P register row, verbatim:
+
+```
+                                        P Register
+     N        V        M        X        D        I        Z       C/E
+                       1        1        0        1                 1
+              Shaded Area = Not Initialized
+```
+
+Read together, that pins down exactly six things: `D` (the direct/page-zero register) `= $0000`,
+`SH = $01`, `DBR = $00`, `XH = $00`, `PBR = $00`, `YH = $00`, `M = 1`, `X = 1`, `D` (the decimal flag,
+a different `D` from the register above — WDC's own naming collision, not this document's) `= 0`, and
+`I = 1`. Everything else in both tables is explicitly the shaded "not initialized" case: `SL`, `XL`,
+`YL`, `A`, and, in the P register, `N`, `V` and `Z`. **`N`, `V`, `Z` and `A` must stay untouched by
+reset** — the same "reset does not clear the registers" position `Cpu.Reset()`'s doc comment already
+takes for the 8-bit cores, extended here to the flags and register the 65816 table speaks to that the
+8-bit cores' reset behaviour never had occasion to mention.
+
+**The one column that cannot be resolved from this table alone is the last one, labelled `C/E`,
+value `1`.** That is ambiguous on its face between "the carry flag is set" and "the emulation flag is
+set" — and emulation mode is independently confirmed elsewhere (§2.2, Clark on `XCE`; Eyes & Lichty
+ch. 4) to be forced on reset regardless, which is already covered by `M`/`X` both reading `1` above.
+Nothing in either table, or anywhere else surveyed for this document, states outright which of the two
+the shared column means, or whether it means both. **No SingleStepTests vector covers reset at all** —
+the vector set exercises instruction execution, not the power-on sequence — so §4's usual arbiter has
+nothing to arbitrate with here. Given that, `Cpu.Reset()` leaves `C` untouched rather than guessing:
+setting it on the strength of an ambiguous column would be exactly the kind of unverified assumption
+this document exists to keep out of the implementation. If a future source resolves the ambiguity, the
+fix is one line in `Cpu.Reset()`'s 65816 block, guarded by this paragraph so it doesn't need
+rediscovering.
