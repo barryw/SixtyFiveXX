@@ -41,6 +41,7 @@ internal sealed class MicroOpTable
         CpuVariant.Synertek65C02 => Opcodes65C02.Table,
         CpuVariant.Rockwell65C02 => Opcodes65C02.RockwellTable,
         CpuVariant.Wdc65C02 => Opcodes65C02.WdcTable,
+        CpuVariant.W65C816 => Opcodes65C816.Table,
         _ => throw new NotSupportedException($"No opcode table for {variant} yet."),
     };
 
@@ -82,6 +83,16 @@ internal sealed class MicroOpTable
     {
         CpuVariant.Wdc65C02 or CpuVariant.Rockwell65C02 or CpuVariant.Synertek65C02 => Cmos,
         CpuVariant.Mos6502 or CpuVariant.Mos6510 => Nmos,
+
+        // The 65816 has its own emission path — Emit816, below — which never reads these
+        // fields; Emit() dispatches to it before any of the six are consulted. This arm
+        // exists only so the constructor's shared IrqEntry section, built once for every
+        // variant, has something to read from IntPushP. Nothing in this phase's slice
+        // reaches that sequence: no BRK, IRQ or NMI test runs against the 65816 yet, and
+        // Reset() drives its own path (see Cpu.Reset()). Revisit when 65816 interrupts
+        // arrive in phase 7d.
+        CpuVariant.W65C816 => Nmos,
+
         _ => throw new NotSupportedException($"No micro-op sequences for {variant} yet."),
     };
 
@@ -141,7 +152,7 @@ internal sealed class MicroOpTable
         for (var opcode = 0; opcode < 256; opcode++)
         {
             Entry[opcode] = (ushort)ops.Count;
-            Emit(ops, info[opcode], seq);
+            Emit(ops, info[opcode], seq, variant);
             ops.Add(MicroOp.End);
         }
 
@@ -185,9 +196,18 @@ internal sealed class MicroOpTable
         return count;
     }
 
-    private static void Emit(List<MicroOp> ops, OpcodeInfo info, Sequences seq)
+    private static void Emit(List<MicroOp> ops, OpcodeInfo info, Sequences seq, CpuVariant variant)
     {
         if (info.Operation == Op.Undefined) return;
+
+        // The 65816 does not stretch the NMOS/CMOS mechanism below at all — see Emit816 and
+        // the Sequences record's own remarks — so it is routed away before any of that logic
+        // runs, not folded into it.
+        if (variant == CpuVariant.W65C816)
+        {
+            Emit816(ops, info);
+            return;
+        }
 
         // Hand-written sequences: control flow and stack instructions do not decompose
         // into an addressing phase plus an access phase.
@@ -308,6 +328,26 @@ internal sealed class MicroOpTable
 
         EmitAddressing(ops, info, seq);
         EmitAccess(ops, info, seq);
+    }
+
+    /// <summary>
+    /// The 65816's emission path. Entirely separate from the NMOS/CMOS mechanism above: its
+    /// addressing modes have no NMOS or CMOS counterpart for <see cref="Sequences"/> to
+    /// substitute into, and the read-modify-write direction depends on <c>E</c> at run time
+    /// rather than at table-build time (datasheet Note 17, research document §7), which no
+    /// <see cref="Sequences"/> substitution can express. Bending the existing mechanism to fit
+    /// a third family was tried and rejected; this is the separate path that decision calls
+    /// for.
+    /// </summary>
+    /// <remarks>
+    /// This task builds only the variant, the table skeleton and reset — see the phase 7b
+    /// task brief. Nothing is emitted here yet for any of the 32 defined opcodes: a defined
+    /// opcode with an empty sequence still ends after its fetch cycle, which is all this
+    /// task's gate requires. Tasks 4-6 fill in the cycle-by-cycle sequences from research
+    /// document §9.
+    /// </remarks>
+    private static void Emit816(List<MicroOp> ops, OpcodeInfo info)
+    {
     }
 
     /// <summary>Emits the cycles that form the effective address, up to but excluding the access.</summary>

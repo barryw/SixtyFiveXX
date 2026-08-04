@@ -64,7 +64,20 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     private byte Y8 { get => (byte)_s.Y; set => _s.Y = value; }
 
     /// <inheritdoc cref="A8"/>
-    private byte S8 { get => (byte)_s.S; set => _s.S = value; }
+    /// <remarks>
+    /// On the 65816 in emulation mode, <c>SH</c> is not merely initialised to $01 at reset —
+    /// it is a continuously held invariant; hardware forces it on every write to S for as
+    /// long as <c>E</c> is set (research document §7). This setter is the one place every
+    /// core narrows a 16-bit write to 8 bits, so it is also the one place that invariant can
+    /// be enforced for every caller — including the reset sequence's own dummy stack reads —
+    /// without a guard at each call site. Folds away for every other core, the same way
+    /// <see cref="ReadBus"/> does for the 6510's port.
+    /// </remarks>
+    private byte S8
+    {
+        get => (byte)_s.S;
+        set => _s.S = TVariant.Variant == CpuVariant.W65C816 && _s.E ? (ushort)(0x0100 | value) : value;
+    }
 
     /// <summary>
     /// The 6510's on-chip registers. Unused by every other variant, where the accesses
@@ -363,6 +376,26 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     public void Reset()
     {
         _s.I = true;
+
+        // The 65816 resets into emulation mode, not native — CpuState.E defaults to false,
+        // which is native. Emulation mode forces m and x, clears XH and YH, and forces SH to
+        // $01 (research document §7); DBR, PBR and DP are not part of that invariant, but
+        // reset clears them too. SH's forcing here is belt-and-braces: S8's setter (above)
+        // re-forces it on every write for as long as E is set, which is what makes it survive
+        // the reset sequence's own dummy stack decrements below.
+        if (TVariant.Variant == CpuVariant.W65C816)
+        {
+            _s.E = true;
+            _s.M = true;
+            _s.XFlag = true;
+            _s.X &= 0x00FF;
+            _s.Y &= 0x00FF;
+            _s.S = (ushort)((_s.S & 0x00FF) | 0x0100);
+            _s.DBR = 0;
+            _s.PBR = 0;
+            _s.DP = 0;
+        }
+
         // ponytail: hardware clears ~NMIG at T0 phase 1 — the reset's seventh cycle — not
         // when RES is first pulled. The two differ only for an NMI edge the host asserts
         // during those seven cycles: hardware discards or defers it, this keeps it. That

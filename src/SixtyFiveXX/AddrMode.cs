@@ -82,6 +82,78 @@ internal enum AddrMode : byte
     /// <summary>Three bytes, four cycles: as <see cref="NopAbsolute"/>, then a discarded re-read of the high operand byte.</summary>
     NopAbsoluteExtra,
 
+    // 65816-only modes. Bank rules are research document §9's, transcribed from WDC
+    // datasheet Table 5-7, and are quoted here rather than inferred.
+
+    /// <summary>
+    /// <c>dp</c> — one-byte offset from <c>D</c>. Data is addressed at <c>0,D+DO</c>: always
+    /// bank 0, never <c>DBR</c>.
+    /// </summary>
+    DirectPage,
+
+    /// <summary>
+    /// <c>dp,X</c> — <see cref="DirectPage"/> indexed by X before the read. Data is
+    /// addressed at <c>0,D+DO+X</c>, still bank 0.
+    /// </summary>
+    DirectPageX,
+
+    /// <summary>
+    /// <c>(dp)</c> — a two-byte pointer fetched from bank 0 at <c>0,D+DO</c>; the data it
+    /// points at is addressed through <c>DBR</c>.
+    /// </summary>
+    DirectPageIndirect,
+
+    /// <summary>
+    /// <c>(dp),Y</c> — <see cref="DirectPageIndirect"/>'s pointer, then indexed by Y once the
+    /// data address is formed through <c>DBR</c>.
+    /// </summary>
+    DirectPageIndirectY,
+
+    /// <summary>
+    /// <c>(dp,X)</c> — the direct-page offset is indexed by X first, then the two-byte
+    /// pointer is fetched from bank 0 at <c>0,D+DO+X</c>; the data is addressed through
+    /// <c>DBR</c>.
+    /// </summary>
+    DirectPageIndexedIndirectX,
+
+    /// <summary>
+    /// <c>[dp]</c> — a three-byte pointer fetched from bank 0 at <c>0,D+DO</c>. The data
+    /// bank is the pointer's own third byte, not <c>DBR</c>.
+    /// </summary>
+    DirectPageIndirectLong,
+
+    /// <summary>
+    /// <c>[dp],Y</c> — <see cref="DirectPageIndirectLong"/>'s pointer, then indexed by Y
+    /// against the pointer's own bank byte. No indexing fixup cycle exists for this mode.
+    /// </summary>
+    DirectPageIndirectLongY,
+
+    /// <summary>
+    /// 24-bit absolute. Three operand bytes — <c>AAL</c>, <c>AAH</c>, <c>AAB</c> — fetched
+    /// from <c>PBR</c>; the data is addressed at <c>AAB,AA</c>, the operand's own bank, never
+    /// <c>DBR</c>.
+    /// </summary>
+    AbsoluteLong,
+
+    /// <summary>
+    /// <see cref="AbsoluteLong"/> indexed by X. Data is addressed at <c>AAB,AA+X</c>. No
+    /// indexing fixup cycle exists for this mode.
+    /// </summary>
+    AbsoluteLongX,
+
+    /// <summary>
+    /// <c>sr,S</c> — a one-byte offset from <c>S</c>. Data is addressed at <c>0,S+SO</c>,
+    /// always bank 0.
+    /// </summary>
+    StackRelative,
+
+    /// <summary>
+    /// <c>(sr,S),Y</c> — <see cref="StackRelative"/>'s two-byte pointer, fetched from bank 0
+    /// at <c>0,S+SO</c>, then indexed by Y once the data address is formed through
+    /// <c>DBR</c>.
+    /// </summary>
+    StackRelativeIndirectY,
+
     /// <summary>Not implemented by this variant.</summary>
     Undefined,
 }

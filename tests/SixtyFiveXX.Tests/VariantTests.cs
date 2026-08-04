@@ -36,10 +36,11 @@ public class VariantTests
     [Fact]
     public void For_ThrowsForAVariantWithNoTableYet()
     {
-        // The 65816 is deferred indefinitely, so nothing maps it. The exception surfaces
-        // wrapped: the mapping runs inside a generic static field initialiser
-        // (Cache<TVariant>.Table), and the CLR wraps anything thrown there in
-        // TypeInitializationException.
+        // Every named CpuVariant now maps to a table — phase 7b wired up the last one,
+        // W65C816 — so this proves the catch-all instead, with an enum value outside the
+        // named set. The exception surfaces wrapped: the mapping runs inside a generic
+        // static field initialiser (Cache<TVariant>.Table), and the CLR wraps anything
+        // thrown there in TypeInitializationException.
         var ex = Assert.Throws<TypeInitializationException>(
             () => MicroOpTable.For<StubUnsupportedVariant>());
         Assert.IsType<NotSupportedException>(ex.InnerException);
@@ -66,14 +67,14 @@ public class VariantTests
     }
 
     /// <summary>
-    /// A variant naming a real <see cref="CpuVariant"/> member that has no opcode table and
-    /// is not scheduled to get one — the 65816 is out of scope for the variant-cores spec.
-    /// Deliberately not a 65C02 or the 6510: those acquire tables in phases 4 and 5, which
-    /// would quietly turn this test into a no-op.
+    /// A variant naming an enum value outside <see cref="CpuVariant"/>'s named members. Every
+    /// named member now has a table — phase 7b wired up the last of them, W65C816 — so no
+    /// real <see cref="CpuVariant"/> value is left to prove the catch-all with. C# enums are
+    /// not closed to arbitrary underlying values, so an out-of-range cast still reaches it.
     /// </summary>
     private readonly struct StubUnsupportedVariant : ICpuVariant
     {
-        public static CpuVariant Variant => CpuVariant.W65C816;
+        public static CpuVariant Variant => (CpuVariant)99;
     }
 
     /// <summary>
