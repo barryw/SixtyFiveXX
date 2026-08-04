@@ -513,7 +513,7 @@ internal sealed class MicroOpTable
                 break;
 
             default:
-                throw new InvalidOperationException($"{info.Mode} has no LDA/STA sequence.");
+                throw new InvalidOperationException($"{info.Mnemonic}: {info.Mode} has no LDA/STA sequence.");
         }
 
         // Code-review fix (task 5), extended by task 6: only the two plain direct-page forms

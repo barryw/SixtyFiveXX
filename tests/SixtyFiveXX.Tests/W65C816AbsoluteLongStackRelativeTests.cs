@@ -45,6 +45,39 @@ public class W65C816AbsoluteLongStackRelativeTests
     }
 
     /// <summary>
+    /// The symmetric case to <see cref="LdaAbsolute_SixteenBit_CarriesTheHighByteIntoTheNextBank"/>:
+    /// plain <c>sr,S</c> is bank-0-confined (Clark §5.1.2 — the stack lives entirely in bank 0),
+    /// unlike its <c>(sr,S),Y</c> sibling below, whose <em>final</em> access goes through
+    /// <c>DBR</c> and must carry. <c>S + SO</c> is set to exactly <c>$FFFF</c> so the high-byte
+    /// "+1" read lands on the bank boundary: correct behavior wraps within bank 0
+    /// (<c>$000000</c>); wrongly grouping <c>sr,S</c> with the carrying family instead would spill
+    /// into <c>$010000</c>, the decoy. Task 6's review found and fixed the identical mistake in
+    /// the opposite direction for <c>(sr,S),Y</c> (below); this pins the mode it left unpinned —
+    /// removing <c>StackRelative</c> from <c>MicroOpTable.EmitLdaSta816</c>'s bank-0 exclusion set
+    /// would go unnoticed otherwise, since no SingleStepTests vector for <c>$A3</c>/<c>$83</c>
+    /// happens to land <c>S + SO</c> exactly on <c>$FFFF</c> with <c>m=0</c> across 10,000 tries.
+    /// </summary>
+    [Fact]
+    public void LdaStackRelative_SixteenBit_WrapsTheHighByteWithinBankZero()
+    {
+        var ram = new BankedBus();
+        ram[0xC000] = 0xA3;       // LDA sr,S
+        ram[0xC001] = 0x00;       // SO -> S + SO = $FFFF
+        ram[0x00FFFF] = 0x34;     // data low, 0,S+SO
+        ram[0x000000] = 0x12;     // data high, wrapped within bank 0
+        ram[0x010000] = 0x99;     // decoy: where a wrongly-carrying read would land
+
+        var cpu = Banked816TestMachine.Make(ram);
+        cpu.State.E = false;
+        cpu.State.M = false;      // 16-bit accumulator
+        cpu.State.S = 0xFFFF;     // S + SO = $FFFF
+
+        cpu.Step();
+
+        Assert.Equal(0x1234, cpu.State.A);
+    }
+
+    /// <summary>
     /// The same rule as <see cref="LdaAbsolute_SixteenBit_CarriesTheHighByteIntoTheNextBank"/>,
     /// for <c>(sr,S),Y</c> instead — a self-review finding during this task: the mode's own
     /// bank-0 pointer fetch (<c>0,S+SO</c>) made it easy to mistake for bank-0-confined like
