@@ -2,6 +2,27 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.2.0](https://github.com/barryw/SixtyFiveXX/compare/cbe9acc39750e7254c569ec39bb3ffdb8cb5aafe..v0.2.0) - 2026-08-04
+#### Features
+- let a bus see the 65816's internal cycles - ([72431f8](https://github.com/barryw/SixtyFiveXX/commit/72431f88a08d9f5f7201a8251d2b2cfc9c6efc08)) - Barry Walker
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) widen the register file for the 65816 - ([a748c70](https://github.com/barryw/SixtyFiveXX/commit/a748c706bd64df751e492869e14cd1c494b018e0)) - Barry Walker
+#### Documentation
+- record that the register file is now 65816-sized - ([cf203b7](https://github.com/barryw/SixtyFiveXX/commit/cf203b7b3efcf56d1e936552b2d94f7fa53ae4fd)) - Barry Walker, Claude Opus 5 (1M context)
+- sync phase numbers and stale claims to the five-phase spec - ([1faa7ad](https://github.com/barryw/SixtyFiveXX/commit/1faa7ad87ad216dbd3b1cb04a50419d2f1f17aa9)) - Barry Walker, Claude Opus 5 (1M context)
+- correct the phase 7a throughput finding - ([ac37c48](https://github.com/barryw/SixtyFiveXX/commit/ac37c48cd07aa0bc385ee29c4795d9c9acdb8786)) - Barry Walker, Claude Opus 5 (1M context)
+- record what the widened state costs the 8-bit cores - ([5f65084](https://github.com/barryw/SixtyFiveXX/commit/5f650848dc3e2f148ecf4ba0ff79a6968c246372)) - Barry Walker
+- fix the step ordering that would have made the shims self-recursive - ([027b4eb](https://github.com/barryw/SixtyFiveXX/commit/027b4eb5cbe0d2fb660962a15137002d7fa73e62)) - Barry Walker, Claude Opus 5 (1M context)
+- record the measured conformance baseline in the phase 7a plan - ([86e1836](https://github.com/barryw/SixtyFiveXX/commit/86e18368ecdc7913de5e204dbdf3d8d6b35ef9d7)) - Barry Walker, Claude Opus 5 (1M context)
+- pin the 65816's authoritative sources, design and phase 7a plan - ([aca2749](https://github.com/barryw/SixtyFiveXX/commit/aca274919493e8d0c96e1466a266cc1f5ef08c9e)) - Barry Walker, Claude Opus 5 (1M context)
+#### Tests
+- pin the 8-bit stack pointer wrap before widening the state - ([f274f46](https://github.com/barryw/SixtyFiveXX/commit/f274f46f0effc5289fa316b770c9be12892a8a28)) - Barry Walker
+#### CI/CD
+- build the CI image in the pipeline instead of by hand - ([cbe9acc](https://github.com/barryw/SixtyFiveXX/commit/cbe9acc39750e7254c569ec39bb3ffdb8cb5aafe)) - Barry Walker
+#### Refactoring
+- rename the 8-bit register shims so 65816 code can't collide - ([ff7e211](https://github.com/barryw/SixtyFiveXX/commit/ff7e21133454e47c83c03f43ba4c99aa6cb2dc94)) - Barry Walker, Claude Opus 5 (1M context)
+
+- - -
+
 ## [v0.1.0](https://github.com/barryw/SixtyFiveXX/compare/44efb8558c53c06fb2a8ae987a8c552cff4fd0e9..v0.1.0) - 2026-08-04
 #### Features
 - add a disassembler driven by the engine's opcode table - ([738c0b8](https://github.com/barryw/SixtyFiveXX/commit/738c0b88d8f7d56b7bc0813173f52089c77ceb1d)) - Barry Walker
