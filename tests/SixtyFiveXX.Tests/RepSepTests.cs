@@ -124,30 +124,41 @@ public class RepSepTests
     }
 
     /// <summary>
-    /// Clearing x (native mode, 8-bit to 16-bit index registers) must not zero X/Y — the whole
-    /// point of going 16-bit is that the high byte becomes meaningful again, and nothing in
-    /// research document §7 forces it on that transition.
+    /// With x already clear (native mode, 16-bit index registers), an operand that does not
+    /// touch bit 4 must leave X/Y's full 16-bit values alone — the forcing in
+    /// <c>Cpu.Exec.cs</c>'s <c>Op.Rep</c> case is conditional on <c>_s.XFlag</c>, not
+    /// unconditional, and nothing in research document §7 zeros the high byte while x stays 0.
+    /// Seeded with values whose high byte is non-zero (0x1234/0x5678) rather than values that
+    /// already fit in 8 bits, so an accidental <c>_s.X &amp;= 0x00FF</c> — unconditional, or
+    /// behind an inverted <c>XFlag</c> check — actually changes the result instead of being a
+    /// no-op the assertion cannot see.
     /// </summary>
     [Fact]
-    public void Rep_ClearingXFlag_DoesNotForceIndexRegistersToZero()
+    public void Rep_WithXFlagClear_LeavesFull16BitIndexRegistersAlone()
     {
-        var (cpu, _) = TestMachine.Flat<W65C816Variant>(0xC000, 0xC2, 0x10); // REP #$10 (x)
+        var (cpu, _) = TestMachine.Flat<W65C816Variant>(0xC000, 0xC2, 0x01); // REP #$01 (c only)
         cpu.State.E = false;
-        cpu.State.XFlag = true;
-        cpu.State.X = 0x0099;
-        cpu.State.Y = 0x00AA;
+        cpu.State.XFlag = false;
+        cpu.State.X = 0x1234;
+        cpu.State.Y = 0x5678;
 
         cpu.Step();
 
         Assert.False(cpu.State.XFlag);
-        Assert.Equal(0x0099, cpu.State.X);
-        Assert.Equal(0x00AA, cpu.State.Y);
+        Assert.Equal(0x1234, cpu.State.X);
+        Assert.Equal(0x5678, cpu.State.Y);
     }
 
     /// <summary>
     /// Datasheet Note 1, verbatim: "REP, SEP are always 3 cycle instructions". Always, not
-    /// "3-m" the way plain immediate instructions vary — <see cref="AddrMode.ImmediateByte"/>
-    /// exists precisely so this does not float with m.
+    /// "3-m" the way plain immediate instructions vary. <see cref="AddrMode.ImmediateByte"/>
+    /// records that in the opcode table — the single source of truth for operand length and
+    /// cycle count — but today <c>Emit816</c> branches on <c>info.Operation</c>, never on
+    /// <c>info.Mode</c>, so nothing actually reads the mode yet and this test is what pins the
+    /// 3-cycle count in the meantime. The mode is for Task 5: once <c>LDA</c>/<c>STA</c>'s
+    /// immediate forms make the emitter distinguish it from the m-dependent
+    /// <see cref="AddrMode.Immediate"/>, a wrong mode here would silently let REP/SEP's cycle
+    /// count float with m too.
     /// </summary>
     [Theory]
     [InlineData(0xC2)]
@@ -188,5 +199,10 @@ public class RepSepTests
         // LoggingBus has no Internal override, so an internal cycle never reaches it and the
         // log does not grow on cycle 3 — this is the assertion that no bus access occurred.
         Assert.Equal(2, log.Count);
+        // Note 1's other half: "The address bus is PC+1 during the third cycle" — the operand
+        // byte's own address, $C001, not $C002 (a bare cpu.PC copy-pasted from
+        // ImpliedExec816's PBR,PC, which would be wrong here since RepSepOperand already
+        // advanced PC past the operand).
+        Assert.Equal(0xC001, cpu.LastAddress);
     }
 }

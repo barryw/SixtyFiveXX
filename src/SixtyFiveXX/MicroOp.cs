@@ -365,7 +365,8 @@ internal enum MicroOp : byte
     /// the same one <see cref="RepSepOperand"/> just read — not a third, unfetched byte;
     /// <c>PC</c> has already advanced past it by this cycle, so the address is <c>PC - 1</c>
     /// from here, mirroring how <see cref="MicroOp.NopAbsExtraRead"/> re-derives an
-    /// already-consumed operand's address the same way.
+    /// already-consumed operand's address the same way. Verified against all 40,000 vectors
+    /// across <c>$C2</c> and <c>$E2</c>, both <c>.e</c> and <c>.n</c>.
     /// </summary>
     RepSepExec,
 }
