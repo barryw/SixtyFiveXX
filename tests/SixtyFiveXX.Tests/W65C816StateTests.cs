@@ -37,6 +37,58 @@ public class W65C816StateTests
         Assert.Equal(0x0000, cpu.State.DP);
     }
 
+    /// <summary>
+    /// Final-review finding 2: emulation mode's <c>m=1, x=1, XH=YH=$00, SH=$01</c> invariant
+    /// (research document §7; WDC datasheet §2.8, verbatim: "The M and X flags are always equal
+    /// to one in Emulation mode") used to be enforced only inside <c>XCE</c>, <c>REP</c>,
+    /// <c>SEP</c> and <c>Reset()</c> — not continuously, the way <c>SH</c> already was. So
+    /// <c>State.E = true; State.M = false;</c> through the public API, bypassing all four of
+    /// those, left <c>m</c> and <c>x</c> clear and produced a 16-bit <c>LDA</c> in emulation
+    /// mode, which cannot happen on real silicon. No SingleStepTests/65816 vector ever sets
+    /// <c>e=1, m=0</c>, so conformance could not see this.
+    /// <para>
+    /// LDA # is the discriminator: <see cref="Op.Lda"/>'s width-aware store (Cpu.Exec.cs) reads
+    /// only <c>_data</c> and preserves <c>A</c>'s top byte when <c>m</c> is 1, but reads the
+    /// full <c>_data16</c> and overwrites both bytes when <c>m</c> is (wrongly) 0 — and the
+    /// 65816's immediate mode itself is one byte shorter when <c>m</c> is 1
+    /// (<see cref="MicroOp.ImmExec816"/> ends the instruction there; <see cref="MicroOp.ImmExecHigh816"/>
+    /// only runs for the 16-bit case). So an unforced <c>m</c> is visible three ways at once:
+    /// <c>A</c>'s high byte is clobbered instead of preserved, the operand's low byte is wrong
+    /// (it reads the would-be third instruction byte instead), and <c>PC</c> advances by 3
+    /// instead of 2. <c>X</c>/<c>Y</c>'s high bytes are asserted directly, the same way
+    /// <see cref="Reset_EntersEmulationModeWithItsInvariants"/> already does for <c>Reset()</c>.
+    /// Verified to fail against the unfixed code: <c>M</c> and <c>XFlag</c> both read false,
+    /// <c>A</c> is <c>$1234</c> instead of <c>$FF34</c>, and <c>PC</c> is <c>$C003</c> instead
+    /// of <c>$C002</c>.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Emulation_ForcesWidthAndIndexHighBytesContinuously_NotOnlyAtXceRepSepOrReset()
+    {
+        var ram = new byte[0x10000];
+        ram[0xC000] = 0xA9;   // LDA #
+        ram[0xC001] = 0x34;   // the 8-bit operand if m is correctly forced to 1
+        ram[0xC002] = 0x12;   // would-be high operand byte if m were wrongly 0
+
+        var cpu = new Cpu<FlatBus, W65C816Variant>(new FlatBus(ram));
+        cpu.State.PC = 0xC000;
+        cpu.State.E = true;
+        cpu.State.M = false;        // bypasses XCE/REP/SEP/Reset entirely
+        cpu.State.XFlag = false;
+        cpu.State.X = 0x1234;
+        cpu.State.Y = 0x5678;
+        cpu.State.A = 0xFFFF;
+
+        cpu.Step();
+
+        Assert.True(cpu.State.M);
+        Assert.True(cpu.State.XFlag);
+        Assert.Equal(0x0034, cpu.State.X);   // XH forced to $00
+        Assert.Equal(0x0078, cpu.State.Y);   // YH forced to $00
+        Assert.Equal(0xFF34, cpu.State.A);   // 8-bit LDA: high byte preserved, low byte loaded
+        Assert.Equal(0xC002, cpu.State.PC);  // consumed 2 bytes, not 3 — an 8-bit immediate
+    }
+
     [Fact]
     public void UnimplementedOpcode_Throws()
     {
@@ -87,8 +139,9 @@ public class W65C816StateTests
     /// individual decrement of an actual stack-touching operation instead — proving the S8
     /// setter itself wraps at the page-one boundary (research document §7), not merely that
     /// the net three-decrement result happens to land there. Reset's own dummy stack reads
-    /// are the only 65816 stack-touching micro-op sequence this phase implements; no
-    /// push/pull opcode exists yet (<c>Emit816</c> is still empty).
+    /// are the only 65816 stack-touching micro-op sequence this phase implements — <c>Emit816</c>
+    /// dispatches <c>XCE</c>, <c>REP</c>/<c>SEP</c> and <c>LDA</c>/<c>STA</c>'s fifteen
+    /// addressing forms, but no push or pull opcode exists yet.
     /// </summary>
     [Fact]
     public void S8_WrapsAtEachCycleOfAnActualStackOperationWhileEIsSet()

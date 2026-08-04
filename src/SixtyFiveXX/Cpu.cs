@@ -271,11 +271,15 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
 
     /// <summary>
     /// Drives the RDY pin. Pulling it low halts the processor on its next read cycle; a
-    /// write already in progress completes. A halted processor keeps performing one bus
-    /// read per cycle rather than going silent, which is the basic shape of how a video
-    /// chip steals cycles without disturbing the CPU's state — but the address driven on a
-    /// halted cycle is not guaranteed to be the address the pending micro-op would have
-    /// used; see the <c>ponytail:</c> note at the halted read in <see cref="Tick"/>.
+    /// write already in progress completes. A halted processor keeps re-driving the address
+    /// bus every cycle rather than going silent, which is the basic shape of how a video chip
+    /// steals cycles without disturbing the CPU's state — as a real bus read for every 8-bit
+    /// core, where every cycle is a real access, and, on the 65816, as a real read for a halted
+    /// read micro-op but as a no-access <see cref="IBus.Internal"/> cycle for a halted internal
+    /// one (<c>MicroOps.IsInternalCycle</c>), matching what that cycle would have driven anyway.
+    /// The address driven on a halted cycle is not guaranteed to be the address the pending
+    /// micro-op would have used; see the <c>ponytail:</c> note at the halted read in
+    /// <see cref="Tick"/>.
     /// </summary>
     public void SetRdy(bool ready) => _rdy = ready;
 
@@ -317,8 +321,12 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
 
         if (!_rdy && !IsWriteCycleNext())
         {
-            // Halted: re-drive the address bus without advancing. One access, as always.
-            // A cycle skipped this way never reaches the poll below, so a halt mid-
+            // Halted: re-drive the address bus without advancing. One access, as always —
+            // except a pending 65816 internal cycle (MicroOps.IsInternalCycle), which drives
+            // the address through InternalCycle rather than ReadBus, because hardware performs
+            // no memory access on that cycle at all; going through ReadBus there would turn a
+            // no-access cycle into a real read, contradicting the None LastPins already reports
+            // for it. A cycle skipped this way never reaches the poll below, so a halt mid-
             // instruction leaves _intPoll holding whatever the last live cycle computed —
             // exactly as if the clock itself had stopped, which is what RDY models.
             // ponytail: _addr is only the right address for the minority of read micro-ops
@@ -332,7 +340,9 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             // reports the pending micro-op's classification (or the fetch pins, at a boundary)
             // rather than pins derived from the address actually redriven.
             _lastPins = _mpc < 0 ? OpcodeFetchPins : MicroOps.PinsFor(_ops[_mpc]);
-            ReadBus(_mpc < 0 || MicroOps.HoldsAtPc(_ops[_mpc]) ? PcAddress() : _addr);
+            var haltedAddress = _mpc < 0 || MicroOps.HoldsAtPc(_ops[_mpc]) ? PcAddress() : _addr;
+            if (_mpc >= 0 && MicroOps.IsInternalCycle(_ops[_mpc])) InternalCycle(haltedAddress);
+            else ReadBus(haltedAddress);
             return;
         }
 
@@ -751,8 +761,33 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
         // boundary rather than inside Op.Rep/Op.Sep specifically. Applied here, once per
         // instruction and before this instruction's own sequence runs, which is early enough
         // that nothing downstream can observe the stale value.
+        //
+        // m, x, XH and YH get the identical treatment, for the identical reason. WDC datasheet
+        // §2.8, verbatim: "The M and X flags are always equal to one in Emulation mode."
+        // Research document §7 gives the full continuously-held invariant as m=1, x=1,
+        // XH=YH=$00, SH=$01. Reset() and XCE already force it at their own mode-transition
+        // points, and REP/SEP force it in Cpu.Exec.cs whenever their own operand would
+        // otherwise clear a bit E pins — but, like SH before this fix, nothing forced it
+        // independent of those specific writes: `State.E = true; State.M = false;` through the
+        // public API produced a 16-bit LDA in emulation mode, which cannot happen on real
+        // silicon, because nothing on that path ever ran XCE, REP or SEP.
+        //
+        // Folded into the same `if` as SH rather than a second one: same guard, same condition,
+        // same instant. That guard is load-bearing, not defensive — Flag.M and Flag.X alias
+        // Flag.U and Flag.B (see CpuState.Flag's remarks), so assigning `_s.M`/`_s.XFlag`
+        // unconditionally would clear bit 5/bit 4 of P on every 8-bit core the moment this ran
+        // there. It cannot run there: `TVariant.Variant == CpuVariant.W65C816` is a compile-time
+        // constant per closed generic type, so the JIT sees `if (false)` and the whole block
+        // folds away for the five 8-bit cores regardless of `_s.E` — the same bit-aliasing trap
+        // Op.Lda/Op.Sta's own variant guard exists to avoid (Cpu.Exec.cs).
         if (TVariant.Variant == CpuVariant.W65C816 && _s.E)
+        {
             _s.S = (ushort)((_s.S & 0x00FF) | 0x0100);
+            _s.M = true;
+            _s.XFlag = true;
+            _s.X &= 0x00FF;
+            _s.Y &= 0x00FF;
+        }
 
         if (_intPoll)
         {

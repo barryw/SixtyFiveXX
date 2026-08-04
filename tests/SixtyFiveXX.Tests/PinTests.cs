@@ -1,10 +1,48 @@
 using SixtyFiveXX;
+using SixtyFiveXX.Variants;
 using Xunit;
 
 namespace SixtyFiveXX.Tests;
 
 public class PinTests
 {
+    /// <summary>
+    /// Final-review finding 1: RDY halting a pending 65816 internal cycle (research document
+    /// §9's <c>IO</c> rows — <c>MicroOps.IsInternalCycle</c>) used to fall through to the same
+    /// <c>ReadBus</c> every other halted cycle uses, turning a cycle hardware performs no access
+    /// on at all into a real bus read — while <see cref="Cpu{TBus,TVariant}.LastPins"/> kept
+    /// reporting <c>BusPins.None</c> for it regardless, self-contradictory. Reachable only
+    /// through the public <see cref="Cpu{TBus,TVariant}.SetRdy"/> API; no SingleStepTests vector
+    /// drives RDY, so conformance could not see it. LDA sr,S ($A3) is used because its second
+    /// cycle, <c>StackRelativePenalty</c>, is an unconditional internal cycle (research document
+    /// §9, "Stack Relative — row 23") — no DL-dependent skip to route around, unlike the
+    /// direct-page forms. <see cref="TestMachine.Logged{TVariant}"/>'s <c>LoggingBus</c> does
+    /// not override <c>IBus.Internal</c>, so it only grows the log on an actual
+    /// <c>Read</c>/<c>Write</c> call — which is exactly what a real memory access would be and
+    /// an internal cycle must not be. Verified to fail against the unfixed code: the log grows
+    /// by one and <c>ram[$0000]</c> ends up read, even though the halted cycle's own micro-op is
+    /// classified <c>BusPins.None</c>.
+    /// </summary>
+    [Fact]
+    public void Rdy_HaltedInternalCycle_PerformsNoRealBusAccess()
+    {
+        var (cpu, _, log) = TestMachine.Logged<W65C816Variant>(0xC000, 0xA3, 0x00);   // LDA sr,S ; SO=$00
+        cpu.State.E = false;
+        cpu.State.S = 0x01FF;
+
+        cpu.Tick();   // opcode fetch
+        cpu.Tick();   // FetchSrOffset: reads the SO operand at PC
+        var beforeHalt = log.Count;
+        var cyclesBeforeHalt = cpu.Cycles;
+
+        cpu.SetRdy(false);
+        cpu.Tick();   // StackRelativePenalty pending: an internal cycle, not a read
+
+        Assert.Equal(beforeHalt, log.Count);            // no bus access happened
+        Assert.Equal(cyclesBeforeHalt + 1, cpu.Cycles);  // the clock still advanced
+        Assert.Equal(BusPins.None, cpu.LastPins);
+    }
+
     [Fact]
     public void Rdy_HaltsTheProcessorOnAReadCycle()
     {
