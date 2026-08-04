@@ -27,16 +27,54 @@ namespace SixtyFiveXX.Conformance;
 /// </remarks>
 public class Harte816Tests(ITestOutputHelper output)
 {
-    /// <summary>Opcode bytes this phase has emitted a real <c>MicroOpTable.Emit816</c> sequence for.</summary>
+    /// <summary>
+    /// How many opcodes <c>MicroOpTable.Emit816</c> has a real sequence for. Declared rather
+    /// than measured here, so a sequence that regresses to empty — deleted or forgotten in
+    /// tasks 4-6 — fails <see cref="ImplementedOpcodes_MatchesDeclaredCount"/> instead of just
+    /// quietly running a smaller, still-green suite. The same protection
+    /// <c>HarteTests{TVariant}.ExpectedImplementedOpcodes</c> gives the 8-bit cores. XCE is the
+    /// only one Task 3 lands (research document §9, row 19a); tasks 4-6 raise this as they add
+    /// LDA, STA, REP and SEP.
+    /// </summary>
+    private static readonly int ExpectedImplementedOpcodes = 1;
+
+    /// <summary>
+    /// Opcode bytes this phase has emitted a real <c>MicroOpTable.Emit816</c> sequence for —
+    /// measured from the resolved table rather than a hand-maintained literal, so an opcode
+    /// whose sequence is forgotten or deleted cannot silently vanish from the theory data the
+    /// way a literal list would let it. An opcode counts as implemented when
+    /// <c>MicroOpTable.SequenceLength</c> is nonzero: every 65816 opcode without a real
+    /// sequence yet emits nothing and ends after its fetch cycle, per <c>Emit816</c>'s own
+    /// remarks, so <c>SequenceLength</c> is 0 for it.
+    /// </summary>
     public static TheoryData<byte> ImplementedOpcodes
     {
         get
         {
             var data = new TheoryData<byte>();
-            data.Add(0xFB);   // XCE — research document §9, row 19a.
+            foreach (var opcode in ImplementedOpcodeBytes()) data.Add(opcode);
             return data;
         }
     }
+
+    private static byte[] ImplementedOpcodeBytes()
+    {
+        var table = MicroOpTable.For<W65C816Variant>();
+        var opcodes = new List<byte>();
+        for (var opcode = 0; opcode < 256; opcode++)
+            if (table.SequenceLength(opcode) > 0) opcodes.Add((byte)opcode);
+        return opcodes.ToArray();
+    }
+
+    /// <summary>
+    /// Guards the exact failure this measured derivation exists to prevent: if a sequence is
+    /// forgotten or deleted in tasks 4-6, the measured count drops below the declared one and
+    /// this fails loudly, rather than <see cref="ImplementedOpcodes"/> just running — and
+    /// reporting green over — fewer opcodes.
+    /// </summary>
+    [Fact]
+    public void ImplementedOpcodes_MatchesDeclaredCount() =>
+        Assert.Equal(ExpectedImplementedOpcodes, ImplementedOpcodeBytes().Length);
 
     [Theory]
     [MemberData(nameof(ImplementedOpcodes))]

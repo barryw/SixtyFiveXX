@@ -479,7 +479,7 @@ internal static class MicroOps
     /// <para>
     /// No 8-bit-core micro-op is classified <see cref="BusPins.None"/> — on those parts every
     /// cycle is a real bus access, so each is either a program fetch or a data access. Only
-    /// <see cref="IsInternalCycle"/>'s two members legitimately read <c>None</c>.
+    /// <see cref="IsInternalCycle"/>'s three members legitimately read <c>None</c>.
     /// </para>
     /// </summary>
     private static BusPins[] BuildPinsTable()

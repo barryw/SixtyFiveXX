@@ -18,11 +18,31 @@ public sealed class UndefinedOpcodeException : Exception
     /// <summary>The address the opcode was fetched from.</summary>
     public ushort Address { get; }
 
-    /// <summary>Creates the exception.</summary>
+    /// <summary>
+    /// The program bank the opcode was fetched from, on the 65816. <c>null</c> for every
+    /// other core — see the two-argument constructor, which those cores use because they have
+    /// no program bank register and a flat 64 KB address space.
+    /// </summary>
+    public byte? Bank { get; }
+
+    /// <summary>Creates the exception for a flat 64 KB address space.</summary>
     public UndefinedOpcodeException(byte opcode, ushort address)
         : base($"Undefined opcode ${opcode:X2} at ${address:X4}.")
     {
         Opcode = opcode;
         Address = address;
+    }
+
+    /// <summary>
+    /// Creates the exception for the 65816, whose 24-bit address space makes
+    /// <paramref name="address"/> alone ambiguous between banks — naming
+    /// <paramref name="bank"/> too is what tells <c>$00:C000</c> apart from <c>$01:C000</c>.
+    /// </summary>
+    public UndefinedOpcodeException(byte opcode, ushort address, byte bank)
+        : base($"Undefined opcode ${opcode:X2} at ${(bank << 16 | address):X6}.")
+    {
+        Opcode = opcode;
+        Address = address;
+        Bank = bank;
     }
 }

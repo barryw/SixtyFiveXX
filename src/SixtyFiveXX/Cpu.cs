@@ -323,7 +323,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             // reports the pending micro-op's classification (or the fetch pins, at a boundary)
             // rather than pins derived from the address actually redriven.
             _lastPins = _mpc < 0 ? OpcodeFetchPins : MicroOps.PinsFor(_ops[_mpc]);
-            ReadBus(_mpc < 0 || MicroOps.HoldsAtPc(_ops[_mpc]) ? _s.PC : _addr);
+            ReadBus(_mpc < 0 || MicroOps.HoldsAtPc(_ops[_mpc]) ? PcAddress() : _addr);
             return;
         }
 
@@ -435,6 +435,24 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
 
     /// <summary>True when the cycle about to run is a write. RDY cannot halt a write.</summary>
     private bool IsWriteCycleNext() => _mpc >= 0 && MicroOps.IsWriteCycle(_ops[_mpc]);
+
+    /// <summary>
+    /// The program-bank-qualified address of the live program counter: research document §9's
+    /// <c>PBR,PC</c> family of addresses. Every read of the program stream — the opcode fetch,
+    /// an operand fetch, or a dummy read that rereads live PC without advancing it — goes
+    /// through this rather than repeating the shift at each call site.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="CpuState.PC"/> itself needs no change here: it stays a <c>ushort</c> and rolls
+    /// <c>$FFFF</c> to <c>$0000</c> without touching <see cref="CpuState.PBR"/> (research
+    /// document §2.2/§2.4) — this only adds the bank on top of whatever <c>PC</c> already holds.
+    /// Guarded by the same compile-time <c>TVariant.Variant</c> test <see cref="ReadBus"/> uses
+    /// for the 6510's port, so the JIT sees <c>if (false)</c> and folds straight to the bare
+    /// <c>PC</c> for the five 8-bit cores on this per-cycle path — the same technique
+    /// <see cref="InternalCycle"/> uses.
+    /// </remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private int PcAddress() => TVariant.Variant == CpuVariant.W65C816 ? (_s.PBR << 16) | _s.PC : _s.PC;
 
     /// <summary>
     /// Begins a hardware reset. The sequence takes seven cycles; drive it with
@@ -591,7 +609,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             // sequence's start, not past it. Reset() has no opcode to fetch and so cannot
             // rely on this free read — see MicroOpTable.ResetEntry, which spells out both
             // dummy reads itself.
-            ReadBus(_s.PC);
+            ReadBus(PcAddress());
             // NMI outranks IRQ, and servicing it consumes the latch. IRQ is level-sensitive
             // and so needs no clearing — it fires again next boundary if still asserted.
             if (_nmiPending)
@@ -609,11 +627,9 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
 
         var pc = _s.PC;
 
-        // Bank-qualify the fetch address on the 65816: research document §9 shows every
-        // opcode fetch at "PBR,PC", not PC alone — a plain 65xx core has no PBR and always
-        // fetches from a flat 64 KB space, which this compile-time test folds away for those
-        // five cores exactly as ReadBus already does for the 6510's port.
-        var opcode = ReadBus(TVariant.Variant == CpuVariant.W65C816 ? (_s.PBR << 16) | pc : pc);
+        // Bank-qualified via PcAddress(): research document §9 shows every opcode fetch at
+        // "PBR,PC", not PC alone.
+        var opcode = ReadBus(PcAddress());
         _s.PC++;
 
         var entry = _entry[opcode];
@@ -622,7 +638,10 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
         // Keyed off the descriptor rather than an empty sequence: the CMOS single-cycle
         // NOPs are defined opcodes that emit no micro-ops at all, so "no micro-ops" and
         // "not implemented" are no longer the same thing.
-        if (info.Operation == Op.Undefined) throw new UndefinedOpcodeException(opcode, pc);
+        if (info.Operation == Op.Undefined)
+            throw TVariant.Variant == CpuVariant.W65C816
+                ? new UndefinedOpcodeException(opcode, pc, _s.PBR)
+                : new UndefinedOpcodeException(opcode, pc);
 
         _op = info.Operation;
         _opcode = opcode;
@@ -668,13 +687,13 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 break;
 
             case MicroOp.ImmExec:
-                _data = ReadBus(_s.PC);
+                _data = ReadBus(PcAddress());
                 _s.PC++;
                 Exec();
                 break;
 
             case MicroOp.ImpliedDummy:
-                ReadBus(_s.PC);
+                ReadBus(PcAddress());
                 break;
 
             case MicroOp.ImpliedExec816:
@@ -686,12 +705,12 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 break;
 
             case MicroOp.FetchAddrLo:
-                _addr = ReadBus(_s.PC);
+                _addr = ReadBus(PcAddress());
                 _s.PC++;
                 break;
 
             case MicroOp.FetchAddrHi:
-                _addr |= ReadBus(_s.PC) << 8;
+                _addr |= ReadBus(PcAddress()) << 8;
                 _s.PC++;
                 break;
 
@@ -723,7 +742,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 break;
 
             case MicroOp.ImmExecCmosArith:
-                _data = ReadBus(_s.PC);
+                _data = ReadBus(PcAddress());
                 _s.PC++;
                 if (_s.D) break;
                 Exec();

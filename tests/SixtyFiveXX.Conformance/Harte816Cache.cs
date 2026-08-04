@@ -91,8 +91,10 @@ public static class Harte816Cache
             throw new InvalidOperationException(
                 $"Could not fetch {url}. Conformance vectors are required and are never " +
                 $"committed. Either allow network access, or clone " +
-                $"https://github.com/SingleStepTests/65816 and point " +
-                $"SIXTYFIVEXX_HARTE_DIR at it.", ex);
+                $"https://github.com/SingleStepTests/65816 into a directory named '65816' " +
+                $"and point SIXTYFIVEXX_HARTE_DIR at its parent — that checkout's v1/ sits " +
+                $"at its own root, so SIXTYFIVEXX_HARTE_DIR must not point at the checkout " +
+                $"itself.", ex);
         }
     }
 }
