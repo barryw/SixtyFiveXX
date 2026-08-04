@@ -20,33 +20,10 @@ namespace SixtyFiveXX.Tests;
 /// </summary>
 public class W65C816DirectPageIndirectTests
 {
-    /// <summary>
-    /// A full 24-bit address space, unlike <see cref="FlatBus"/> (64 KB, masks away the bank
-    /// entirely) — required here because these tests exist specifically to distinguish two
-    /// different <em>banks</em>, which a 16-bit-masking bus cannot do: both the wrapping and the
-    /// non-wrapping formula collapse to the same masked address once the bank is discarded.
-    /// Sparse (<see cref="Dictionary{TKey,TValue}"/>-backed, unset reads as $00), the same shape
-    /// <c>Harte816Bus</c> in the conformance project uses.
-    /// </summary>
-    private sealed class BankedBus : IBus
-    {
-        private readonly Dictionary<int, byte> _ram = [];
-        public byte this[int address]
-        {
-            get => _ram.GetValueOrDefault(address & 0xFFFFFF);
-            set => _ram[address & 0xFFFFFF] = value;
-        }
-        public byte Read(int address) => this[address];
-        public void Write(int address, byte value) => this[address] = value;
-    }
-
-    private static Cpu<RefBus, W65C816Variant> MakeCpu(BankedBus ram, ushort pc = 0xC000)
-    {
-        var cpu = new Cpu<RefBus, W65C816Variant>(new RefBus(ram));
-        cpu.State.PC = pc;
-        cpu.State.S = 0x01FF;
-        return cpu;
-    }
+    // BankedBus and MakeCpu live in Banked816TestMachine.cs, shared with task 6's
+    // absolute/long/stack-relative tests.
+    private static Cpu<RefBus, W65C816Variant> MakeCpu(BankedBus ram, ushort pc = 0xC000) =>
+        Banked816TestMachine.Make(ram, pc);
 
     // ---- Finding 2: bank-0 wrap vs. bank carry -----------------------------------------
 
@@ -168,7 +145,7 @@ public class W65C816DirectPageIndirectTests
     // ---- Finding 4: the (dp),Y indexing-cycle skip must come from info.Access ----------
 
     /// <summary>
-    /// Finding 4's actual fix, exercised directly against <c>MicroOpTable.EmitDirectPage816</c>
+    /// Finding 4's actual fix, exercised directly against <c>MicroOpTable.EmitLdaSta816</c>
     /// via reflection: it is <c>private static</c>, and no opcode other than <c>LDA</c>/<c>STA</c>
     /// exists in the 65816 table yet for this to reach through the public opcode-execution API
     /// (phase 7c adds the rest). <c>ADC</c> stands in for "some future reading opcode that is not
@@ -179,9 +156,9 @@ public class W65C816DirectPageIndirectTests
     /// <see cref="MicroOp.DpPtrReadHiY"/>.
     /// </summary>
     [Fact]
-    public void EmitDirectPage816_ForAReadThatIsNotLda_StillSelectsTheSkippableMicroOp()
+    public void EmitLdaSta816_ForAReadThatIsNotLda_StillSelectsTheSkippableMicroOp()
     {
-        var ops = EmitDirectPage816(new OpcodeInfo("ADC", AddrMode.DirectPageIndirectY, Op.Adc, Access.Read));
+        var ops = EmitLdaSta816(new OpcodeInfo("ADC", AddrMode.DirectPageIndirectY, Op.Adc, Access.Read));
 
         Assert.Contains(MicroOp.DpPtrReadHiY, ops);
         Assert.DoesNotContain(MicroOp.DpPtrReadHiYWrite, ops);
@@ -194,19 +171,19 @@ public class W65C816DirectPageIndirectTests
     /// diverge, not just both happen to contain <see cref="MicroOp.DpPtrReadHiY"/>.
     /// </summary>
     [Fact]
-    public void EmitDirectPage816_ForAWrite_SelectsTheNeverSkippingMicroOp()
+    public void EmitLdaSta816_ForAWrite_SelectsTheNeverSkippingMicroOp()
     {
-        var ops = EmitDirectPage816(new OpcodeInfo("STA", AddrMode.DirectPageIndirectY, Op.Sta, Access.Write));
+        var ops = EmitLdaSta816(new OpcodeInfo("STA", AddrMode.DirectPageIndirectY, Op.Sta, Access.Write));
 
         Assert.Contains(MicroOp.DpPtrReadHiYWrite, ops);
         Assert.DoesNotContain(MicroOp.DpPtrReadHiY, ops);
     }
 
-    private static List<MicroOp> EmitDirectPage816(OpcodeInfo info)
+    private static List<MicroOp> EmitLdaSta816(OpcodeInfo info)
     {
-        var method = typeof(MicroOpTable).GetMethod("EmitDirectPage816", BindingFlags.NonPublic | BindingFlags.Static)
+        var method = typeof(MicroOpTable).GetMethod("EmitLdaSta816", BindingFlags.NonPublic | BindingFlags.Static)
             ?? throw new InvalidOperationException(
-                "MicroOpTable.EmitDirectPage816 not found by reflection — has it been renamed?");
+                "MicroOpTable.EmitLdaSta816 not found by reflection — has it been renamed?");
 
         var ops = new List<MicroOp>();
         method.Invoke(null, [ops, info]);

@@ -566,6 +566,31 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     }
 
     /// <summary>
+    /// <c>abs,X</c>/<c>abs,Y</c>'s shared cycle 3 (research document §9's "Absolute,X — row 6a,
+    /// and Absolute,Y — row 7"): reads <c>AAH</c> at the live program counter — the same bus
+    /// access <see cref="MicroOp.FetchAddrHi"/> performs — then precomputes everything the
+    /// following conditional cycle needs without spending one on it. <c>_addr</c> is left holding
+    /// the mis-indexed intermediate <c>DBR,AAH,AAL+indexLow</c> (high byte un-carried, for
+    /// <see cref="MicroOp.AbsIndexFixup"/> to drive if the cycle is taken); <c>_ptr</c> is left
+    /// holding the real, possibly bank-carrying target <c>DBR,AA+index</c> (reused as scratch
+    /// exactly as <see cref="DirectPageIndirectYHigh"/> reuses it for the unindexed pointer).
+    /// Called with <see cref="IndexX"/> or <see cref="IndexY"/> depending on which register the
+    /// opcode indexes by; the caller alone decides whether to skip <c>AbsIndexFixup</c>
+    /// afterward, since a write never skips and a read skips only when datasheet Note 4's
+    /// condition is not met.
+    /// </summary>
+    private void AbsIndexedHigh(ushort index)
+    {
+        var hi = ReadBus(PcAddress());
+        _s.PC++;
+        var aa = (hi << 8) | (_addr & 0xFF);
+        var lo = (aa & 0xFF) + (index & 0xFF);
+        _pageCross = lo > 0xFF;
+        _addr = (_s.DBR << 16) | (aa & 0xFF00) | (lo & 0xFF);        // mis-indexed intermediate
+        _ptr = (((_s.DBR << 16) | aa) + index) & 0xFFFFFF;           // real target, may carry a bank
+    }
+
+    /// <summary>
     /// Begins a hardware reset. The sequence takes seven cycles; drive it with
     /// <see cref="Step"/> or seven calls to <see cref="Tick"/>.
     /// </summary>
@@ -946,6 +971,95 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
 
             case MicroOp.ExecWriteHigh816Carry:
                 WriteBus(HighByteAddressCarry(), (byte)(_data16 >> 8));
+                break;
+
+            // Task 6: absolute, long, stack-relative and immediate. See MicroOp's own remarks
+            // on each member for the research document §9 row it comes from.
+
+            case MicroOp.ImmExec816:
+                _data = ReadBus(PcAddress());
+                _s.PC++;
+                if (_s.M) { Exec(); EndInstruction(); }
+                break;
+
+            case MicroOp.ImmExecHigh816:
+            {
+                var hi = ReadBus(PcAddress());
+                _s.PC++;
+                _data16 = (ushort)((hi << 8) | _data);
+                Exec();
+                break;
+            }
+
+            case MicroOp.AbsHi:
+            {
+                var hi = ReadBus(PcAddress());
+                _s.PC++;
+                _addr = (_s.DBR << 16) | (hi << 8) | (_addr & 0xFF);
+                break;
+            }
+
+            case MicroOp.AbsHiIndexedX:
+                AbsIndexedHigh(IndexX());
+                if (!_pageCross && _s.XFlag) _mpc++;
+                break;
+
+            case MicroOp.AbsHiIndexedXWrite:
+                AbsIndexedHigh(IndexX());
+                break;
+
+            case MicroOp.AbsHiIndexedY:
+                AbsIndexedHigh(IndexY());
+                if (!_pageCross && _s.XFlag) _mpc++;
+                break;
+
+            case MicroOp.AbsHiIndexedYWrite:
+                AbsIndexedHigh(IndexY());
+                break;
+
+            case MicroOp.AbsIndexFixup:
+                InternalCycle(_addr);   // the mis-indexed address AbsHiIndexed* formed
+                _addr = _ptr;           // the real, precomputed (and possibly bank-carried) target
+                break;
+
+            case MicroOp.FetchAddrBank:
+            {
+                var bank = ReadBus(PcAddress());
+                _s.PC++;
+                _addr = (bank << 16) | _addr;
+                break;
+            }
+
+            case MicroOp.FetchAddrBankX:
+            {
+                var bank = ReadBus(PcAddress());
+                _s.PC++;
+                _addr = (((bank << 16) | _addr) + IndexX()) & 0xFFFFFF;
+                break;
+            }
+
+            case MicroOp.FetchSrOffset:
+            {
+                var so = ReadBus(PcAddress());
+                _s.PC++;
+                _addr = (_s.S + so) & 0xFFFF;
+                break;
+            }
+
+            case MicroOp.StackRelativePenalty:
+                InternalCycle((_s.PBR << 16) | ((_s.PC - 1) & 0xFFFF));
+                break;
+
+            case MicroOp.SrPtrReadHi:
+            {
+                var hi = ReadBus((_ptr + 1) & 0xFFFF);
+                _addr = (hi << 8) | _tmp;
+                break;
+            }
+
+            case MicroOp.IndexStackRelativeIndirectY:
+                InternalCycle((_ptr + 1) & 0xFFFF);
+                _addr = (((_s.DBR << 16) | _addr) + IndexY()) & 0xFFFFFF;
                 break;
 
             case MicroOp.FetchAddrLo:

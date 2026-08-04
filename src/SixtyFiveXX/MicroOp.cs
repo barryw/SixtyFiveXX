@@ -569,6 +569,154 @@ internal enum MicroOp : byte
     /// the citation.
     /// </summary>
     ExecWriteHigh816Carry,
+
+    // Task 6: the absolute, long, stack-relative and immediate forms — research document §9's
+    // "Absolute", "Absolute,X — row 6a, and Absolute,Y — row 7", "Absolute Long — row 4a, and
+    // Absolute Long,X — row 5", "Stack Relative — row 23", "(Stack Relative),Y — row 24" and
+    // "Immediate, and REP/SEP" blocks. Every mode's final access reuses task 5's ReadExec816 /
+    // ReadExecHigh816(Carry) / ExecWrite816 / ExecWriteHigh816(Carry) unchanged — those four are
+    // already generic over what filled <c>_addr</c>, which is all any of these modes' formation
+    // cycles need to do. Only immediate breaks that shape, because it has no effective address
+    // at all; it gets its own pair below.
+
+    /// <summary>
+    /// Immediate's low byte: <c>data = Read(PBR,PC); PC++</c>. When <c>M</c> selects 8 bits, runs
+    /// the operation and ends the instruction there — the same "low-byte micro-op ends the
+    /// instruction" shape as <see cref="ReadExec816"/>, but reading the live program counter
+    /// rather than an effective address, so <c>LDA #</c> costs one byte and one cycle less than
+    /// every memory-addressing mode. Research document §9, "Immediate, and REP/SEP": "the operand
+    /// fetched at PBR,PC+1". <c>LDA #</c> (<c>$A9</c>) is the only opcode that uses this —
+    /// <c>STA</c> has no immediate form, and <c>REP</c>/<c>SEP</c> use the fixed-width
+    /// <see cref="RepSepOperand"/>/<see cref="RepSepExec"/> pair instead, since their operand
+    /// never widens with <c>M</c>.
+    /// </summary>
+    ImmExec816,
+
+    /// <summary>
+    /// Immediate's high byte, reached only when <see cref="ImmExec816"/> left <c>M</c> selecting
+    /// 16 bits: <c>data16 = (Read(PBR,PC) &lt;&lt; 8) | data; PC++</c>, then runs the operation.
+    /// Research document §9: "plus PBR,PC+2 when the width flag is 0 — Note 1's 'add 1 byte for
+    /// immediate only'."
+    /// </summary>
+    ImmExecHigh816,
+
+    /// <summary>
+    /// Absolute's (unindexed) high byte: reads <c>AAH</c> at <c>PBR,PC+2</c> — the same bus access
+    /// <see cref="FetchAddrHi"/> performs — then folds in <c>DBR</c> so <c>_addr</c> is already
+    /// <c>DBR,AA</c> by the time the access tail runs, with no cycle spent on the fold: research
+    /// document §9's "Absolute" block has no separate bank-forming row between AAH (cycle 3) and
+    /// the data access (cycle 4). Distinct from <see cref="FetchAddrHi"/> rather than a reuse of
+    /// it, because <c>abs,X</c>/<c>abs,Y</c> need the bank fold deferred past their own indexing
+    /// cycle — see <see cref="AbsHiIndexedX"/> — so a single hi-fetch micro-op cannot serve both
+    /// shapes.
+    /// </summary>
+    AbsHi,
+
+    /// <summary>
+    /// <c>abs,X</c>'s unconditional high-byte cycle — research document §9's "Absolute,X — row
+    /// 6a" cycle 3: reads <c>AAH</c> at <c>PBR,PC+2</c>, then precomputes both addresses the
+    /// following conditional cycle needs without spending one on the precomputation — the
+    /// mis-indexed intermediate <c>DBR,AAH,AAL+XL</c> (high byte un-carried, left in <c>_addr</c>
+    /// for <see cref="AbsIndexFixup"/> to drive if taken) and the real, possibly bank-carrying
+    /// target <c>DBR,AA+X</c> (stashed in <c>_ptr</c>, reused as scratch exactly as <c>(dp),Y</c>'s
+    /// <c>DirectPageIndirectYHigh</c> reuses it for the unindexed pointer). Skips
+    /// <see cref="AbsIndexFixup"/> when datasheet Note 4's condition is not met — no page cross,
+    /// and <c>X=1</c> (8-bit index) — the same test <c>DpPtrReadHiY</c> uses; skipping is safe
+    /// because with no carry out of the low byte, the mis-indexed and real addresses are the same
+    /// value. Read only; a writing opcode's <c>abs,X</c> gets <see cref="AbsHiIndexedXWrite"/>
+    /// instead, selected at table-build time from <c>info.Access</c> — the same mechanism task 5's
+    /// review put in place for <c>DpPtrReadHiY</c>/<c>DpPtrReadHiYWrite</c>.
+    /// </summary>
+    AbsHiIndexedX,
+
+    /// <summary>
+    /// <see cref="AbsHiIndexedX"/> for a writing opcode's <c>abs,X</c> — <c>STA</c> today. Same
+    /// address formation, but never skips <see cref="AbsIndexFixup"/>: datasheet Note 4, "add 1
+    /// cycle for indexing across page boundaries, or write, or X=0" — a write pays the indexing
+    /// cycle unconditionally.
+    /// </summary>
+    AbsHiIndexedXWrite,
+
+    /// <summary>
+    /// <see cref="AbsHiIndexedX"/> with <c>Y</c> substituted for <c>X</c> — research document §9's
+    /// "Absolute,Y — row 7", identical in shape.
+    /// </summary>
+    AbsHiIndexedY,
+
+    /// <summary>
+    /// <see cref="AbsHiIndexedXWrite"/> with <c>Y</c> substituted for <c>X</c> — a writing
+    /// opcode's <c>abs,Y</c>.
+    /// </summary>
+    AbsHiIndexedYWrite,
+
+    /// <summary>
+    /// <c>abs,X</c>/<c>abs,Y</c>'s conditional indexing cycle — research document §9's "Absolute,X
+    /// — row 6a" cycle 3a: an internal cycle at the mis-indexed address one of the four
+    /// <c>AbsHiIndexed*</c> micro-ops left in <c>_addr</c>, then <c>_addr</c> is replaced by the
+    /// real target already precomputed into <c>_ptr</c>. Index-agnostic — it does not need to
+    /// know whether <c>X</c> or <c>Y</c> formed the target, because the preceding cycle already
+    /// resolved that — which is why one micro-op serves all four <c>AbsHiIndexed*</c> variants
+    /// rather than needing its own X/Y split.
+    /// </summary>
+    AbsIndexFixup,
+
+    /// <summary>
+    /// <c>long</c>'s third operand byte, <c>AAB</c>: reads at <c>PBR,PC+3</c>, then combines it
+    /// with the 16-bit <c>AA</c> <see cref="FetchAddrLo"/>/<see cref="FetchAddrHi"/> already
+    /// formed to produce the full 24-bit address — the operand's own bank, never <c>DBR</c>.
+    /// Research document §9, "Absolute Long — row 4a" cycle 4.
+    /// </summary>
+    FetchAddrBank,
+
+    /// <summary>
+    /// <see cref="FetchAddrBank"/> for <c>long,X</c>: reads <c>AAB</c>, then adds the full-width
+    /// <c>X</c> to the combined 24-bit address in the same cycle, wrapping only at the 16 MB
+    /// boundary — no separate indexing cycle exists for this mode. Research document §9,
+    /// "Absolute Long,X — row 5": "Also no indexing cycle for long,X — again matching Clark's flat
+    /// 6-m."
+    /// </summary>
+    FetchAddrBankX,
+
+    /// <summary>
+    /// <c>sr,S</c>'s operand fetch: <c>SO</c>, the one-byte offset from <c>S</c> — research
+    /// document §9's "Stack Relative — row 23" cycle 2. Folds <c>S</c> into the offset
+    /// immediately, setting <c>_addr</c> to <c>(S + SO) &amp; $FFFF</c> — always bank 0, and a
+    /// plain 16-bit wrap with no direct-page-style <c>E</c>/<c>DL</c> page-wrap special case: per
+    /// research document §7, <c>stack,S</c> is a "new" addressing mode, so none of the "old"
+    /// modes' emulation-mode wrapping rules apply to it, and it uses the full 16-bit <c>S</c>
+    /// (already carrying <c>SH = $01</c> in emulation mode via the continuously-held invariant)
+    /// rather than an 8-bit low-byte-only add pinned to page 1.
+    /// </summary>
+    FetchSrOffset,
+
+    /// <summary>
+    /// <c>sr,S</c>'s unconditional internal cycle: an internal cycle at the offset byte's own
+    /// address (<c>PC - 1</c> by the time this runs, as <see cref="DirectPagePenalty"/> and
+    /// <see cref="RepSepExec"/> both re-derive theirs). Unlike <see cref="DirectPagePenalty"/>,
+    /// this is never skipped — research document §9, "Stack Relative — row 23" cycle 3: "<c>&lt;-
+    /// unconditional, and there is no (2) penalty</c>". <c>w</c> appears only on direct-page
+    /// modes (research document §5); <c>sr,S</c> pays a flat cycle here regardless of <c>D</c>.
+    /// </summary>
+    StackRelativePenalty,
+
+    /// <summary>
+    /// <c>(sr,S),Y</c>'s pointer high byte: reads <c>AAH</c> at <c>ptr + 1</c>, always bank 0 and
+    /// never page-wrapped (a "new" mode, like <see cref="FetchSrOffset"/>), then combines it with
+    /// the low byte <see cref="PtrReadLo816"/> already read into the unindexed 16-bit <c>AA</c>.
+    /// Research document §9, "(Stack Relative),Y — row 24" cycle 5.
+    /// </summary>
+    SrPtrReadHi,
+
+    /// <summary>
+    /// <c>(sr,S),Y</c>'s second internal cycle: an internal cycle that redrives the address
+    /// <see cref="SrPtrReadHi"/> just read — <c>0,S+SO+1</c>, not <c>PBR,PC+1</c> — then
+    /// <c>_addr</c> becomes the real target <c>DBR,AA+Y</c>, which may carry into the next bank
+    /// (this mode is not bank-confined, unlike plain <c>sr,S</c>). Unconditional, unlike
+    /// <c>(dp),Y</c>'s analogous <see cref="IndexDirectPageIndirectY"/>: research document §9's
+    /// "(Stack Relative),Y — row 24" cycle 6 has no gating note, and Clark's flat <c>8-m</c> (§5)
+    /// carries no <c>p</c> term, so this never skips.
+    /// </summary>
+    IndexStackRelativeIndirectY,
 }
 
 /// <summary>
@@ -707,7 +855,7 @@ internal static class MicroOps
     /// <para>
     /// No 8-bit-core micro-op is classified <see cref="BusPins.None"/> — on those parts every
     /// cycle is a real bus access, so each is either a program fetch or a data access. Only
-    /// <see cref="IsInternalCycle"/>'s three members legitimately read <c>None</c>.
+    /// <see cref="IsInternalCycle"/>'s members legitimately read <c>None</c>.
     /// </para>
     /// </summary>
     private static BusPins[] BuildPinsTable()
@@ -724,6 +872,10 @@ internal static class MicroOps
                      MicroOp.BrkPad, MicroOp.IntDummy,
                      MicroOp.WaiHold, MicroOp.StpHold,
                      MicroOp.RepSepOperand, MicroOp.FetchDpOffset,
+                     MicroOp.ImmExec816, MicroOp.ImmExecHigh816,
+                     MicroOp.AbsHi, MicroOp.AbsHiIndexedX, MicroOp.AbsHiIndexedXWrite,
+                     MicroOp.AbsHiIndexedY, MicroOp.AbsHiIndexedYWrite,
+                     MicroOp.FetchAddrBank, MicroOp.FetchAddrBankX, MicroOp.FetchSrOffset,
                  })
         {
             pins[(int)op] = BusPins.Vpa;
@@ -749,6 +901,7 @@ internal static class MicroOps
                      MicroOp.LongPtrReadMid, MicroOp.LongPtrReadHi, MicroOp.LongPtrReadHiY,
                      MicroOp.ReadExec816, MicroOp.ReadExecHigh816, MicroOp.ReadExecHigh816Carry,
                      MicroOp.ExecWrite816, MicroOp.ExecWriteHigh816, MicroOp.ExecWriteHigh816Carry,
+                     MicroOp.SrPtrReadHi,
                  })
         {
             pins[(int)op] = BusPins.Vda;
@@ -772,7 +925,7 @@ internal static class MicroOps
     }
 
     /// <summary>
-    /// The three micro-ops <see cref="PinsFor"/> legitimately classifies <see cref="BusPins.None"/>.
+    /// The micro-ops <see cref="PinsFor"/> legitimately classifies <see cref="BusPins.None"/>.
     /// <see cref="MicroOp.End"/> consumes no cycle and is never dispatched to <c>Cpu.Execute</c>
     /// at all. <see cref="MicroOp.Unimplemented816"/> is a placeholder that throws
     /// <see cref="NotImplementedException"/> the moment it is reached, before driving any pin —
@@ -786,6 +939,12 @@ internal static class MicroOps
     /// <see cref="MicroOp.IndexDirectPageIndirectY"/> are task 5's three — every one of them is
     /// an <c>IO</c> row in research document §9's direct-page blocks, driving an address with no
     /// memory access at all, the same shape as the first two.
+    /// <see cref="MicroOp.AbsIndexFixup"/>, <see cref="MicroOp.StackRelativePenalty"/> and
+    /// <see cref="MicroOp.IndexStackRelativeIndirectY"/> are task 6's three — the conditional
+    /// indexing cycle of <c>abs,X</c>/<c>abs,Y</c> (§9 row 6a/7's "3a"), <c>sr,S</c>'s
+    /// unconditional penalty cycle (§9 row 23's "3"), and <c>(sr,S),Y</c>'s second unconditional
+    /// internal cycle (§9 row 24's "6") — each an <c>IO</c> row with no memory access, the same
+    /// shape as task 5's three.
     /// </summary>
     private static bool[] BuildInternalCycleTable()
     {
@@ -795,6 +954,7 @@ internal static class MicroOps
                  {
                      MicroOp.End, MicroOp.Unimplemented816, MicroOp.ImpliedExec816, MicroOp.RepSepExec,
                      MicroOp.DirectPagePenalty, MicroOp.DirectPageIndexX, MicroOp.IndexDirectPageIndirectY,
+                     MicroOp.AbsIndexFixup, MicroOp.StackRelativePenalty, MicroOp.IndexStackRelativeIndirectY,
                  })
         {
             internalCycles[(int)op] = true;

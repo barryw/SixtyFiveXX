@@ -16,14 +16,12 @@ namespace SixtyFiveXX.Conformance;
 /// <see cref="Harte816Case"/> and <see cref="Harte816Bus"/>.
 /// <para>
 /// Unlike <see cref="HarteTests{TVariant}"/>, this does not loop over all 256 opcodes. Only 32
-/// of the 65816's opcodes are defined at all yet (<c>Opcodes65C816.Table</c>), and of those
-/// only <c>XCE</c>, <c>REP</c> and <c>SEP</c> have a real sequence — <c>MicroOpTable.Emit816</c>
-/// emits nothing for the other 29, so every one of their vectors would fail on cycle count
-/// alone. Looping over the full opcode space the way the 8-bit harness does would therefore
-/// require declaring 224 "not yet covered" opcodes as a matter of routine, which is what the
-/// 8-bit harness's <c>OpcodesWithoutVectors</c> mechanism exists to flag as an exception, not a
-/// norm. Tasks 5-6 add entries to <see cref="ImplementedOpcodes"/> as they land sequences for
-/// LDA and STA.
+/// of the 65816's opcodes are defined at all yet (<c>Opcodes65C816.Table</c>) — every one of
+/// them now has a real sequence, as of task 6: <c>XCE</c>, <c>REP</c>, <c>SEP</c>, and all
+/// fifteen addressing forms of <c>LDA</c>/<c>STA</c>. Looping over the full opcode space the
+/// way the 8-bit harness does would still require declaring 224 "not yet covered" opcodes as a
+/// matter of routine, which is what the 8-bit harness's <c>OpcodesWithoutVectors</c> mechanism
+/// exists to flag as an exception, not a norm.
 /// </para>
 /// </remarks>
 public class Harte816Tests(ITestOutputHelper output)
@@ -35,12 +33,16 @@ public class Harte816Tests(ITestOutputHelper output)
     /// quietly running a smaller, still-green suite. The same protection
     /// <c>HarteTests{TVariant}.ExpectedImplementedOpcodes</c> gives the 8-bit cores. XCE was
     /// the only one Task 3 landed (research document §9, row 19a); Task 4 added REP and SEP
-    /// (§9's "Immediate, and REP/SEP"); Task 5 adds LDA and STA's seven direct-page forms each
+    /// (§9's "Immediate, and REP/SEP"); Task 5 added LDA and STA's seven direct-page forms each
     /// (research document §9's "Direct", "Direct,X", "(Direct,X)", "(Direct)", "(Direct),Y",
-    /// "[Direct]" and "[Direct],Y" blocks) — 3 + 14 = 17. Task 6 raises this again to 32 as it
-    /// adds LDA/STA's remaining absolute, long, stack-relative and immediate forms.
+    /// "[Direct]" and "[Direct],Y" blocks) — 3 + 14 = 17. Task 6 adds LDA and STA's remaining
+    /// seven forms each — absolute, absolute,X, absolute,Y, long, long,X, stack,S,
+    /// (stack,S),Y (§9's "Absolute", "Absolute,X — row 6a, and Absolute,Y — row 7", "Absolute
+    /// Long — row 4a, and Absolute Long,X — row 5", "Stack Relative — row 23" and "(Stack
+    /// Relative),Y — row 24" blocks) — plus LDA's immediate form (§9's "Immediate, and
+    /// REP/SEP"; STA has none) — 17 + 14 + 1 = 32, all 32 opcodes phase 7b is gated on.
     /// </summary>
-    private static readonly int ExpectedImplementedOpcodes = 17;
+    private static readonly int ExpectedImplementedOpcodes = 32;
 
     /// <summary>
     /// Opcode bytes this phase has emitted a real <c>MicroOpTable.Emit816</c> sequence for —
