@@ -1,0 +1,51 @@
+# Builds the CI image that this repository's own pipeline runs on.
+#
+# The config service merges this alongside the generated release pipeline rather
+# than replacing it, so both run from their own `when:` blocks.
+#
+# It exists because the image used to be built by hand. It had never actually
+# been pushed — it lived only on one laptop, at the wrong architecture — and the
+# first release run died with NO log output at all, because a step that cannot
+# pull its image never starts and therefore never logs. Nothing about that
+# failure pointed at the image.
+#
+# kaniko rather than docker buildx: this repo is not trusted for privileged
+# steps, and kaniko is daemonless. It is also what every other image build in
+# this org uses.
+#
+# linux/amd64 ONLY, deliberately. kaniko's --custom-platform sets the platform
+# recorded in the image config; it does NOT cross-compile, and this Dockerfile
+# has real RUN steps (apt-get, dotnet-install) that would have to execute on the
+# target architecture. Every Kubernetes agent is linux/amd64, so that is the only
+# architecture worth producing. An Apple Silicon machine runs it under emulation.
+
+when:
+  - event: push
+    branch: main
+    path:
+      include:
+        - docker/ci.Dockerfile
+        - .woodpecker/ci-image.yaml
+
+labels:
+  platform: linux/amd64
+
+steps:
+  - name: build-ci-image
+    image: gcr.io/kaniko-project/executor:debug
+    environment:
+      GITHUB_TOKEN:
+        from_secret: github_token
+    commands:
+      - |
+        mkdir -p /kaniko/.docker
+        echo "{\"auths\":{\"ghcr.io\":{\"username\":\"barryw\",\"password\":\"$GITHUB_TOKEN\"}}}" > /kaniko/.docker/config.json
+        # Two tags on purpose. `:1` is the moving tag the pipeline template
+        # references, so a rebuild takes effect without editing the template.
+        # The commit-sha tag is immutable, so a run that went wrong can be
+        # traced to the exact image it used.
+        /kaniko/executor \
+          --context="$CI_WORKSPACE" \
+          --dockerfile="$CI_WORKSPACE/docker/ci.Dockerfile" \
+          --destination="ghcr.io/barryw/sixtyfivexx-ci:1" \
+          --destination="ghcr.io/barryw/sixtyfivexx-ci:$CI_COMMIT_SHA"

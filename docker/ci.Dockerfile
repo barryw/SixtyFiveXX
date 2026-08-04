@@ -8,16 +8,14 @@
 #   .NET 8 runtime - the SDK 10 image can BUILD net8.0 but not RUN it, so the
 #                    net8.0 half of the test matrix would not execute.
 #
-# BUILD IT FOR BOTH ARCHITECTURES AND PUSH IT:
+# DO NOT BUILD THIS BY HAND. `.woodpecker/ci-image.yaml` builds and pushes it
+# whenever this file changes, tagging both `:1` — the moving tag the pipeline
+# template references — and the commit sha.
 #
-#   docker buildx build --platform linux/amd64,linux/arm64 \
-#     -f docker/ci.Dockerfile -t ghcr.io/barryw/sixtyfivexx-ci:1 --push .
-#
-# linux/amd64 is what the Kubernetes agents run; arm64 only exists so the image
-# is usable on an Apple Silicon machine. Building it without --platform on a Mac
-# produces an arm64-only image the agents cannot run, and a step that cannot pull
-# or start its image fails with NO LOG OUTPUT AT ALL — which looks like anything
-# except a bad image. Bump the tag when this file changes; agents cache by tag.
+# It was built by hand once, and the result was an image that had never been
+# pushed at all, at linux/arm64 while every agent is linux/amd64. A step that
+# cannot pull or start its image produces NO LOG OUTPUT WHATSOEVER, so the
+# failure looked like anything except a bad image.
 FROM mcr.microsoft.com/dotnet/sdk:10.0
 
 # Links the GHCR package to the repository, so repository permissions govern who
