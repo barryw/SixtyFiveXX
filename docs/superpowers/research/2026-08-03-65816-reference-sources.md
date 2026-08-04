@@ -702,3 +702,42 @@ setting it on the strength of an ambiguous column would be exactly the kind of u
 this document exists to keep out of the implementation. If a future source resolves the ambiguity, the
 fix is one line in `Cpu.Reset()`'s 65816 block, guarded by this paragraph so it doesn't need
 rediscovering.
+
+---
+
+## 11. `XCE` and the stack pointer's high byte — measured, then explained
+
+Added 2026-08-04, during phase 7b Task 3.
+
+Implementing `XCE` produced a rule the earlier sections do not state. §7 says only that emulation mode
+forces `SH = $01`, without saying whether the condition is evaluated before or after `XCE` swaps `c`
+and `e`. The implementer measured it exhaustively across all 20,000 `$FB` vectors and found:
+
+> `SH` is forced to `$01` whenever **either** the old or the new `E` is 1 — unlike `m`, `x`, `XH` and
+> `YH`, whose forcing follows the **new** `E` alone.
+
+So a native → emulation switch forces `SH`, and so does an emulation → native switch. That second half
+looks arbitrary from the vectors alone, and it was recorded as unexplained.
+
+**It is not unexplained.** Eyes & Lichty (§2.4) states the mechanism directly, p. 71:
+
+> While the emulation mode stack pointer register is only an eight-bit register, it can be thought of as
+> a sixteen-bit register with its high byte hard-wired to one, so that the emulation stack is always in
+> page one. When the 65802 is switched from emulation to native mode, the sixteen-bit native mode stack
+> pointer assumes the same value the emulation mode stack pointer has been pointing to — a page one
+> address.
+
+That is the `oldE = 1` half exactly: leaving emulation mode, the newly-16-bit `S` takes the page-one
+value the 8-bit emulation pointer was standing at, so `SH` reads `$01` on the way out. And p. 72 gives
+the other direction, entering emulation:
+
+> The stack is truncated from sixteen to eight bits, with its high byte forced to a one … Any value in
+> the high byte of the stack pointer register is permanently lost.
+
+The two halves are one mechanism seen from either side, not two rules. Measurement and primary source
+agree, which is the strongest position a claim in this document can be in — and it is worth noting that
+the book, wrong twice in §3, is right here and is the only source that explains it.
+
+**Contrast with `m`, `x`, `XH`, `YH`**, whose forcing follows the new `E` alone: those live in the
+processor status register and the index registers, and nothing about them survives a mode change the way
+a stack address does. Do not generalise `SH`'s rule to them; the vectors disagree, and so does the book.
