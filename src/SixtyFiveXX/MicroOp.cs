@@ -369,6 +369,146 @@ internal enum MicroOp : byte
     /// across <c>$C2</c> and <c>$E2</c>, both <c>.e</c> and <c>.n</c>.
     /// </summary>
     RepSepExec,
+
+    // Task 5: the seven direct-page addressing modes, built against research document §9's
+    // per-mode blocks. Task 6 reuses every one of these for the absolute, long and
+    // stack-relative family.
+
+    /// <summary>
+    /// The direct-page family's operand fetch: <c>DO</c>, the one-byte offset from <c>D</c> —
+    /// research document §9's "Direct" block, cycle 2 (address <c>PBR,PC+1</c>), and the
+    /// identical first operand cycle of every other direct-page mode in that section. Folds
+    /// <c>D</c> into the offset immediately, setting <c>_addr</c> to <c>(D + DO) &amp; $FFFF</c>
+    /// — confined to bank 0 — rather than carrying the bare byte forward, since every later
+    /// cycle in every mode reads <c>_addr</c> as the direct-page address already formed. Skips
+    /// the following <see cref="DirectPagePenalty"/> slot when <c>DL == $00</c> — datasheet
+    /// Note 2 — by advancing <c>_mpc</c> an extra step, the idiom
+    /// <see cref="ReadPageCrossCmosArith"/> already uses to skip <see cref="BcdExtra"/>.
+    /// </summary>
+    FetchDpOffset,
+
+    /// <summary>
+    /// The direct-page penalty: an internal cycle at the offset byte's own address (<c>PC - 1</c>
+    /// by the time this runs, mirroring <see cref="RepSepExec"/>'s own re-derivation), taken
+    /// only when <see cref="FetchDpOffset"/> did not skip it — i.e. <c>DL != $00</c>. Research
+    /// document §9, every direct-page block's "2a (2)" row.
+    /// </summary>
+    DirectPagePenalty,
+
+    /// <summary>
+    /// The unconditional indexing cycle <c>dp,X</c> and <c>(dp,X)</c> share: an internal cycle
+    /// at the offset byte's own address, then <c>X</c> folded into <c>_addr</c>. Research
+    /// document §9's "Direct,X" cycle 3 and "(Direct,X)" cycle 3, both unconditional — unlike
+    /// the 6502's <see cref="ZpIndexX"/>, which performs a real dummy read at the unindexed
+    /// address rather than an internal cycle. In emulation mode with <c>DL == $00</c> the low
+    /// byte wraps within the page, keeping <c>DH</c> fixed — research document §7, quoting
+    /// Clark's appendix: "the DH register need not be zero" — instead of the plain 16-bit add a
+    /// non-wrapping index would need.
+    /// </summary>
+    DirectPageIndexX,
+
+    /// <summary>
+    /// The low byte of an indirect direct-page pointer: <c>ptr = _addr</c> (the direct-page
+    /// address <see cref="FetchDpOffset"/>, and for the indexed form
+    /// <see cref="DirectPageIndexX"/>, already formed); <c>tmp = Read(ptr)</c>. Shared by every
+    /// indirect mode in this family — two-byte pointers (<c>(dp)</c>, <c>(dp,X)</c>,
+    /// <c>(dp),Y</c>) and three-byte ones (<c>[dp]</c>, <c>[dp],Y</c>) alike, since the first
+    /// pointer byte is read identically either way. Research document §9's "(Direct,X)" cycle 4,
+    /// "(Direct)"/"(Direct),Y" cycle 3, and "[Direct]"/"[Direct],Y" cycle 3.
+    /// </summary>
+    PtrReadLo816,
+
+    /// <summary>
+    /// The high byte of a two-byte direct-page pointer whose data is addressed through
+    /// <c>DBR</c>: reads at <c>ptr + 1</c>, confined to bank 0 (wrapping at the bank boundary,
+    /// not a page boundary — research document §7), then sets <c>_addr</c> to <c>DBR,AA</c>.
+    /// Used by <c>(dp)</c> and <c>(dp,X)</c> — research document §9's "(Direct)" cycle 4 and
+    /// "(Direct,X)" cycle 5. <c>(dp),Y</c> uses <see cref="DpPtrReadHiY"/> instead, which folds
+    /// in the index.
+    /// </summary>
+    DpPtrReadHi,
+
+    /// <summary>
+    /// <c>(dp),Y</c>'s pointer high byte: as <see cref="DpPtrReadHi"/>, but immediately forms
+    /// the mis-indexed intermediate address — <c>DBR,AAH,AAL+YL</c>, research document §9's
+    /// "(Direct),Y" cycle 4a — and records whether the low-byte add crossed a page, so the
+    /// following <see cref="IndexDirectPageIndirectY"/> slot knows both what address to drive if
+    /// taken and whether to be taken at all. Stashes the pointer's own unindexed 16-bit value in
+    /// <c>_ptr</c> for that micro-op to form the true address from. Skips
+    /// <see cref="IndexDirectPageIndirectY"/> for <c>LDA</c> when datasheet Note 4's condition is
+    /// not met — no page cross, and <c>x = 1</c> — by advancing <c>_mpc</c>; never skips it for
+    /// <c>STA</c>, which pays the cycle unconditionally ("or write").
+    /// </summary>
+    DpPtrReadHiY,
+
+    /// <summary>
+    /// <c>(dp),Y</c>'s indexing cycle: an internal cycle at the mis-indexed address
+    /// <see cref="DpPtrReadHiY"/> formed, then <c>_addr</c> is replaced by the true address —
+    /// the unindexed pointer plus the full-width index, which may carry into the next bank
+    /// (research document §7: not a confined mode). Only reached when datasheet Note 4's
+    /// condition holds for a read; see <see cref="DpPtrReadHiY"/> for how that is decided
+    /// without spending a cycle on the check. Research document §9, "(Direct),Y" cycle 4a.
+    /// </summary>
+    IndexDirectPageIndirectY,
+
+    /// <summary>
+    /// The middle byte of a three-byte direct-page pointer — <c>AAH</c> — read at
+    /// <c>ptr + 1</c>, bank-0 confined. Stashes the 16-bit <c>AAH:AAL</c> pair in <c>_addr</c>
+    /// as scratch; the bank byte has not been read yet. Research document §9, "[Direct]" cycle
+    /// 4, shared with "[Direct],Y".
+    /// </summary>
+    LongPtrReadMid,
+
+    /// <summary>
+    /// The pointer's own bank byte — <c>AAB</c> — read at <c>ptr + 2</c>, bank-0 confined; then
+    /// combined with the 16-bit value <see cref="LongPtrReadMid"/> stashed to form the final
+    /// 24-bit address. Unlike every other pointer form in this family, the data bank comes from
+    /// the pointer itself, not <c>DBR</c>. Research document §9, "[Direct]" cycle 5.
+    /// </summary>
+    LongPtrReadHi,
+
+    /// <summary>
+    /// <see cref="LongPtrReadHi"/> for <c>[dp],Y</c>: reads <c>AAB</c>, then adds the full-width
+    /// <c>Y</c> to the combined 24-bit address in the same cycle — no separate indexing cycle
+    /// exists for this mode. Research document §9's "[Direct],Y" section states outright: "No
+    /// indexing cycle at all", which is why this mode's cycle count matches <c>[dp]</c>'s
+    /// exactly despite the extra addition — the add is free, folded into a cycle that already
+    /// exists rather than spending one on a page-cross fixup the 24-bit add never needs.
+    /// </summary>
+    LongPtrReadHiY,
+
+    /// <summary>
+    /// The low byte of a direct-page family read: <c>data = Read(_addr)</c>. When <c>M</c>
+    /// selects 8 bits, runs the operation and ends the instruction there, skipping
+    /// <see cref="ReadExecHigh816"/> entirely — the mechanism by which the second cycle is
+    /// "skipped by the low-byte micro-op ending the instruction". When <c>M</c> selects 16 bits,
+    /// leaves the operation for <see cref="ReadExecHigh816"/> to run once the high byte is in
+    /// hand. Every direct-page mode's final read cycle — research document §9, each block's
+    /// "Data Low" row.
+    /// </summary>
+    ReadExec816,
+
+    /// <summary>
+    /// The high byte of a 16-bit direct-page family read: reads at the bank-preserved
+    /// <c>_addr + 1</c> (research document §9's "+1" address family — same bank, low 16 bits
+    /// wrapped), combines it with the byte <see cref="ReadExec816"/> already read, and runs the
+    /// operation. Only reached when <c>M</c> selects 16 bits. Every direct-page mode's "Data
+    /// High" row, note (1): "Add 1 cycle for M=0".
+    /// </summary>
+    ReadExecHigh816,
+
+    /// <summary>
+    /// The low byte of a direct-page family write: runs the operation to produce the value,
+    /// then <c>Write(_addr, ...)</c>. As <see cref="ReadExec816"/>, 8-bit width ends the
+    /// instruction here; 16-bit width leaves the high byte for <see cref="ExecWriteHigh816"/>.
+    /// </summary>
+    ExecWrite816,
+
+    /// <summary>
+    /// The high byte of a 16-bit direct-page family write, at the same bank-preserved <c>+1</c>
+    /// address <see cref="ReadExecHigh816"/> reads. Only reached when <c>M</c> selects 16 bits.
+    /// </summary>
+    ExecWriteHigh816,
 }
 
 /// <summary>
@@ -477,6 +617,7 @@ internal static class MicroOps
                      MicroOp.PushPch, MicroOp.PushPcl, MicroOp.Push,
                      MicroOp.PushPBrk, MicroOp.PushPInt,
                      MicroOp.PushPBrkCmos, MicroOp.PushPIntCmos,
+                     MicroOp.ExecWrite816, MicroOp.ExecWriteHigh816,
                  })
         {
             writes[(int)op] = true;
@@ -522,7 +663,7 @@ internal static class MicroOps
                      MicroOp.ImmExecCmosArith, MicroOp.BitBranchFetch,
                      MicroOp.BrkPad, MicroOp.IntDummy,
                      MicroOp.WaiHold, MicroOp.StpHold,
-                     MicroOp.RepSepOperand,
+                     MicroOp.RepSepOperand, MicroOp.FetchDpOffset,
                  })
         {
             pins[(int)op] = BusPins.Vpa;
@@ -544,6 +685,10 @@ internal static class MicroOps
                      MicroOp.PullP, MicroOp.Push, MicroOp.Pull,
                      MicroOp.PushPBrk, MicroOp.PushPInt, MicroOp.PushPBrkCmos, MicroOp.PushPIntCmos,
                      MicroOp.JamHold,
+                     MicroOp.PtrReadLo816, MicroOp.DpPtrReadHi, MicroOp.DpPtrReadHiY,
+                     MicroOp.LongPtrReadMid, MicroOp.LongPtrReadHi, MicroOp.LongPtrReadHiY,
+                     MicroOp.ReadExec816, MicroOp.ReadExecHigh816,
+                     MicroOp.ExecWrite816, MicroOp.ExecWriteHigh816,
                  })
         {
             pins[(int)op] = BusPins.Vda;
@@ -577,6 +722,10 @@ internal static class MicroOps
     /// it genuinely drives neither pin — a real 65816 internal cycle, per research document §9.
     /// <see cref="MicroOp.RepSepExec"/> is the second, for the same reason — see its own remarks
     /// for why VDA is 0 there despite Note 1 stating only VPA outright.
+    /// <see cref="MicroOp.DirectPagePenalty"/>, <see cref="MicroOp.DirectPageIndexX"/> and
+    /// <see cref="MicroOp.IndexDirectPageIndirectY"/> are task 5's three — every one of them is
+    /// an <c>IO</c> row in research document §9's direct-page blocks, driving an address with no
+    /// memory access at all, the same shape as the first two.
     /// </summary>
     private static bool[] BuildInternalCycleTable()
     {
@@ -585,6 +734,7 @@ internal static class MicroOps
         foreach (var op in new[]
                  {
                      MicroOp.End, MicroOp.Unimplemented816, MicroOp.ImpliedExec816, MicroOp.RepSepExec,
+                     MicroOp.DirectPagePenalty, MicroOp.DirectPageIndexX, MicroOp.IndexDirectPageIndirectY,
                  })
         {
             internalCycles[(int)op] = true;

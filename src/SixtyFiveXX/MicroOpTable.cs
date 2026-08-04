@@ -357,13 +357,14 @@ internal sealed class MicroOpTable
     /// <remarks>
     /// Task 3 landed the harness and the first opcode: <c>XCE</c>'s real two-cycle sequence —
     /// a fetch (implicit) plus <see cref="MicroOp.ImpliedExec816"/>'s internal cycle, research
-    /// document §9 row 19a. Task 4 adds <c>REP</c>/<c>SEP</c>'s real three-cycle sequence — a
+    /// document §9 row 19a. Task 4 added <c>REP</c>/<c>SEP</c>'s real three-cycle sequence — a
     /// fetch, <see cref="MicroOp.RepSepOperand"/>, then <see cref="MicroOp.RepSepExec"/>'s
-    /// internal cycle, §9's "Immediate, and REP/SEP". The remaining 28 defined opcodes (LDA
-    /// and STA's fourteen forms each) still emit nothing: a defined opcode with an empty
-    /// sequence ends after its fetch cycle, which is silently wrong for those but was this
-    /// task's placeholder state and stays that way until tasks 5-6 fill in their cycle-by-cycle
-    /// sequences from research document §9.
+    /// internal cycle, §9's "Immediate, and REP/SEP". Task 5 adds LDA/STA's seven direct-page
+    /// forms via <see cref="EmitDirectPage816"/> — the first place emission genuinely depends
+    /// on <c>info.Mode</c> rather than <c>info.Operation</c> alone, which is why that method
+    /// takes the whole descriptor and switches on the mode instead of being folded into the
+    /// <c>if</c> chain here. LDA/STA's remaining eight forms (absolute, long, stack-relative,
+    /// immediate) still emit nothing — task 6's job.
     /// </remarks>
     private static void Emit816(List<MicroOp> ops, OpcodeInfo info)
     {
@@ -371,6 +372,74 @@ internal sealed class MicroOpTable
 
         if (info.Operation is Op.Rep or Op.Sep)
             ops.AddRange([MicroOp.RepSepOperand, MicroOp.RepSepExec]);
+
+        if (info.Operation is Op.Lda or Op.Sta)
+            EmitDirectPage816(ops, info);
+    }
+
+    /// <summary>
+    /// Task 5's slice of <see cref="Emit816"/>: the seven direct-page addressing modes, built
+    /// directly against research document §9's per-mode blocks. <c>info.Mode</c> drives the
+    /// addressing prefix; <c>info.Access</c> (<c>LDA</c> reads, <c>STA</c> writes) drives which
+    /// pair of low/high access micro-ops closes the sequence — <see cref="MicroOp.ReadExec816"/>
+    /// and <see cref="MicroOp.ReadExecHigh816"/>, or <see cref="MicroOp.ExecWrite816"/> and
+    /// <see cref="MicroOp.ExecWriteHigh816"/>. Modes outside this slice fall through the
+    /// <c>switch</c> and emit nothing, the same placeholder state every opcode had before this
+    /// task — task 6's absolute, long, stack-relative and immediate forms land there.
+    /// </summary>
+    private static void EmitDirectPage816(List<MicroOp> ops, OpcodeInfo info)
+    {
+        switch (info.Mode)
+        {
+            case AddrMode.DirectPage:
+                ops.AddRange([MicroOp.FetchDpOffset, MicroOp.DirectPagePenalty]);
+                break;
+
+            case AddrMode.DirectPageX:
+                ops.AddRange([MicroOp.FetchDpOffset, MicroOp.DirectPagePenalty, MicroOp.DirectPageIndexX]);
+                break;
+
+            case AddrMode.DirectPageIndirect:
+                ops.AddRange([
+                    MicroOp.FetchDpOffset, MicroOp.DirectPagePenalty,
+                    MicroOp.PtrReadLo816, MicroOp.DpPtrReadHi,
+                ]);
+                break;
+
+            case AddrMode.DirectPageIndexedIndirectX:
+                ops.AddRange([
+                    MicroOp.FetchDpOffset, MicroOp.DirectPagePenalty, MicroOp.DirectPageIndexX,
+                    MicroOp.PtrReadLo816, MicroOp.DpPtrReadHi,
+                ]);
+                break;
+
+            case AddrMode.DirectPageIndirectY:
+                ops.AddRange([
+                    MicroOp.FetchDpOffset, MicroOp.DirectPagePenalty,
+                    MicroOp.PtrReadLo816, MicroOp.DpPtrReadHiY, MicroOp.IndexDirectPageIndirectY,
+                ]);
+                break;
+
+            case AddrMode.DirectPageIndirectLong:
+                ops.AddRange([
+                    MicroOp.FetchDpOffset, MicroOp.DirectPagePenalty,
+                    MicroOp.PtrReadLo816, MicroOp.LongPtrReadMid, MicroOp.LongPtrReadHi,
+                ]);
+                break;
+
+            case AddrMode.DirectPageIndirectLongY:
+                ops.AddRange([
+                    MicroOp.FetchDpOffset, MicroOp.DirectPagePenalty,
+                    MicroOp.PtrReadLo816, MicroOp.LongPtrReadMid, MicroOp.LongPtrReadHiY,
+                ]);
+                break;
+
+            default:
+                return;   // Task 6's modes — absolute, long, stack-relative, immediate.
+        }
+
+        ops.Add(info.Access == Access.Write ? MicroOp.ExecWrite816 : MicroOp.ReadExec816);
+        ops.Add(info.Access == Access.Write ? MicroOp.ExecWriteHigh816 : MicroOp.ReadExecHigh816);
     }
 
     /// <summary>Emits the cycles that form the effective address, up to but excluding the access.</summary>

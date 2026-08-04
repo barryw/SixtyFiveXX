@@ -16,8 +16,17 @@ public sealed partial class Cpu<TBus, TVariant>
             case Op.Nop: break;
             case Op.NopRead: break;   // the read already happened; the value is discarded
 
-            // Loads
-            case Op.Lda: A8 = _data; SetZN(A8); break;
+            // Loads. Lda is width-aware for the 65816: in 8-bit mode (M=1, true for every
+            // 8-bit core as well as a native-mode 65816 with an 8-bit accumulator) it must
+            // touch only the low byte, preserving whatever sits in the high byte — the
+            // "hidden B accumulator" research document §2.4 describes, which a plain
+            // A8-assignment would clobber to $00. Harmless for the 8-bit cores: their high
+            // byte is always already $00 (no 8-bit-core opcode or test ever sets it), so
+            // `_s.A & 0xFF00` is always 0 and this is byte-for-byte the old `A8 = _data`.
+            case Op.Lda:
+                if (_s.M) { _s.A = (ushort)((_s.A & 0xFF00) | _data); SetZN(_data); }
+                else { _s.A = _data16; SetZN16(_data16); }
+                break;
             case Op.Ldx: X8 = _data; SetZN(X8); break;
             case Op.Ldy: Y8 = _data; SetZN(Y8); break;
 
@@ -98,8 +107,14 @@ public sealed partial class Cpu<TBus, TVariant>
                 if (_s.XFlag) { _s.X &= 0x00FF; _s.Y &= 0x00FF; }
                 break;
 
-            // Stores. The value lands in _data, which the writing micro-op then commits.
-            case Op.Sta: _data = A8; break;
+            // Stores. The value lands in _data (or, 65816 16-bit mode, _data16), which the
+            // writing micro-op then commits. Reading A8 for the 8-bit case needs no hidden-B
+            // guard the way Lda's write does: A8 already reads only the low byte, regardless
+            // of what the high byte holds.
+            case Op.Sta:
+                if (_s.M) _data = A8;
+                else _data16 = _s.A;
+                break;
             case Op.Stx: _data = X8; break;
             case Op.Sty: _data = Y8; break;
             case Op.Stz: _data = 0; break;
@@ -263,6 +278,17 @@ public sealed partial class Cpu<TBus, TVariant>
     {
         _s.Z = value == 0;
         _s.N = (value & 0x80) != 0;
+    }
+
+    /// <summary>
+    /// Sets Z and N from a 16-bit result — the 65816 native-mode counterpart of
+    /// <see cref="SetZN"/>, used only when <c>M</c> selects a 16-bit accumulator.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void SetZN16(ushort value)
+    {
+        _s.Z = value == 0;
+        _s.N = (value & 0x8000) != 0;
     }
 
     /// <summary>Compares a register against <c>_data</c>, setting C, Z and N.</summary>

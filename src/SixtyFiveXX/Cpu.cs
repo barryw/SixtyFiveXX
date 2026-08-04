@@ -128,6 +128,15 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// <summary>The indirect pointer address, for the (zp,X) and (zp),Y modes.</summary>
     private int _ptr;
 
+    /// <summary>
+    /// The 65816's 16-bit access in progress. Holds the low byte, widened, once
+    /// <see cref="MicroOp.ReadExec816"/> or <see cref="MicroOp.ExecWrite816"/> has run; holds
+    /// the combined 16-bit value once <see cref="MicroOp.ReadExecHigh816"/> forms it or
+    /// <see cref="Op.Sta"/> populates it directly from <c>A</c>. 65816 only — no 8-bit-core
+    /// micro-op ever touches it.
+    /// </summary>
+    private ushort _data16;
+
     /// <summary>+0x100 or -0x100, applied by <see cref="MicroOp.BranchFixup"/>.</summary>
     private int _branchFix;
 
@@ -455,6 +464,28 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     private int PcAddress() => TVariant.Variant == CpuVariant.W65C816 ? (_s.PBR << 16) | _s.PC : _s.PC;
 
     /// <summary>
+    /// The <c>X</c> index register, narrowed to 8 bits when the <c>x</c> flag selects that
+    /// width. 65816 only — the five 8-bit cores have no <c>x</c> flag and no micro-op of theirs
+    /// calls this. Read-time narrowing rather than a continuously-enforced invariant on
+    /// <see cref="CpuState.X"/> itself, because a conformance vector's initial state is loaded
+    /// directly into <see cref="CpuState"/> and can carry a nonzero high byte alongside
+    /// <c>x = 1</c> without passing through any of the code paths — <c>XCE</c>, <c>REP</c>,
+    /// <c>SEP</c> — that normally force it to <c>$00</c>.
+    /// </summary>
+    private ushort IndexX() => _s.XFlag ? (byte)_s.X : _s.X;
+
+    /// <inheritdoc cref="IndexX"/>
+    private ushort IndexY() => _s.XFlag ? (byte)_s.Y : _s.Y;
+
+    /// <summary>
+    /// The address one past <c>_addr</c>, bank preserved and the low 16 bits wrapped at the bank
+    /// boundary — research document §9's "+1" address family (<c>DBR,AA+1</c>, <c>AAB,AA+1</c>,
+    /// <c>0,D+DO+1</c>, and so on: every one of them keeps the bank <c>_addr</c> already carries
+    /// and only rolls the 16-bit part over). 65816 only.
+    /// </summary>
+    private int HighByteAddress() => (_addr & 0xFF0000) | ((_addr + 1) & 0xFFFF);
+
+    /// <summary>
     /// Begins a hardware reset. The sequence takes seven cycles; drive it with
     /// <see cref="Step"/> or seven calls to <see cref="Tick"/>.
     /// </summary>
@@ -732,6 +763,99 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 // terms, which is PC-1 from here since RepSepOperand already advanced past it.
                 InternalCycle((_s.PBR << 16) | ((_s.PC - 1) & 0xFFFF));
                 Exec();
+                break;
+
+            case MicroOp.FetchDpOffset:
+            {
+                var dpOffset = ReadBus(PcAddress());
+                _s.PC++;
+                _addr = (_s.DP + dpOffset) & 0xFFFF;
+                if ((_s.DP & 0xFF) == 0) _mpc++;      // DL == $00: skip DirectPagePenalty
+                break;
+            }
+
+            case MicroOp.DirectPagePenalty:
+                InternalCycle((_s.PBR << 16) | ((_s.PC - 1) & 0xFFFF));
+                break;
+
+            case MicroOp.DirectPageIndexX:
+                InternalCycle((_s.PBR << 16) | ((_s.PC - 1) & 0xFFFF));
+                _addr = _s.E && (_s.DP & 0xFF) == 0
+                    ? (_addr & 0xFF00) | ((_addr + IndexX()) & 0xFF)
+                    : (_addr + IndexX()) & 0xFFFF;
+                break;
+
+            case MicroOp.PtrReadLo816:
+                _ptr = _addr;
+                _tmp = ReadBus(_ptr);
+                break;
+
+            case MicroOp.DpPtrReadHi:
+            {
+                var hi = ReadBus((_ptr & 0xFF0000) | ((_ptr + 1) & 0xFFFF));
+                _addr = (_s.DBR << 16) | (hi << 8) | _tmp;
+                break;
+            }
+
+            case MicroOp.DpPtrReadHiY:
+            {
+                var hi = ReadBus((_ptr & 0xFF0000) | ((_ptr + 1) & 0xFFFF));
+                var aa = (hi << 8) | _tmp;
+                var lo = (aa & 0xFF) + (IndexY() & 0xFF);
+                _pageCross = lo > 0xFF;
+                _addr = (_s.DBR << 16) | (aa & 0xFF00) | (lo & 0xFF);   // mis-indexed intermediate
+                _ptr = aa;                                              // unindexed pointer, for the fixup
+                if (_op == Op.Lda && !_pageCross && _s.XFlag) _mpc++;   // skip IndexDirectPageIndirectY
+                break;
+            }
+
+            case MicroOp.IndexDirectPageIndirectY:
+                InternalCycle(_addr);
+                _addr = (((_s.DBR << 16) | _ptr) + IndexY()) & 0xFFFFFF;
+                break;
+
+            case MicroOp.LongPtrReadMid:
+            {
+                var mid = ReadBus((_ptr & 0xFF0000) | ((_ptr + 1) & 0xFFFF));
+                _addr = (mid << 8) | _tmp;
+                break;
+            }
+
+            case MicroOp.LongPtrReadHi:
+            {
+                var bank = ReadBus((_ptr & 0xFF0000) | ((_ptr + 2) & 0xFFFF));
+                _addr = (bank << 16) | _addr;
+                break;
+            }
+
+            case MicroOp.LongPtrReadHiY:
+            {
+                var bank = ReadBus((_ptr & 0xFF0000) | ((_ptr + 2) & 0xFFFF));
+                _addr = (((bank << 16) | _addr) + IndexY()) & 0xFFFFFF;
+                break;
+            }
+
+            case MicroOp.ReadExec816:
+                _data = ReadBus(_addr);
+                if (_s.M) { Exec(); EndInstruction(); }
+                break;
+
+            case MicroOp.ReadExecHigh816:
+            {
+                var hi = ReadBus(HighByteAddress());
+                _data16 = (ushort)((hi << 8) | _data);
+                Exec();
+                break;
+            }
+
+            case MicroOp.ExecWrite816:
+                Exec();
+                if (_s.M) { WriteBus(_addr, _data); EndInstruction(); }
+                else WriteBus(_addr, (byte)_data16);
+                break;
+
+            case MicroOp.ExecWriteHigh816:
+                WriteBus(HighByteAddress(), (byte)(_data16 >> 8));
                 break;
 
             case MicroOp.FetchAddrLo:

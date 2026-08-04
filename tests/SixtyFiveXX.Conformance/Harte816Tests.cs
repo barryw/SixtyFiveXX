@@ -34,10 +34,13 @@ public class Harte816Tests(ITestOutputHelper output)
     /// tasks 5-6 — fails <see cref="ImplementedOpcodes_MatchesDeclaredCount"/> instead of just
     /// quietly running a smaller, still-green suite. The same protection
     /// <c>HarteTests{TVariant}.ExpectedImplementedOpcodes</c> gives the 8-bit cores. XCE was
-    /// the only one Task 3 landed (research document §9, row 19a); Task 4 adds REP and SEP
-    /// (§9's "Immediate, and REP/SEP"); tasks 5-6 raise this as they add LDA and STA.
+    /// the only one Task 3 landed (research document §9, row 19a); Task 4 added REP and SEP
+    /// (§9's "Immediate, and REP/SEP"); Task 5 adds LDA and STA's seven direct-page forms each
+    /// (research document §9's "Direct", "Direct,X", "(Direct,X)", "(Direct)", "(Direct),Y",
+    /// "[Direct]" and "[Direct],Y" blocks) — 3 + 14 = 17. Task 6 raises this again to 32 as it
+    /// adds LDA/STA's remaining absolute, long, stack-relative and immediate forms.
     /// </summary>
-    private static readonly int ExpectedImplementedOpcodes = 3;
+    private static readonly int ExpectedImplementedOpcodes = 17;
 
     /// <summary>
     /// Opcode bytes this phase has emitted a real <c>MicroOpTable.Emit816</c> sequence for —
