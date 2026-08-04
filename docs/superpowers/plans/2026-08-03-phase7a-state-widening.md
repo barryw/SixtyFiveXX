@@ -31,7 +31,7 @@ Every number below was measured on this machine today, not estimated.
 - **No test file needs editing.** 292 sites across `tests/` and `bench/` reference `State.A`/`X`/`Y`/`S`, and **all of them still compile.** `Assert.Equal(0x42, cpu.State.A)` infers `T = int` whether the property is `byte` or `ushort`, so the assertions are unaffected. Do not pre-emptively "fix" test files.
 - ***** The stack-pointer wrap is a real hazard, not a theoretical one. ***** Bypassing the shim in one micro-op (`MicroOp.Push`, using `_s.S--` directly) and pushing with `S = $00` yields `S = 65535` instead of `255`. The existing suite catches it — but with **exactly one failing test out of 442**, which is thin cover for the single most dangerous line in this phase. Hence the dedicated characterisation test in Task 1.
 - **No test asserts on `CpuState.ToString()`.** The format change is therefore additive coverage, not a test update.
-- **Baseline throughput is 137.6 MHz** simulated (`net10.0`, Release, 50 M cycles in 363 ms), against a 50 MHz floor in `PerformanceGateTests`. That is the number Task 3 compares against.
+- **Throughput is ~110 MHz** simulated (`net10.0`, Release, 50 M cycles) against a 50 MHz floor. *** Do not compare against a single stored figure. *** This gate is contention-sensitive — that is why CI excludes it — and an early idle-machine run read 137.6 MHz while every later run under load read 106–117 MHz. Task 3 must rebuild the pre-change baseline and interleave the two run-for-run; comparing a fresh median against a stale reading manufactures a regression that is not there.
 
 ## File Structure
 
@@ -550,7 +550,7 @@ on FlatBus and RefBus so the call does not box."
 Run: `dotnet test tests/SixtyFiveXX.Tests -c Release -f net10.0 --filter "Category=Performance" --logger "console;verbosity=detailed"`
 Expected: PASS, with a line of the form `NNN.N MHz simulated (NNN ms).`
 
-- [ ] **Step 2: Compare against the baseline.** The pre-widening figure measured on this machine is **137.6 MHz** (`net10.0`, Release, 50 M cycles in 363 ms), against the 50 MHz floor.
+- [ ] **Step 2: Build a fresh baseline and interleave.** Do **not** compare against a stored number. Create a worktree at the commit before this phase's first code change (`git worktree add /tmp/sfx-baseline <commit>`), then run the gate alternately — baseline, widened, baseline, widened — at least three pairs, and compare medians. Interleaving cancels machine drift; a median-vs-single-reading comparison does not. Measured 2026-08-04 this way: 110.7 MHz baseline vs 110.2 MHz widened, no detectable difference.
 
   - Within noise of 137.6 MHz, or above → the trade holds. Record it and continue to 7b.
   - A regression that still clears the floor → record the delta, continue, and raise it explicitly rather than letting it pass silently.
