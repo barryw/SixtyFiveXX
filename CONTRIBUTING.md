@@ -89,10 +89,15 @@ upstream. Only assembler directives differ. **Do not edit it.**
 
 ## Releasing
 
-**Any push to `main` without `[skip ci]` in the commit *subject* cuts a public
+**Any push to `main` without `[skip ci]` in the commit message cuts a public
 release.** There is no separate release command and no manual approval step, so
-the marker is the only thing standing between a merge and nuget.org. Merge
-commits need it in the subject line, not the body.
+the marker is the only thing standing between a merge and nuget.org.
+
+**The marker is matched anywhere in the message, body included.** This is worth
+knowing in both directions. A merge commit that carries it only in the body
+still skips — but so does an ordinary commit that merely *mentions* the marker
+in prose, which silently produces no pipeline at all rather than a failed one.
+GitHub records the delivery as `204 No Content`; Woodpecker shows nothing.
 
 The pipeline runs on Woodpecker at `ci.barrywalker.io`. It expands
 `.woodpecker/woodpecker-template.yaml` — a data block, not a pipeline — through
