@@ -47,12 +47,26 @@ public static class KlausCache
             using var response = Http.GetAsync(url).GetAwaiter().GetResult();
             response.EnsureSuccessStatusCode();
 
-            var temp = destination + ".partial";
-            using (var file = File.Create(temp))
+            // Unique per writer, not a fixed ".partial". A multi-targeted `dotnet test`
+            // runs its frameworks concurrently against one cache directory: on a fixed
+            // path both writers race, one moves the file away and the other's move then
+            // fails on a name that no longer exists. The move is atomic and the content
+            // identical, so whichever lands last is still correct. Same reasoning, and
+            // the same code, as HarteCache.
+            var temp = $"{destination}.{Environment.ProcessId}-{Environment.CurrentManagedThreadId}.partial";
+            try
             {
-                response.Content.CopyToAsync(file).GetAwaiter().GetResult();
+                using (var file = File.Create(temp))
+                {
+                    response.Content.CopyToAsync(file).GetAwaiter().GetResult();
+                }
+                File.Move(temp, destination, overwrite: true);
             }
-            File.Move(temp, destination, overwrite: true);
+            catch
+            {
+                if (File.Exists(temp)) File.Delete(temp);
+                throw;
+            }
         }
         catch (Exception ex)
         {

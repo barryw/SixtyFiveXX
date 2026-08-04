@@ -73,9 +73,21 @@ public static class ViceCache
             var bytes = response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult();
 
             Directory.CreateDirectory(Path.GetDirectoryName(cached)!);
-            var temp = cached + ".partial";
-            File.WriteAllBytes(temp, bytes);
-            File.Move(temp, cached, overwrite: true);
+
+            // Unique per writer — see HarteCache and KlausCache. The frameworks of a
+            // multi-targeted `dotnet test` run concurrently against one cache directory,
+            // and a fixed temp name makes them race for it.
+            var temp = $"{cached}.{Environment.ProcessId}-{Environment.CurrentManagedThreadId}.partial";
+            try
+            {
+                File.WriteAllBytes(temp, bytes);
+                File.Move(temp, cached, overwrite: true);
+            }
+            catch
+            {
+                if (File.Exists(temp)) File.Delete(temp);
+                throw;
+            }
 
             return bytes;
         }
