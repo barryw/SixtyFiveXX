@@ -21,8 +21,9 @@ public interface IBus
     /// </summary>
     /// <remarks>
     /// Only the 65816 has these. On every earlier core each cycle is a real access — the
-    /// dummy reads are reads — so nothing else calls this, and the call is guarded by a
-    /// compile-time variant test so the JIT does not even emit it for them.
+    /// dummy reads are reads — so nothing calls this yet. The 65816 core, arriving in a
+    /// later phase, is intended to guard the call with a compile-time variant test so the
+    /// JIT does not emit it for cores without internal cycles.
     /// <para>
     /// Defaulted, so no existing bus breaks. A bus that models read side effects should
     /// implement it as a no-op — which is what the default does — and a bus that models the

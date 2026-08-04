@@ -207,8 +207,8 @@ public abstract class HarteTests<TVariant>(ITestOutputHelper output)
 
         Assert.True(same,
             $"{test.Name}: registers diverged.\n" +
-            $"  expected PC:{expected.Pc:X4} A:{expected.A:X2} X:{expected.X:X2} " +
-            $"Y:{expected.Y:X2} S:{expected.S:X2} P:{expected.P:X2}\n" +
+            $"  expected PC:{expected.Pc:X4} A:{expected.A:X4} X:{expected.X:X4} " +
+            $"Y:{expected.Y:X4} S:{expected.S:X4} P:{expected.P:X2}\n" +
             $"  actual   {actual}");
     }
 

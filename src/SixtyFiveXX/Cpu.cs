@@ -43,21 +43,28 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// shims say so once rather than scattering casts across two hundred use sites.
     /// <para>
     /// The setters assign the whole 16-bit field, which is correct here because these cores
-    /// never put anything in the high byte. The getters are what matter: <c>S--</c> through
+    /// never put anything in the high byte. The getters are what matter: <c>S8--</c> through
     /// this property wraps at 8 bits, as a 6502 stack pointer must, whereas <c>_s.S--</c> on
     /// the raw field takes $00 to $FFFF and pushes to the wrong address.
     /// </para>
+    /// <para>
+    /// Named with an explicit <c>8</c> suffix, rather than the bare register letter, so that
+    /// 65816 code sharing this <c>partial class</c> cannot assign a 16-bit value here by
+    /// accident: <c>A = someUshortValue</c> would silently truncate to 8 bits with no
+    /// compile error if this property were named <c>A</c>. The suffix makes that a
+    /// deliberate, visible choice instead of a typo.
+    /// </para>
     /// </remarks>
-    private byte A { get => (byte)_s.A; set => _s.A = value; }
+    private byte A8 { get => (byte)_s.A; set => _s.A = value; }
 
-    /// <inheritdoc cref="A"/>
-    private byte X { get => (byte)_s.X; set => _s.X = value; }
+    /// <inheritdoc cref="A8"/>
+    private byte X8 { get => (byte)_s.X; set => _s.X = value; }
 
-    /// <inheritdoc cref="A"/>
-    private byte Y { get => (byte)_s.Y; set => _s.Y = value; }
+    /// <inheritdoc cref="A8"/>
+    private byte Y8 { get => (byte)_s.Y; set => _s.Y = value; }
 
-    /// <inheritdoc cref="A"/>
-    private byte S { get => (byte)_s.S; set => _s.S = value; }
+    /// <inheritdoc cref="A8"/>
+    private byte S8 { get => (byte)_s.S; set => _s.S = value; }
 
     /// <summary>
     /// The 6510's on-chip registers. Unused by every other variant, where the accesses
@@ -510,10 +517,10 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// <summary>The value an unstable store will write, before the address fold-in.</summary>
     private byte UnstableStoreValue() => _op switch
     {
-        Op.Sha => (byte)(A & X & _storeHigh),
-        Op.Shx => (byte)(X & _storeHigh),
-        Op.Shy => (byte)(Y & _storeHigh),
-        Op.Tas => (byte)(A & X & _storeHigh),
+        Op.Sha => (byte)(A8 & X8 & _storeHigh),
+        Op.Shx => (byte)(X8 & _storeHigh),
+        Op.Shy => (byte)(Y8 & _storeHigh),
+        Op.Tas => (byte)(A8 & X8 & _storeHigh),
         _ => throw new InvalidOperationException($"{_op} is not an unstable store."),
     };
 
@@ -618,7 +625,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             {
                 var hi = ReadBus(_s.PC);
                 _s.PC++;
-                var lo = (_addr & 0xFF) + X;
+                var lo = (_addr & 0xFF) + X8;
                 _pageCross = lo > 0xFF;
                 _addr = (hi << 8) | (lo & 0xFF);
                 break;
@@ -628,7 +635,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             {
                 var hi = ReadBus(_s.PC);
                 _s.PC++;
-                var lo = (_addr & 0xFF) + Y;
+                var lo = (_addr & 0xFF) + Y8;
                 _pageCross = lo > 0xFF;
                 _addr = (hi << 8) | (lo & 0xFF);
                 break;
@@ -636,12 +643,12 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
 
             case MicroOp.ZpIndexX:
                 ReadBus(_addr);                      // dummy read at the unindexed address
-                _addr = (_addr + X) & 0xFF;         // page zero indexing wraps within the page
+                _addr = (_addr + X8) & 0xFF;         // page zero indexing wraps within the page
                 break;
 
             case MicroOp.ZpIndexY:
                 ReadBus(_addr);
-                _addr = (_addr + Y) & 0xFF;
+                _addr = (_addr + Y8) & 0xFF;
                 break;
 
             case MicroOp.ReadPageCross:
@@ -730,7 +737,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             case MicroOp.PtrReadHiY:
             {
                 var hi = ReadBus((_ptr + 1) & 0xFF);
-                var lo = _tmp + Y;
+                var lo = _tmp + Y8;
                 _pageCross = lo > 0xFF;
                 _addr = (hi << 8) | (lo & 0xFF);
                 break;
@@ -758,22 +765,22 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 break;
 
             case MicroOp.StackDummyRead:
-                ReadBus(0x0100 + S);
+                ReadBus(0x0100 + S8);
                 break;
 
             case MicroOp.StackDummyReadInc:
-                ReadBus(0x0100 + S);
-                S++;
+                ReadBus(0x0100 + S8);
+                S8++;
                 break;
 
             case MicroOp.PushPch:
-                WriteBus(0x0100 + S, (byte)(_s.PC >> 8));
-                S--;
+                WriteBus(0x0100 + S8, (byte)(_s.PC >> 8));
+                S8--;
                 break;
 
             case MicroOp.PushPcl:
-                WriteBus(0x0100 + S, (byte)_s.PC);
-                S--;
+                WriteBus(0x0100 + S8, (byte)_s.PC);
+                S8--;
                 break;
 
             // JMP absolute and JSR both finish by reading the high byte at PC and
@@ -841,16 +848,16 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 // past both operand bytes, so that is PC - 2. Its address does not depend
                 // on the indexing, so there is no page-cross penalty to account for.
                 ReadBus((_s.PC - 2) & 0xFFFF);
-                _addr = (_addr + X) & 0xFFFF;
+                _addr = (_addr + X8) & 0xFFFF;
                 break;
 
             case MicroOp.PullPcl:
-                _tmp = ReadBus(0x0100 + S);
-                S++;
+                _tmp = ReadBus(0x0100 + S8);
+                S8++;
                 break;
 
             case MicroOp.PullPch:
-                _s.PC = (ushort)((ReadBus(0x0100 + S) << 8) | _tmp);
+                _s.PC = (ushort)((ReadBus(0x0100 + S8) << 8) | _tmp);
                 break;
 
             case MicroOp.RtsFinish:
@@ -860,18 +867,18 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
 
             case MicroOp.PullP:
                 // B exists only in pushed copies of P; U always reads as set.
-                _s.P = (byte)((ReadBus(0x0100 + S) & ~Flag.B) | Flag.U);
-                S++;
+                _s.P = (byte)((ReadBus(0x0100 + S8) & ~Flag.B) | Flag.U);
+                S8++;
                 break;
 
             case MicroOp.Push:
                 Exec();
-                WriteBus(0x0100 + S, _data);
-                S--;
+                WriteBus(0x0100 + S8, _data);
+                S8--;
                 break;
 
             case MicroOp.Pull:
-                _data = ReadBus(0x0100 + S);
+                _data = ReadBus(0x0100 + S8);
                 Exec();
                 break;
 
@@ -912,8 +919,8 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                     _nmiPending = false;
                     _vector = NmiVector;
                 }
-                WriteBus(0x0100 + S, (byte)(_s.P | Flag.B | Flag.U));
-                S--;
+                WriteBus(0x0100 + S8, (byte)(_s.P | Flag.B | Flag.U));
+                S8--;
                 _s.I = true;
                 break;
 
@@ -932,8 +939,8 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                     _nmiPending = false;
                     _vector = NmiVector;
                 }
-                WriteBus(0x0100 + S, (byte)((_s.P | Flag.U) & ~Flag.B));
-                S--;
+                WriteBus(0x0100 + S8, (byte)((_s.P | Flag.U) & ~Flag.B));
+                S8--;
                 _s.I = true;
                 break;
 
@@ -948,8 +955,8 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 // restores it, while the handler itself runs with D clear. Clearing first
                 // would silently corrupt the restored flag on every CMOS BRK.
                 _vector = IrqVector;
-                WriteBus(0x0100 + S, (byte)(_s.P | Flag.B | Flag.U));
-                S--;
+                WriteBus(0x0100 + S8, (byte)(_s.P | Flag.B | Flag.U));
+                S8--;
                 _s.I = true;
                 _s.D = false;
                 break;
@@ -958,8 +965,8 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 // The CMOS hardware-interrupt push. As PushPBrkCmos: no hijack, and D
                 // cleared after the push. _vector is left alone for the same reason
                 // PushPInt leaves it — only the dispatcher knows IRQ from NMI.
-                WriteBus(0x0100 + S, (byte)((_s.P | Flag.U) & ~Flag.B));
-                S--;
+                WriteBus(0x0100 + S8, (byte)((_s.P | Flag.U) & ~Flag.B));
+                S8--;
                 _s.I = true;
                 _s.D = false;
                 break;
@@ -975,8 +982,8 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 break;
 
             case MicroOp.StackDummyReadDec:
-                ReadBus(0x0100 + S);
-                S--;
+                ReadBus(0x0100 + S8);
+                S8--;
                 break;
 
             case MicroOp.WaiHold:
