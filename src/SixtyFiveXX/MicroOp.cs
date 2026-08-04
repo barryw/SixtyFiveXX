@@ -332,6 +332,16 @@ internal enum MicroOp : byte
     /// interrupt work is what finally replaces every use of it.
     /// </summary>
     Unimplemented816,
+
+    /// <summary>
+    /// The 65816's implied-mode second cycle: an internal cycle at <c>PBR,PC</c> — no memory
+    /// access at all — then run the operation. Research document §9, row 19a: cycle 2 of
+    /// <c>XCE</c> (and every other implied 65816 instruction) drives <c>VDA=0 VPA=0</c>, which
+    /// is <see cref="IBus.Internal"/>, not the dummy read <see cref="ImpliedExec"/> performs
+    /// for the five 8-bit cores. <c>PC</c> already reflects the opcode fetch's increment, so
+    /// the address is simply <c>(PBR &lt;&lt; 16) | PC</c> with no further adjustment.
+    /// </summary>
+    ImpliedExec816,
 }
 
 /// <summary>
@@ -529,18 +539,20 @@ internal static class MicroOps
     }
 
     /// <summary>
-    /// The two micro-ops <see cref="PinsFor"/> legitimately classifies <see cref="BusPins.None"/>.
+    /// The three micro-ops <see cref="PinsFor"/> legitimately classifies <see cref="BusPins.None"/>.
     /// <see cref="MicroOp.End"/> consumes no cycle and is never dispatched to <c>Cpu.Execute</c>
     /// at all. <see cref="MicroOp.Unimplemented816"/> is a placeholder that throws
     /// <see cref="NotImplementedException"/> the moment it is reached, before driving any pin —
     /// <c>None</c> is therefore the honest recording of what it asserts (nothing, because it
     /// never gets that far), not a guess about what a future opcode in its slot will assert.
+    /// <see cref="MicroOp.ImpliedExec816"/> is the first micro-op that is <c>None</c> because
+    /// it genuinely drives neither pin — a real 65816 internal cycle, per research document §9.
     /// </summary>
     private static bool[] BuildInternalCycleTable()
     {
         var internalCycles = new bool[Enum.GetValues<MicroOp>().Length];
 
-        foreach (var op in new[] { MicroOp.End, MicroOp.Unimplemented816 })
+        foreach (var op in new[] { MicroOp.End, MicroOp.Unimplemented816, MicroOp.ImpliedExec816 })
         {
             internalCycles[(int)op] = true;
         }

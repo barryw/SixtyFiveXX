@@ -332,6 +332,16 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             // A fetch cycle does no polling of its own: it consults whatever _intPoll
             // was left holding by the instruction that just finished (see below), the
             // same instant real hardware samples during phase 2 of the penultimate cycle.
+            //
+            // KNOWN GAP, 65816 only: when _intPoll is set, FetchOpcode() below diverts into
+            // the interrupt-entry sequence instead of fetching an opcode, and that cycle is
+            // actually a discarded read at PC — VDA and VPA should not both be asserted
+            // there, unlike a real opcode fetch. Research document §9 covers only phase 7b's
+            // addressing-mode slice and has no interrupt rows, so the correct pin pair cannot
+            // be established from it today. Left as OpcodeFetchPins until phase 7d implements
+            // 65816 interrupts and can pin the right value down. The five 8-bit cores are
+            // unaffected: VDA/VPA do not exist there, and their opcode-fetch-vs-interrupt-entry
+            // pin behaviour has no equivalent gap.
             _lastPins = OpcodeFetchPins;
             FetchOpcode();
             return;
@@ -399,6 +409,28 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
         }
 
         _bus.Write(address, value);
+    }
+
+    /// <summary>
+    /// An internal-operation cycle: drives an address but performs no read or write. Only the
+    /// 65816 has these — research document §9's <c>IO</c> rows, modelled by
+    /// <see cref="IBus.Internal"/> — so every earlier core's <see cref="MicroOp"/> sequence
+    /// never reaches this method at all.
+    /// </summary>
+    /// <remarks>
+    /// The <c>_bus.Internal</c> call is guarded by a compile-time variant test, the same
+    /// technique <see cref="ReadBus"/> uses to fold away the 6510's port for every other core:
+    /// <see cref="IBus.Internal"/> is a default interface method, and a call through it on a
+    /// <c>struct</c> that does not override it is a constrained call that boxes — unacceptable
+    /// on this per-cycle path for the five 8-bit cores that never take it. Guarding with
+    /// <c>TVariant.Variant</c> lets the JIT see <c>if (false)</c> for those cores and emit
+    /// nothing, exactly as it already does for the port check above.
+    /// </remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void InternalCycle(int address)
+    {
+        _lastAddress = address;
+        if (TVariant.Variant == CpuVariant.W65C816) _bus.Internal(address);
     }
 
     /// <summary>True when the cycle about to run is a write. RDY cannot halt a write.</summary>
@@ -576,7 +608,12 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
         }
 
         var pc = _s.PC;
-        var opcode = ReadBus(pc);
+
+        // Bank-qualify the fetch address on the 65816: research document §9 shows every
+        // opcode fetch at "PBR,PC", not PC alone — a plain 65xx core has no PBR and always
+        // fetches from a flat 64 KB space, which this compile-time test folds away for those
+        // five cores exactly as ReadBus already does for the 6510's port.
+        var opcode = ReadBus(TVariant.Variant == CpuVariant.W65C816 ? (_s.PBR << 16) | pc : pc);
         _s.PC++;
 
         var entry = _entry[opcode];
@@ -638,6 +675,14 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
 
             case MicroOp.ImpliedDummy:
                 ReadBus(_s.PC);
+                break;
+
+            case MicroOp.ImpliedExec816:
+                // Internal cycle at PBR,PC — no memory access — then run the operation.
+                // PC already reflects the opcode fetch's increment, so no further adjustment
+                // is needed to reach research document §9's "PC+1".
+                InternalCycle((_s.PBR << 16) | _s.PC);
+                Exec();
                 break;
 
             case MicroOp.FetchAddrLo:

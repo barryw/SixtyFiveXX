@@ -38,6 +38,36 @@ public sealed partial class Cpu<TBus, TVariant>
             case Op.Sei: _s.I = true;  break;
             case Op.Clv: _s.V = false; break;
 
+            // 65816 mode control. XCE is the only instruction that changes E (research
+            // document §2.2, §6.10.4). When the swap results in emulation mode, force the
+            // invariants that mode holds continuously: m=1, x=1, XH/YH cleared (research
+            // document §7). S8's setter (Cpu.cs) only re-forces SH on an actual write to S
+            // — XCE writes E, not S, so that shim never fires here, and SH is forced
+            // directly instead, the same way Reset() already does it.
+            //
+            // SH's own condition is not "new E == 1" the way M/X/XH/YH's is: research §7
+            // states only that SH is forced "when the e flag is 1", without saying whether
+            // that means before or after XCE's own swap, and no other source resolves it.
+            // Measured exhaustively against all 20,000 SingleStepTests/65816 $FB vectors
+            // (both .e and .n): SH is forced to $01 whenever EITHER the old or the new E is
+            // 1, and passes through unforced only when both are 0 — 0 violations across
+            // every (oldE, newE) combination and every SH value each one produces. Because C
+            // and E are swapped, "old C or old E" and "new C or new E" are the same set, so
+            // testing (post-swap) C || E is equivalent to testing either side and is what is
+            // used below. SL is unaffected either way — confirmed unchanged across all
+            // 20,000 vectors.
+            case Op.Xce:
+                (_s.C, _s.E) = (_s.E, _s.C);
+                if (_s.C || _s.E) _s.S = (ushort)((_s.S & 0x00FF) | 0x0100);
+                if (_s.E)
+                {
+                    _s.M = true;
+                    _s.XFlag = true;
+                    _s.X &= 0x00FF;
+                    _s.Y &= 0x00FF;
+                }
+                break;
+
             // Stores. The value lands in _data, which the writing micro-op then commits.
             case Op.Sta: _data = A8; break;
             case Op.Stx: _data = X8; break;
