@@ -425,21 +425,47 @@ internal enum MicroOp : byte
     /// Used by <c>(dp)</c> and <c>(dp,X)</c> — research document §9's "(Direct)" cycle 4 and
     /// "(Direct,X)" cycle 5. <c>(dp),Y</c> uses <see cref="DpPtrReadHiY"/> instead, which folds
     /// in the index.
+    /// <para>
+    /// Code-review fix: this is one of the "old" indirect modes (present on the 65C02) — Clark
+    /// §5.1.1, verbatim: "Page boundary wrapping only occurs in emulation mode, and only for
+    /// 'old' instructions and addressing modes." So the <c>ptr + 1</c> read itself, not only the
+    /// index add <see cref="DirectPageIndexX"/> already guards, must wrap within the page when
+    /// <c>E == 1 &amp;&amp; DL == $00</c> — Clark's appendix: "LDA ($FF) uses a pointer whose low
+    /// byte is at $0000FF and whose high byte is at $000000 (like the 65C02)". Zero vector
+    /// coverage: no <c>.e</c> vector places a pointer at <c>DL == $00</c>, base <c>$xxFF</c>.
+    /// </para>
     /// </summary>
     DpPtrReadHi,
 
     /// <summary>
-    /// <c>(dp),Y</c>'s pointer high byte: as <see cref="DpPtrReadHi"/>, but immediately forms
-    /// the mis-indexed intermediate address — <c>DBR,AAH,AAL+YL</c>, research document §9's
-    /// "(Direct),Y" cycle 4a — and records whether the low-byte add crossed a page, so the
-    /// following <see cref="IndexDirectPageIndirectY"/> slot knows both what address to drive if
-    /// taken and whether to be taken at all. Stashes the pointer's own unindexed 16-bit value in
-    /// <c>_ptr</c> for that micro-op to form the true address from. Skips
-    /// <see cref="IndexDirectPageIndirectY"/> for <c>LDA</c> when datasheet Note 4's condition is
-    /// not met — no page cross, and <c>x = 1</c> — by advancing <c>_mpc</c>; never skips it for
-    /// <c>STA</c>, which pays the cycle unconditionally ("or write").
+    /// <c>(dp),Y</c>'s pointer high byte: as <see cref="DpPtrReadHi"/> — including the same
+    /// page-wrap condition — but immediately forms the mis-indexed intermediate address —
+    /// <c>DBR,AAH,AAL+YL</c>, research document §9's "(Direct),Y" cycle 4a — and records whether
+    /// the low-byte add crossed a page, so the following <see cref="IndexDirectPageIndirectY"/>
+    /// slot knows both what address to drive if taken and whether to be taken at all. Stashes
+    /// the pointer's own unindexed 16-bit value in <c>_ptr</c> for that micro-op to form the
+    /// true address from. Skips <see cref="IndexDirectPageIndirectY"/> when datasheet Note 4's
+    /// condition is not met — no page cross, and <c>x = 1</c>.
+    /// <para>
+    /// Read-only: <see cref="MicroOpTable"/> emits this for <c>LDA</c> and any other reading
+    /// opcode's <c>(dp),Y</c>; a writing opcode gets <see cref="DpPtrReadHiYWrite"/> instead,
+    /// which never skips. Code-review fix: the skip used to test <c>_op == Op.Lda</c> at run
+    /// time, which hard-codes one opcode and would misclassify every other reading opcode
+    /// phase 7c adds (<c>ADC</c>, <c>AND</c>, <c>CMP</c>, <c>EOR</c>, <c>ORA</c>, <c>SBC</c>) as
+    /// a write. <c>info.Access</c> is known at table-build time, so the split moved there
+    /// instead, which also drops the comparison from the per-cycle path entirely.
+    /// </para>
     /// </summary>
     DpPtrReadHiY,
+
+    /// <summary>
+    /// <see cref="DpPtrReadHiY"/> for a writing opcode's <c>(dp),Y</c> — <c>STA</c> today.
+    /// Identical address formation, but never skips <see cref="IndexDirectPageIndirectY"/>:
+    /// datasheet Note 4, "add 1 cycle for indexing across page boundaries, or write, or X=0" —
+    /// a write pays the indexing cycle unconditionally. See <see cref="DpPtrReadHiY"/>'s remarks
+    /// for why the split exists.
+    /// </summary>
+    DpPtrReadHiYWrite,
 
     /// <summary>
     /// <c>(dp),Y</c>'s indexing cycle: an internal cycle at the mis-indexed address
@@ -489,26 +515,60 @@ internal enum MicroOp : byte
     ReadExec816,
 
     /// <summary>
-    /// The high byte of a 16-bit direct-page family read: reads at the bank-preserved
-    /// <c>_addr + 1</c> (research document §9's "+1" address family — same bank, low 16 bits
-    /// wrapped), combines it with the byte <see cref="ReadExec816"/> already read, and runs the
-    /// operation. Only reached when <c>M</c> selects 16 bits. Every direct-page mode's "Data
-    /// High" row, note (1): "Add 1 cycle for M=0".
+    /// The high byte of a 16-bit direct-page family read, for the bank-0-confined forms only —
+    /// plain <c>dp</c> and <c>dp,X</c>, whose data access is <c>0,D+DO(+X)</c>. Reads at
+    /// <c>_addr + 1</c>, wrapping the low 16 bits within whichever bank <c>_addr</c> already
+    /// carries (always bank 0 here — Clark §5.1.2: the direct page is "confined to" bank 0),
+    /// combines it with the byte <see cref="ReadExec816"/> already read, and runs the operation.
+    /// Only reached when <c>M</c> selects 16 bits. Every direct-page mode's "Data High" row,
+    /// note (1): "Add 1 cycle for M=0".
+    /// <para>
+    /// Code-review fix: the five indirect direct-page forms are <em>not</em> bank-0-confined —
+    /// their data access goes through <c>DBR</c> or the pointer's own bank byte — and use
+    /// <see cref="ReadExecHigh816Carry"/> instead, which lets the <c>+1</c> carry into the next
+    /// bank. Splitting these was necessary because one shared "+1" address formula cannot serve
+    /// both families correctly; see <see cref="ReadExecHigh816Carry"/> for the citation.
+    /// </para>
     /// </summary>
     ReadExecHigh816,
 
     /// <summary>
+    /// <see cref="ReadExecHigh816"/> for the DBR-relative and long direct-page forms — every
+    /// indirect one: <c>(dp)</c>, <c>(dp,X)</c>, <c>(dp),Y</c>, <c>[dp]</c>, <c>[dp],Y</c>. Reads
+    /// at <c>_addr + 1</c> as a plain 24-bit add, so a low-16-bit overflow carries into the next
+    /// bank instead of wrapping within the current one.
+    /// <para>
+    /// Bruce Clark, "65C816 Opcodes" §5.2, Example 2, verbatim: "If the DBR is $12 and the m flag
+    /// is 0, then LDA $FFFF loads the low byte of the data from address $12FFFF, and the high
+    /// byte from address $130000" — and §5.1.2: "Otherwise, wrapping does not occur at bank
+    /// boundaries." Zero vector coverage: no <c>.n</c> vector places the low access at
+    /// <c>bank:$FFFF</c>, so nothing in the suite would have caught the bank-preserving formula
+    /// being used here too.
+    /// </para>
+    /// </summary>
+    ReadExecHigh816Carry,
+
+    /// <summary>
     /// The low byte of a direct-page family write: runs the operation to produce the value,
     /// then <c>Write(_addr, ...)</c>. As <see cref="ReadExec816"/>, 8-bit width ends the
-    /// instruction here; 16-bit width leaves the high byte for <see cref="ExecWriteHigh816"/>.
+    /// instruction here; 16-bit width leaves the high byte for <see cref="ExecWriteHigh816"/> or
+    /// <see cref="ExecWriteHigh816Carry"/>.
     /// </summary>
     ExecWrite816,
 
     /// <summary>
-    /// The high byte of a 16-bit direct-page family write, at the same bank-preserved <c>+1</c>
+    /// The high byte of a 16-bit direct-page family write, at the same bank-0-confined <c>+1</c>
     /// address <see cref="ReadExecHigh816"/> reads. Only reached when <c>M</c> selects 16 bits.
+    /// Plain <c>dp</c> and <c>dp,X</c> only — see <see cref="ReadExecHigh816"/>.
     /// </summary>
     ExecWriteHigh816,
+
+    /// <summary>
+    /// <see cref="ExecWriteHigh816"/> for the DBR-relative and long forms, at the same
+    /// bank-carrying <c>+1</c> address <see cref="ReadExecHigh816Carry"/> reads. See there for
+    /// the citation.
+    /// </summary>
+    ExecWriteHigh816Carry,
 }
 
 /// <summary>
@@ -617,7 +677,7 @@ internal static class MicroOps
                      MicroOp.PushPch, MicroOp.PushPcl, MicroOp.Push,
                      MicroOp.PushPBrk, MicroOp.PushPInt,
                      MicroOp.PushPBrkCmos, MicroOp.PushPIntCmos,
-                     MicroOp.ExecWrite816, MicroOp.ExecWriteHigh816,
+                     MicroOp.ExecWrite816, MicroOp.ExecWriteHigh816, MicroOp.ExecWriteHigh816Carry,
                  })
         {
             writes[(int)op] = true;
@@ -685,10 +745,10 @@ internal static class MicroOps
                      MicroOp.PullP, MicroOp.Push, MicroOp.Pull,
                      MicroOp.PushPBrk, MicroOp.PushPInt, MicroOp.PushPBrkCmos, MicroOp.PushPIntCmos,
                      MicroOp.JamHold,
-                     MicroOp.PtrReadLo816, MicroOp.DpPtrReadHi, MicroOp.DpPtrReadHiY,
+                     MicroOp.PtrReadLo816, MicroOp.DpPtrReadHi, MicroOp.DpPtrReadHiY, MicroOp.DpPtrReadHiYWrite,
                      MicroOp.LongPtrReadMid, MicroOp.LongPtrReadHi, MicroOp.LongPtrReadHiY,
-                     MicroOp.ReadExec816, MicroOp.ReadExecHigh816,
-                     MicroOp.ExecWrite816, MicroOp.ExecWriteHigh816,
+                     MicroOp.ReadExec816, MicroOp.ReadExecHigh816, MicroOp.ReadExecHigh816Carry,
+                     MicroOp.ExecWrite816, MicroOp.ExecWriteHigh816, MicroOp.ExecWriteHigh816Carry,
                  })
         {
             pins[(int)op] = BusPins.Vda;

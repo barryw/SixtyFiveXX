@@ -380,12 +380,13 @@ internal sealed class MicroOpTable
     /// <summary>
     /// Task 5's slice of <see cref="Emit816"/>: the seven direct-page addressing modes, built
     /// directly against research document §9's per-mode blocks. <c>info.Mode</c> drives the
-    /// addressing prefix; <c>info.Access</c> (<c>LDA</c> reads, <c>STA</c> writes) drives which
-    /// pair of low/high access micro-ops closes the sequence — <see cref="MicroOp.ReadExec816"/>
-    /// and <see cref="MicroOp.ReadExecHigh816"/>, or <see cref="MicroOp.ExecWrite816"/> and
-    /// <see cref="MicroOp.ExecWriteHigh816"/>. Modes outside this slice fall through the
-    /// <c>switch</c> and emit nothing, the same placeholder state every opcode had before this
-    /// task — task 6's absolute, long, stack-relative and immediate forms land there.
+    /// addressing prefix and, per the code-review fix below, which "+1" high-byte micro-op
+    /// closes the sequence; <c>info.Access</c> (<c>LDA</c> reads, <c>STA</c> writes) drives
+    /// which pair of low/high access micro-ops does — <see cref="MicroOp.ReadExec816"/> and a
+    /// read-high micro-op, or <see cref="MicroOp.ExecWrite816"/> and a write-high one. Modes
+    /// outside this slice fall through the <c>switch</c> and emit nothing, the same placeholder
+    /// state every opcode had before this task — task 6's absolute, long, stack-relative and
+    /// immediate forms land there.
     /// </summary>
     private static void EmitDirectPage816(List<MicroOp> ops, OpcodeInfo info)
     {
@@ -414,9 +415,14 @@ internal sealed class MicroOpTable
                 break;
 
             case AddrMode.DirectPageIndirectY:
+                // Code-review fix: which of DpPtrReadHiY (read, can skip the indexing cycle) or
+                // DpPtrReadHiYWrite (write, never skips) is selected here, at table-build time,
+                // from info.Access — not at run time from info.Operation. See MicroOp.DpPtrReadHiY.
                 ops.AddRange([
                     MicroOp.FetchDpOffset, MicroOp.DirectPagePenalty,
-                    MicroOp.PtrReadLo816, MicroOp.DpPtrReadHiY, MicroOp.IndexDirectPageIndirectY,
+                    MicroOp.PtrReadLo816,
+                    info.Access == Access.Write ? MicroOp.DpPtrReadHiYWrite : MicroOp.DpPtrReadHiY,
+                    MicroOp.IndexDirectPageIndirectY,
                 ]);
                 break;
 
@@ -438,8 +444,22 @@ internal sealed class MicroOpTable
                 return;   // Task 6's modes — absolute, long, stack-relative, immediate.
         }
 
-        ops.Add(info.Access == Access.Write ? MicroOp.ExecWrite816 : MicroOp.ReadExec816);
-        ops.Add(info.Access == Access.Write ? MicroOp.ExecWriteHigh816 : MicroOp.ReadExecHigh816);
+        // Code-review fix: only the two plain direct-page forms are bank-0-confined (their data
+        // access is 0,D+DO[+X]); every indirect form's final access goes through DBR or the
+        // pointer's own bank byte, and its "+1" must carry into the next bank rather than wrap —
+        // Clark §5.2 Example 2, cited at Cpu.HighByteAddressCarry.
+        var carry = info.Mode is not (AddrMode.DirectPage or AddrMode.DirectPageX);
+
+        if (info.Access == Access.Write)
+        {
+            ops.Add(MicroOp.ExecWrite816);
+            ops.Add(carry ? MicroOp.ExecWriteHigh816Carry : MicroOp.ExecWriteHigh816);
+        }
+        else
+        {
+            ops.Add(MicroOp.ReadExec816);
+            ops.Add(carry ? MicroOp.ReadExecHigh816Carry : MicroOp.ReadExecHigh816);
+        }
     }
 
     /// <summary>Emits the cycles that form the effective address, up to but excluding the access.</summary>

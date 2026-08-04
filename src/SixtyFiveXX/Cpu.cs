@@ -478,12 +478,92 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     private ushort IndexY() => _s.XFlag ? (byte)_s.Y : _s.Y;
 
     /// <summary>
-    /// The address one past <c>_addr</c>, bank preserved and the low 16 bits wrapped at the bank
-    /// boundary — research document §9's "+1" address family (<c>DBR,AA+1</c>, <c>AAB,AA+1</c>,
-    /// <c>0,D+DO+1</c>, and so on: every one of them keeps the bank <c>_addr</c> already carries
-    /// and only rolls the 16-bit part over). 65816 only.
+    /// The address one past <c>_addr</c> for the bank-0-confined families — plain direct page
+    /// (<c>0,D+DO+1</c>) and the stack. Bank preserved, low 16 bits wrapped: since <c>_addr</c>'s
+    /// bank is always 0 for these two families (Clark §5.1.2: both are "confined to" bank 0),
+    /// this is the same thing as wrapping within bank 0.
     /// </summary>
-    private int HighByteAddress() => (_addr & 0xFF0000) | ((_addr + 1) & 0xFFFF);
+    /// <remarks>
+    /// Code-review fix: a single "+1" formula used to serve every 65816 addressing mode, direct
+    /// and indirect alike. That is correct only for this bank-0-confined family; it is wrong for
+    /// every DBR-relative and long mode, whose "+1" must carry into the next bank instead — see
+    /// <see cref="HighByteAddressCarry"/>, which those modes use.
+    /// </remarks>
+    private int HighByteAddressBank0() => (_addr & 0xFF0000) | ((_addr + 1) & 0xFFFF);
+
+    /// <summary>
+    /// The address one past <c>_addr</c> for the DBR-relative and long families — every 65816
+    /// addressing mode outside <see cref="HighByteAddressBank0"/>'s two. A plain 24-bit add, so a
+    /// low-16-bit overflow carries into the next bank rather than wrapping within the current
+    /// one.
+    /// </summary>
+    /// <remarks>
+    /// Bruce Clark, "65C816 Opcodes" §5.2, Example 2, verbatim: "If the DBR is $12 and the m flag
+    /// is 0, then LDA $FFFF loads the low byte of the data from address $12FFFF, and the high
+    /// byte from address $130000" — and §5.1.2: "Otherwise, wrapping does not occur at bank
+    /// boundaries." No SingleStepTests vector places the low access at <c>bank:$FFFF</c> with
+    /// <c>m=0</c>, so this case has zero vector coverage; see
+    /// <c>docs/superpowers/research/2026-08-03-65816-reference-sources.md</c> §7/§9 and the task
+    /// 5 review that found the bank-preserving formula was being used here too.
+    /// </remarks>
+    private int HighByteAddressCarry() => (_addr + 1) & 0xFFFFFF;
+
+    /// <summary>
+    /// The address of a direct-page indirect pointer's own high byte — <c>ptr + 1</c>, confined
+    /// to bank 0 (the pointer itself always lives in bank 0: <see cref="MicroOp.FetchDpOffset"/>
+    /// forms <c>_ptr</c> as <c>(D + DO) &amp; 0xFFFF</c>). In emulation mode, when the low byte of
+    /// <c>D</c> is <c>$00</c>, the read wraps within the page instead of carrying into the next
+    /// one — the same condition <see cref="MicroOp.DirectPageIndexX"/> already applies to the
+    /// index add, applied here to the pointer's own <c>+1</c> read.
+    /// </summary>
+    /// <remarks>
+    /// Code-review fix. Clark's appendix, verbatim: "if the D register is $0000 (and the e flag
+    /// is 1), then LDA ($FF) uses a pointer whose low byte is at $0000FF and whose high byte is
+    /// at $000000 (like the 65C02), but PEI $FF pushes a 16-bit value whose low byte is at
+    /// $0000FF and whose high byte is at $000100" — so the pointer read wraps, but a "new"
+    /// instruction's does not. Clark §5.1.1 pins down which addressing modes this applies to:
+    /// "only for 'old' instructions and addressing modes, i.e. instructions and addressing modes
+    /// that are available on the 65C02." <c>(dp)</c>, <c>(dp,X)</c> and <c>(dp),Y</c> are old and
+    /// call this (via <see cref="MicroOp.DpPtrReadHi"/> and <see cref="MicroOp.DpPtrReadHiY"/>);
+    /// <c>[dp]</c> and <c>[dp],Y</c> are new to the 65816 and do not — their pointer reads
+    /// (<see cref="MicroOp.LongPtrReadMid"/>, <see cref="MicroOp.LongPtrReadHi"/>) never wrap, at
+    /// any byte of the three-byte pointer. Zero vector coverage: 0 hits across all ten indirect
+    /// <c>.e</c> files for <c>DL == $00</c> with a pointer base at <c>$xxFF</c>.
+    /// </remarks>
+    private int DirectPagePointerHighAddress() =>
+        _s.E && (_s.DP & 0xFF) == 0
+            ? (_ptr & 0xFF00) | ((_ptr + 1) & 0xFF)
+            : (_ptr & 0xFF0000) | ((_ptr + 1) & 0xFFFF);
+
+    /// <summary>
+    /// Shared address formation for <c>(dp)</c> and <c>(dp),Y</c>'s pointer high byte: reads the
+    /// byte at <see cref="DirectPagePointerHighAddress"/>, combines it with the low byte
+    /// <see cref="MicroOp.PtrReadLo816"/> already read, and returns the resulting 16-bit
+    /// <c>AAH:AAL</c> pair (unindexed). <see cref="MicroOp.DpPtrReadHi"/> uses the pair directly;
+    /// <see cref="MicroOp.DpPtrReadHiY"/> and <see cref="MicroOp.DpPtrReadHiYWrite"/> index it by
+    /// <c>Y</c> afterward.
+    /// </summary>
+    private int DirectPagePointerHigh()
+    {
+        var hi = ReadBus(DirectPagePointerHighAddress());
+        return (hi << 8) | _tmp;
+    }
+
+    /// <summary>
+    /// <c>(dp),Y</c>'s pointer high byte and mis-indexed intermediate address, shared by
+    /// <see cref="MicroOp.DpPtrReadHiY"/> (read) and <see cref="MicroOp.DpPtrReadHiYWrite"/>
+    /// (write) — everything except whether <see cref="MicroOp.IndexDirectPageIndirectY"/> can be
+    /// skipped afterward, which differs between the two and so is left to each case in
+    /// <see cref="Execute"/>.
+    /// </summary>
+    private void DirectPageIndirectYHigh()
+    {
+        var aa = DirectPagePointerHigh();
+        var lo = (aa & 0xFF) + (IndexY() & 0xFF);
+        _pageCross = lo > 0xFF;
+        _addr = (_s.DBR << 16) | (aa & 0xFF00) | (lo & 0xFF);   // mis-indexed intermediate
+        _ptr = aa;                                              // unindexed pointer, for the fixup
+    }
 
     /// <summary>
     /// Begins a hardware reset. The sequence takes seven cycles; drive it with
@@ -791,23 +871,21 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 break;
 
             case MicroOp.DpPtrReadHi:
-            {
-                var hi = ReadBus((_ptr & 0xFF0000) | ((_ptr + 1) & 0xFFFF));
-                _addr = (_s.DBR << 16) | (hi << 8) | _tmp;
+                _addr = (_s.DBR << 16) | DirectPagePointerHigh();
                 break;
-            }
 
             case MicroOp.DpPtrReadHiY:
-            {
-                var hi = ReadBus((_ptr & 0xFF0000) | ((_ptr + 1) & 0xFFFF));
-                var aa = (hi << 8) | _tmp;
-                var lo = (aa & 0xFF) + (IndexY() & 0xFF);
-                _pageCross = lo > 0xFF;
-                _addr = (_s.DBR << 16) | (aa & 0xFF00) | (lo & 0xFF);   // mis-indexed intermediate
-                _ptr = aa;                                              // unindexed pointer, for the fixup
-                if (_op == Op.Lda && !_pageCross && _s.XFlag) _mpc++;   // skip IndexDirectPageIndirectY
+                DirectPageIndirectYHigh();
+                // Read only: skip the indexing cycle when datasheet Note 4's condition is not
+                // met. info.Access decided this micro-op at table-build time — see
+                // MicroOp.DpPtrReadHiY's remarks — so no opcode comparison happens here.
+                if (!_pageCross && _s.XFlag) _mpc++;
                 break;
-            }
+
+            case MicroOp.DpPtrReadHiYWrite:
+                // A write pays the indexing cycle unconditionally ("or write") — never skips.
+                DirectPageIndirectYHigh();
+                break;
 
             case MicroOp.IndexDirectPageIndirectY:
                 InternalCycle(_addr);
@@ -842,7 +920,15 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
 
             case MicroOp.ReadExecHigh816:
             {
-                var hi = ReadBus(HighByteAddress());
+                var hi = ReadBus(HighByteAddressBank0());
+                _data16 = (ushort)((hi << 8) | _data);
+                Exec();
+                break;
+            }
+
+            case MicroOp.ReadExecHigh816Carry:
+            {
+                var hi = ReadBus(HighByteAddressCarry());
                 _data16 = (ushort)((hi << 8) | _data);
                 Exec();
                 break;
@@ -855,7 +941,11 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 break;
 
             case MicroOp.ExecWriteHigh816:
-                WriteBus(HighByteAddress(), (byte)(_data16 >> 8));
+                WriteBus(HighByteAddressBank0(), (byte)(_data16 >> 8));
+                break;
+
+            case MicroOp.ExecWriteHigh816Carry:
+                WriteBus(HighByteAddressCarry(), (byte)(_data16 >> 8));
                 break;
 
             case MicroOp.FetchAddrLo:

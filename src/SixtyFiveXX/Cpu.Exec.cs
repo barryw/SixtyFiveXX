@@ -23,8 +23,22 @@ public sealed partial class Cpu<TBus, TVariant>
             // A8-assignment would clobber to $00. Harmless for the 8-bit cores: their high
             // byte is always already $00 (no 8-bit-core opcode or test ever sets it), so
             // `_s.A & 0xFF00` is always 0 and this is byte-for-byte the old `A8 = _data`.
+            //
+            // The `TVariant.Variant != CpuVariant.W65C816 ||` guard is load-bearing, not
+            // defensive dead code: Flag.M (0x20) is the same bit as Flag.U, the NMOS/CMOS
+            // "unused" flag, which CpuState.P exposes publicly and which every core's own
+            // opcodes normally leave set. Without the guard, clearing bit 5 of P on a 6502
+            // (or any 65C02) makes this branch on `_s.M` alone and take the 16-bit path —
+            // reading `_data16`, a field no 8-bit-core micro-op ever writes — even though
+            // that core has no 16-bit mode at all. The guard is `TVariant.Variant` first, a
+            // compile-time constant per closed generic type, so for the five 8-bit cores it
+            // folds to `if (true)` and the whole test costs nothing; only the 65816 ever
+            // evaluates `_s.M`. Code-review finding, task 5: 0 of 10,000 6502/a5 vectors and
+            // 0 of 10,000 wdc65c02/a5 vectors have bit 5 clear, so conformance could not see
+            // this. See UnusedFlagBitRegressionTests.
             case Op.Lda:
-                if (_s.M) { _s.A = (ushort)((_s.A & 0xFF00) | _data); SetZN(_data); }
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.M)
+                { _s.A = (ushort)((_s.A & 0xFF00) | _data); SetZN(_data); }
                 else { _s.A = _data16; SetZN16(_data16); }
                 break;
             case Op.Ldx: X8 = _data; SetZN(X8); break;
@@ -111,8 +125,14 @@ public sealed partial class Cpu<TBus, TVariant>
             // writing micro-op then commits. Reading A8 for the 8-bit case needs no hidden-B
             // guard the way Lda's write does: A8 already reads only the low byte, regardless
             // of what the high byte holds.
+            //
+            // Same variant guard as Op.Lda, and for the same reason: without it, clearing
+            // Flag.U (== Flag.M, bit 5) on an 8-bit core sends this into the else branch,
+            // which sets _data16 and leaves _data untouched — so the write micro-op (ExecWrite,
+            // not the 65816's ExecWrite816) commits whatever _data last held instead of A's
+            // low byte. See UnusedFlagBitRegressionTests.
             case Op.Sta:
-                if (_s.M) _data = A8;
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.M) _data = A8;
                 else _data16 = _s.A;
                 break;
             case Op.Stx: _data = X8; break;
