@@ -321,6 +321,17 @@ internal enum MicroOp : byte
     /// held, so this micro-op repeats for as long as the clock runs.
     /// </summary>
     JamHold,
+
+    /// <summary>
+    /// Placeholder for every 65816 sequence slot no task has filled in yet — see
+    /// <c>MicroOpTable</c>'s <c>NotYet816</c> field, the only place this is used.
+    /// Deliberately has no <c>case</c> in <c>Cpu.Execute</c>'s switch, so reaching one falls
+    /// into that switch's own <c>default</c> arm and throws
+    /// <see cref="NotImplementedException"/> naming this member, instead of silently
+    /// running whichever NMOS or CMOS micro-op happened to occupy the slot. Phase 7d's
+    /// interrupt work is what finally replaces every use of it.
+    /// </summary>
+    Unimplemented816,
 }
 
 /// <summary>Classifies micro-ops by bus direction, for the RDY halt line.</summary>

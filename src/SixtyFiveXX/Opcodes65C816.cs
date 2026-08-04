@@ -57,11 +57,13 @@ internal static class Opcodes65C816
         Set(0x83, "STA", AddrMode.StackRelative,              Op.Sta, Access.Write);
         Set(0x93, "STA", AddrMode.StackRelativeIndirectY,     Op.Sta, Access.Write);
 
-        // Mode switch and status-bit instructions. REP/SEP share Immediate's operand shape —
-        // Emit816 is what will give their run-time width and cycle count, not the mode here.
-        Set(0xFB, "XCE", AddrMode.Implied,   Op.Xce, Access.None);
-        Set(0xC2, "REP", AddrMode.Immediate, Op.Rep, Access.Read);
-        Set(0xE2, "SEP", AddrMode.Immediate, Op.Sep, Access.Read);
+        // Mode switch and status-bit instructions. REP/SEP take AddrMode.ImmediateByte, not
+        // AddrMode.Immediate: their operand is always 8 bits and they are flat 3-cycle
+        // instructions regardless of m or x (datasheet Note 1, research document §5/§9) —
+        // unlike LDA #, whose operand width and cycle count both depend on m at run time.
+        Set(0xFB, "XCE", AddrMode.Implied,      Op.Xce, Access.None);
+        Set(0xC2, "REP", AddrMode.ImmediateByte, Op.Rep, Access.Read);
+        Set(0xE2, "SEP", AddrMode.ImmediateByte, Op.Sep, Access.Read);
 
         return t;
     }

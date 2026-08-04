@@ -86,6 +86,17 @@ internal enum AddrMode : byte
     // datasheet Table 5-7, and are quoted here rather than inferred.
 
     /// <summary>
+    /// An immediate operand that is always one byte, regardless of the <c>m</c>/<c>x</c>
+    /// width flags — WDC datasheet Table 5-7 Note 1, verbatim: "REP, SEP are always 3 cycle
+    /// instructions." Unlike <see cref="Immediate"/>, whose length and cycle count grow by
+    /// one when the relevant width flag is 0, <c>REP</c>/<c>SEP</c>'s operand is a fixed
+    /// 8-bit flag mask that never widens. A distinct mode rather than a per-<c>Op</c> test
+    /// inside the emitter, so the opcode table stays the single source of truth for both
+    /// operand length and cycle count.
+    /// </summary>
+    ImmediateByte,
+
+    /// <summary>
     /// <c>dp</c> — one-byte offset from <c>D</c>. Data is addressed at <c>0,D+DO</c>: always
     /// bank 0, never <c>DBR</c>.
     /// </summary>

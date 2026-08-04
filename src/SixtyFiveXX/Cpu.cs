@@ -35,17 +35,17 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     private CpuState _s;
 
     /// <summary>
-    /// The 8-bit view of the register file, used by every core before the 65816.
+    /// The 8-bit view of the register file.
     /// </summary>
     /// <remarks>
     /// <see cref="CpuState"/> is sized for the 65816, so its registers are 16 bits wide on
-    /// every variant. The cores that are 8-bit read and write only the low byte, and these
+    /// every variant. The five 8-bit cores read and write only the low byte, and these
     /// shims say so once rather than scattering casts across two hundred use sites.
     /// <para>
     /// The setters assign the whole 16-bit field, which is correct here because these cores
-    /// never put anything in the high byte. The getters are what matter: <c>S8--</c> through
-    /// this property wraps at 8 bits, as a 6502 stack pointer must, whereas <c>_s.S--</c> on
-    /// the raw field takes $00 to $FFFF and pushes to the wrong address.
+    /// never put anything in the high byte. The getters are what matter: <c>X8--</c> through
+    /// this property wraps at 8 bits, as an 8-bit register must, whereas <c>_s.X--</c> on
+    /// the raw field takes $00 to $FFFF instead.
     /// </para>
     /// <para>
     /// Named with an explicit <c>8</c> suffix, rather than the bare register letter, so that
@@ -53,6 +53,13 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// accident: <c>A = someUshortValue</c> would silently truncate to 8 bits with no
     /// compile error if this property were named <c>A</c>. The suffix makes that a
     /// deliberate, visible choice instead of a typo.
+    /// </para>
+    /// <para>
+    /// <see cref="S8"/> shares this shape but is documented on its own rather than through
+    /// <c>&lt;inheritdoc cref="A8"/&gt;</c>: its setter also enforces a 65816-only invariant,
+    /// and a sibling <c>remarks</c> tag on an inheriting member replaces the inherited one
+    /// instead of adding to it, which would otherwise silently drop this paragraph from
+    /// <see cref="S8"/>'s documentation.
     /// </para>
     /// </remarks>
     private byte A8 { get => (byte)_s.A; set => _s.A = value; }
@@ -63,8 +70,15 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// <inheritdoc cref="A8"/>
     private byte Y8 { get => (byte)_s.Y; set => _s.Y = value; }
 
-    /// <inheritdoc cref="A8"/>
+    /// <summary>
+    /// The 8-bit view of the stack pointer, used by every core.
+    /// </summary>
     /// <remarks>
+    /// As <see cref="A8"/>: <see cref="CpuState.S"/> is 16 bits wide on every variant, and
+    /// the 8-bit cores read and write only the low byte. <c>S8--</c> through this property
+    /// wraps at 8 bits, as a 6502 stack pointer must, whereas <c>_s.S--</c> on the raw field
+    /// takes $00 to $FFFF and pushes to the wrong address.
+    /// <para>
     /// On the 65816 in emulation mode, <c>SH</c> is not merely initialised to $01 at reset —
     /// it is a continuously held invariant; hardware forces it on every write to S for as
     /// long as <c>E</c> is set (research document §7). This setter is the one place every
@@ -72,6 +86,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// be enforced for every caller — including the reset sequence's own dummy stack reads —
     /// without a guard at each call site. Folds away for every other core, the same way
     /// <see cref="ReadBus"/> does for the 6510's port.
+    /// </para>
     /// </remarks>
     private byte S8
     {
@@ -358,7 +373,15 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// </summary>
     /// <remarks>
     /// Reset does not clear the registers. Real hardware leaves A, X, Y and most of P
-    /// undisturbed; it sets I, decrements S three times, and loads PC from $FFFC.
+    /// undisturbed; it sets I, decrements S three times, and loads PC from $FFFC. On the
+    /// 65816 this still holds for N, V, Z and A — the datasheet's reset initialisation table
+    /// (p. 15, §2.25) marks them "not initialized" alongside SL, XL and YL — but D is one of
+    /// the few flags the table does pin down, to 0, so <see cref="Reset"/> clears it
+    /// explicitly for that variant (see below). The table's last P-register column is
+    /// labelled <c>C/E</c> with value 1, ambiguous between "C is set" and "E is set" — and E
+    /// is already listed as 1 under Signals, so this implementation leaves C untouched. No
+    /// conformance vector covers reset, so nothing can arbitrate the ambiguity; research
+    /// document §10 records it.
     /// <para>
     /// It does discard a pending NMI. A reset runs a BRK on this die — RESG high
     /// substitutes BRK into the instruction register — and that BRK clears NMI stage 1
@@ -382,12 +405,16 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
         // $01 (research document §7); DBR, PBR and DP are not part of that invariant, but
         // reset clears them too. SH's forcing here is belt-and-braces: S8's setter (above)
         // re-forces it on every write for as long as E is set, which is what makes it survive
-        // the reset sequence's own dummy stack decrements below.
+        // the reset sequence's own dummy stack decrements below. D is cleared because the
+        // datasheet's reset table pins it to 0 (research document §10) — unlike N, V, Z and
+        // A, which the same table marks "not initialized" and which this deliberately leaves
+        // alone.
         if (TVariant.Variant == CpuVariant.W65C816)
         {
             _s.E = true;
             _s.M = true;
             _s.XFlag = true;
+            _s.D = false;
             _s.X &= 0x00FF;
             _s.Y &= 0x00FF;
             _s.S = (ushort)((_s.S & 0x00FF) | 0x0100);

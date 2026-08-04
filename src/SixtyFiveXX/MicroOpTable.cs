@@ -72,6 +72,24 @@ internal sealed class MicroOpTable
         MicroOp.RmwModifyRead, MicroOp.IndexFixupCmos,
         MicroOp.ReadPageCrossCmos, MicroOp.RmwPageCrossCmos);
 
+    /// <summary>
+    /// Placeholder sequences for the 65816. Six copies of <see cref="MicroOp.Unimplemented816"/>
+    /// rather than <see cref="Nmos"/>, because NMOS is not a harmless placeholder here — it is
+    /// wrong: the 65816 has its own native-mode BRK and IRQ vectors, and its read-modify-write
+    /// direction depends on <c>E</c> at run time (datasheet Note 17, research document §7),
+    /// neither of which a <see cref="Nmos"/> substitution would produce. This exists only so
+    /// the shared <c>IrqEntry</c> section built in the constructor below — which reads
+    /// <c>seq.IntPushP</c> unconditionally, for every variant, at table-build time — has
+    /// something to read for the 65816 too. Nothing in phase 7b reaches it: no BRK, IRQ or NMI
+    /// test runs against the 65816 yet, and <c>Reset()</c> drives its own path. The first cycle
+    /// that does reach it, once phase 7d wires up 65816 interrupts, throws
+    /// <see cref="NotImplementedException"/> naming <see cref="MicroOp.Unimplemented816"/>
+    /// instead of quietly running NMOS.
+    /// </summary>
+    private static readonly Sequences NotYet816 = new(
+        MicroOp.Unimplemented816, MicroOp.Unimplemented816, MicroOp.Unimplemented816,
+        MicroOp.Unimplemented816, MicroOp.Unimplemented816, MicroOp.Unimplemented816);
+
     /// <remarks>
     /// Every variant is listed rather than defaulting to <see cref="Nmos"/>, so this fails
     /// as loudly as <see cref="OpcodeTableFor"/> does. A silent default is the worse
@@ -85,13 +103,10 @@ internal sealed class MicroOpTable
         CpuVariant.Mos6502 or CpuVariant.Mos6510 => Nmos,
 
         // The 65816 has its own emission path — Emit816, below — which never reads these
-        // fields; Emit() dispatches to it before any of the six are consulted. This arm
-        // exists only so the constructor's shared IrqEntry section, built once for every
-        // variant, has something to read from IntPushP. Nothing in this phase's slice
-        // reaches that sequence: no BRK, IRQ or NMI test runs against the 65816 yet, and
-        // Reset() drives its own path (see Cpu.Reset()). Revisit when 65816 interrupts
-        // arrive in phase 7d.
-        CpuVariant.W65C816 => Nmos,
+        // fields; Emit() dispatches to it before any of the six are consulted. See
+        // NotYet816's own remarks for why this arm returns that rather than Nmos, and why
+        // it cannot simply be omitted.
+        CpuVariant.W65C816 => NotYet816,
 
         _ => throw new NotSupportedException($"No micro-op sequences for {variant} yet."),
     };
