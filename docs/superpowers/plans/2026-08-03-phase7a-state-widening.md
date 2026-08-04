@@ -243,7 +243,18 @@ public struct CpuState
 Run: `dotnet build src/SixtyFiveXX`
 Expected: **FAIL, ~184 errors**, all `CS1503`/`CS0266`, all in `Cpu.cs` and `Cpu.Exec.cs`. This is the documented halfway state. Continue.
 
-- [ ] **Step 9: Add the four byte shims to `src/SixtyFiveXX/Cpu.cs`,** immediately after the `private CpuState _s;` field.
+- [ ] **Step 9: Rename the register use sites, mechanically.** The pattern matches only the four bare register names — `_s.PC`, `_s.P` and the flag properties are untouched, and `_s.XFlag` does not match because there is no word boundary after its `X`.
+
+```bash
+perl -pi -e 's/\b_s\.([AXYS])\b/$1/g' src/SixtyFiveXX/Cpu.cs src/SixtyFiveXX/Cpu.Exec.cs
+```
+
+***** Do this BEFORE adding the shims, not after. ***** The pattern matches the shim bodies too, so
+running it on a file that already contains them rewrites `(byte)_s.A` into `(byte)A` and turns each shim
+into an infinitely self-recursive property. That compiles clean and stack-overflows at run time, which no
+build step catches. Found by the Task 1 implementer when the steps were ordered the other way round.
+
+- [ ] **Step 10: Add the four byte shims to `src/SixtyFiveXX/Cpu.cs`,** immediately after the `private CpuState _s;` field.
 
 ```csharp
     /// <summary>
@@ -275,12 +286,6 @@ Expected: **FAIL, ~184 errors**, all `CS1503`/`CS0266`, all in `Cpu.cs` and `Cpu
 **No `readonly get` here.** `readonly` members are a struct-only feature; `Cpu<TBus, TVariant>` is a
 class, and `readonly get` on it is a compile error. The accessors on `CpuState` in Task 1 *do* carry
 `readonly`, because that type is a struct — the two are not inconsistent.
-
-- [ ] **Step 10: Rename the register use sites, mechanically.** The pattern matches only the four bare register names — `_s.PC`, `_s.P` and the flag properties are untouched, and `_s.XFlag` does not match because there is no word boundary after its `X`.
-
-```bash
-perl -pi -e 's/\b_s\.([AXYS])\b/$1/g' src/SixtyFiveXX/Cpu.cs src/SixtyFiveXX/Cpu.Exec.cs
-```
 
 - [ ] **Step 11: Build the whole solution.**
 
