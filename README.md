@@ -61,10 +61,20 @@ existing `IBus` reference in `RefBus` and pay one virtual call per access.
 | 65C02 Rockwell | Complete | Harte SingleStepTests + Klaus 65C02 extended |
 | 65C02 WDC | Complete | Harte SingleStepTests + Klaus 65C02 extended |
 | 6510 | Complete | The 6502 suites for the inherited opcodes + VICE `cpuport/test1` for the `$00`/`$01` port |
-| 65816 | Phase 7 | — |
+| 65816 | Phase 7, in progress | — |
 
 IRQ and NMI (hardware-correct sampling, edge latching, and BRK/NMI hijacking), the RDY
 halt line, and the SO pin are complete, alongside `Reset()` and `BRK`.
+
+The 65816 is being built in five phases. The first has landed: `CpuState` now carries the
+65816's register file on **every** variant — 16-bit `A`, `X`, `Y` and `S`, plus `DP`,
+`DBR`, `PBR` and `E` — and `IBus` has an `Internal(int)` method for the cycles that drive
+an address without accessing memory, which no 8-bit core has. The 8-bit cores use the low
+bytes and are unchanged: the full conformance suite passes identically either side of the
+widening, and throughput is unaffected. No 65816 instruction is decodable yet.
+
+**This widening is a breaking change**: `CpuState.A`, `X`, `Y` and `S` are now `ushort`
+rather than `byte`.
 
 See [`docs/superpowers/specs/`](https://github.com/barryw/SixtyFiveXX/tree/main/docs/superpowers/specs)
 for the design and
