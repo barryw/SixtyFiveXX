@@ -299,15 +299,21 @@ implementation into a bug.
 
 That sentence puts the **break flag at bit 5**. Against it:
 
-- **Clark §4**, explicitly: *"P register bit 5: m flag (native mode) / P register bit 4: x flag (native
-  mode), b flag (emulation mode)"*.
-- **WDC datasheet §2.8**, explicitly: *"When an interrupt occurs during Emulation mode, the Break flag is
-  written to stack memory as bit 4 of the Processor Status Register."*
+- **Clark §4** is the only source here that speaks directly to *native-mode* placement, explicitly:
+  *"P register bit 5: m flag (native mode) / P register bit 4: x flag (native mode), b flag (emulation
+  mode)"*.
+- **WDC datasheet §2.8** does not address native mode at all, but pins down bit 4 in emulation mode,
+  explicitly: *"When an interrupt occurs during Emulation mode, the Break flag is written to stack memory
+  as bit 4 of the Processor Status Register."* That corroborates Clark's bit 4 by implication — it is the
+  same bit x is said to become in emulation mode — without itself naming bit 5's role.
 - **The 6502 itself**, and therefore this repository already: `Flag.B = 0x10` (bit 4), `Flag.U = 0x20`
-  (bit 5) in `CpuState.cs`, certified across 2.56 M vectors.
+  (bit 5) in `CpuState.cs`, certified across 2.56 M vectors. Same implication as the datasheet: break is
+  bit 4, consistent with Clark, but silent on where `m` sits in native mode.
 
-Three independent authorities and five phases of green vectors against one sentence. **Resolution:** bit 4
-is `x` in native mode and `b` in emulation mode; bit 5 is `m`. The book is in error here. The book's
+Clark states the native-mode assignment outright; the datasheet and this repository's own `Flag.B` support
+it by implication rather than stating `m` = bit 5 themselves — and five phases of green vectors against one
+sentence in the book. **Resolution:** bit 4 is `x` in native mode and `b` in emulation mode; bit 5 is `m`.
+The book is in error here. The book's
 p. 54 phrasing — *"the m and x flags replace the 6502's break and unused flags"* — pairs them in the same
 misleading order, so this is not a lone typo, and the whole passage should be distrusted on bit numbering.
 
@@ -363,9 +369,9 @@ passes its suite and cannot explain itself; the documentation is what turns a pa
 justified one. §3.2 is the case in point: the vectors would eventually have caught the wrong indexed-read
 timing, but only as a wall of mismatches with no stated cause.
 
-## 5. Cycle formulas for the phase 7a slice
+## 5. Cycle formulas for the phase 7b slice
 
-Taken verbatim from Clark §6.5 and §6.4.2/§6.10.4, since these are the exact opcodes phase 7a is gated on.
+Taken verbatim from Clark §6.5 and §6.4.2/§6.10.4, since these are the exact opcodes phase 7b is gated on.
 `m` and `x` are the flag values (0 or 1), `w` is 1 when `DL != $00` and 0 otherwise, `p` is 1 on a page
 cross. Cross-checked against the datasheet's Table 5-7 row shapes and its Notes 1, 2 and 4.
 
@@ -407,7 +413,7 @@ another emulator's source, and the project's existing position — *"No ROM imag
 source from other projects are included or distributed"* — is not affected by any source above. The
 SingleStepTests vectors are MIT and already consumed under that licence.
 
-## 7. What this settles for phase 7a
+## 7. What this settles for phase 7b
 
 | Question | Answer | Source |
 | --- | --- | --- |
@@ -428,19 +434,19 @@ SingleStepTests vectors are MIT and already consumed under that licence.
 | Native → emulation transition | `XH`/`YH` permanently lost; `SH` forced to `$01` and the old `SH` lost; `A` low byte stays in A, high byte survives as B. | 2.4, book pp. 71–72 |
 | Emulation → native transition | `m`/`x` forced to 1, so widths stay 8-bit; S keeps its page-one value; all else unchanged. | 2.4, book p. 71 |
 | Emulation-mode RMW direction | `RWB` low on **both** modify and write — NMOS-style, not the 65C02 dummy read. | Note 17 |
-| Per-opcode cycle counts for the 7a slice | Exact formulas in §5 above. | Clark §6.5 |
+| Per-opcode cycle counts for the 7b slice | Exact formulas in §5 above. | Clark §6.5 |
 | Vector set location and size | Separate repo, 512 files, ~2.9 GB, 5.12 M vectors. | 2.3 |
 
 ## 8. Deferred to later phases, listed so they are not forgotten
 
 - **ABORT (`ABORTB`)** and datasheet Note 3. No vectors exercise it; out of scope for phase 7 entirely.
-- **Note 9** — the two-cycle wait at cycle 2 after `NMIB`/`IRQB`. Phase 7c, with interrupts.
-- **Note 11** — `BRK` bit 4 is `0` in emulation mode. Phase 7c.
-- **Note 16** — "COP Latches". Phase 7c.
-- **Note 17** — mode-dependent RMW direction. Phase 7b, with the read-modify-write opcodes; noted now
+- **Note 9** — the two-cycle wait at cycle 2 after `NMIB`/`IRQB`. Phase 7d, with interrupts.
+- **Note 11** — `BRK` bit 4 is `0` in emulation mode. Phase 7d.
+- **Note 16** — "COP Latches". Phase 7d.
+- **Note 17** — mode-dependent RMW direction. Phase 7c, with the read-modify-write opcodes; noted now
   because it is the first behaviour in this project that cannot be resolved at table-build time.
 - **The book's remaining cycle-count footnotes.** §3.2 showed footnote 3 is an incomplete simplification.
   The rest of Ch. 18's footnotes have not been audited opcode by opcode, and must not be used as a primary
-  source in 7b/7c. Use Clark's formulas and Table 5-7; the book is corroboration only.
+  source in 7c/7d. Use Clark's formulas and Table 5-7; the book is corroboration only.
 - **Appendix E of the book** is a reprint of the *1986* W65C816 data sheet. Superseded by §2.1 (2024) and
   deliberately not consulted; recorded so nobody mistakes it for a fourth source.

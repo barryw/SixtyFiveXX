@@ -552,7 +552,9 @@ Expected: PASS, with a line of the form `NNN.N MHz simulated (NNN ms).`
 
 - [ ] **Step 2: Build a fresh baseline and interleave.** Do **not** compare against a stored number. Create a worktree at the commit before this phase's first code change (`git worktree add /tmp/sfx-baseline <commit>`), then run the gate alternately — baseline, widened, baseline, widened — at least three pairs, and compare medians. Interleaving cancels machine drift; a median-vs-single-reading comparison does not. Measured 2026-08-04 this way: 110.7 MHz baseline vs 110.2 MHz widened, no detectable difference.
 
-  - Within noise of 137.6 MHz, or above → the trade holds. Record it and continue to 7b.
+  - Within noise of the freshly rebuilt, interleaved baseline from Step 2 — not the single 137.6 MHz
+    idle-machine reading in the established facts above, which does not reproduce under load — or above →
+    the trade holds. Record it and continue to 7b.
   - A regression that still clears the floor → record the delta, continue, and raise it explicitly rather than letting it pass silently.
   - Below the 50 MHz floor → **stop.** Do not start 7b. The fallback named in §5.4 — a separate `Cpu816` over the same building blocks — becomes live, and that is a design decision to take back to the spec, not a thing to work around here.
 
