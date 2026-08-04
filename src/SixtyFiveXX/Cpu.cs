@@ -600,6 +600,24 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
 
     private void FetchOpcode()
     {
+        // The 65816 emulation-mode stack pointer has no storage for its high byte at all — it
+        // is hard-wired to $01 whenever E is set (Eyes & Lichty p. 71, quoted at Op.Xce), not
+        // merely forced by specific writes. S8's setter (above) enforces this for every write
+        // an instruction performs, and Reset()/XCE enforce it at their own mode-transition
+        // points, but nothing previously enforced it independent of a write — which matters for
+        // any caller that sets CpuState.S directly while E is already true (this project's own
+        // conformance harness does exactly that, loading a vector's `initial` state as one
+        // struct literal) and for any instruction, such as REP/SEP, that never touches S.
+        // Measured against the SingleStepTests $C2/$E2 emulation-mode vectors: `initial.s`
+        // deliberately carries a non-$01 high byte while e=1, and `final.s` still shows it
+        // corrected to $01 even though REP/SEP's own operation never writes S — settling that
+        // the correction is continuous, not write-triggered, and belongs at the instruction
+        // boundary rather than inside Op.Rep/Op.Sep specifically. Applied here, once per
+        // instruction and before this instruction's own sequence runs, which is early enough
+        // that nothing downstream can observe the stale value.
+        if (TVariant.Variant == CpuVariant.W65C816 && _s.E)
+            _s.S = (ushort)((_s.S & 0x00FF) | 0x0100);
+
         if (_intPoll)
         {
             // Take the interrupt instead of an instruction. Hardware spends two cycles
@@ -701,6 +719,18 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 // PC already reflects the opcode fetch's increment, so no further adjustment
                 // is needed to reach research document §9's "PC+1".
                 InternalCycle((_s.PBR << 16) | _s.PC);
+                Exec();
+                break;
+
+            case MicroOp.RepSepOperand:
+                _data = ReadBus(PcAddress());
+                _s.PC++;
+                break;
+
+            case MicroOp.RepSepExec:
+                // Internal cycle at the operand's own address — PC+1 in datasheet Note 1's
+                // terms, which is PC-1 from here since RepSepOperand already advanced past it.
+                InternalCycle((_s.PBR << 16) | ((_s.PC - 1) & 0xFFFF));
                 Exec();
                 break;
 

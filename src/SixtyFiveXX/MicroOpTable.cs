@@ -355,17 +355,22 @@ internal sealed class MicroOpTable
     /// for.
     /// </summary>
     /// <remarks>
-    /// Task 3 lands the harness and the first opcode: <c>XCE</c> gets its real two-cycle
-    /// sequence — a fetch (implicit) plus <see cref="MicroOp.ImpliedExec816"/>'s internal
-    /// cycle, research document §9 row 19a. The other 31 defined opcodes (LDA and STA's
-    /// fourteen forms each, REP, SEP) still emit nothing: a defined opcode with an empty
+    /// Task 3 landed the harness and the first opcode: <c>XCE</c>'s real two-cycle sequence —
+    /// a fetch (implicit) plus <see cref="MicroOp.ImpliedExec816"/>'s internal cycle, research
+    /// document §9 row 19a. Task 4 adds <c>REP</c>/<c>SEP</c>'s real three-cycle sequence — a
+    /// fetch, <see cref="MicroOp.RepSepOperand"/>, then <see cref="MicroOp.RepSepExec"/>'s
+    /// internal cycle, §9's "Immediate, and REP/SEP". The remaining 28 defined opcodes (LDA
+    /// and STA's fourteen forms each) still emit nothing: a defined opcode with an empty
     /// sequence ends after its fetch cycle, which is silently wrong for those but was this
-    /// task's placeholder state and stays that way until tasks 4-6 fill in their
-    /// cycle-by-cycle sequences from research document §9.
+    /// task's placeholder state and stays that way until tasks 5-6 fill in their cycle-by-cycle
+    /// sequences from research document §9.
     /// </remarks>
     private static void Emit816(List<MicroOp> ops, OpcodeInfo info)
     {
         if (info.Operation == Op.Xce) ops.Add(MicroOp.ImpliedExec816);
+
+        if (info.Operation is Op.Rep or Op.Sep)
+            ops.AddRange([MicroOp.RepSepOperand, MicroOp.RepSepExec]);
     }
 
     /// <summary>Emits the cycles that form the effective address, up to but excluding the access.</summary>

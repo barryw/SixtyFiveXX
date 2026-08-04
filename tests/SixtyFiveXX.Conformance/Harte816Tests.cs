@@ -17,12 +17,13 @@ namespace SixtyFiveXX.Conformance;
 /// <para>
 /// Unlike <see cref="HarteTests{TVariant}"/>, this does not loop over all 256 opcodes. Only 32
 /// of the 65816's opcodes are defined at all yet (<c>Opcodes65C816.Table</c>), and of those
-/// only <c>XCE</c> has a real sequence — <c>MicroOpTable.Emit816</c> emits nothing for the
-/// other 31, so every one of their vectors would fail on cycle count alone. Looping over the
-/// full opcode space the way the 8-bit harness does would therefore require declaring 224
-/// "not yet covered" opcodes as a matter of routine, which is what the 8-bit harness's
-/// <c>OpcodesWithoutVectors</c> mechanism exists to flag as an exception, not a norm. Tasks
-/// 4-6 add entries to <see cref="ImplementedOpcodes"/> as they land sequences for more opcodes.
+/// only <c>XCE</c>, <c>REP</c> and <c>SEP</c> have a real sequence — <c>MicroOpTable.Emit816</c>
+/// emits nothing for the other 29, so every one of their vectors would fail on cycle count
+/// alone. Looping over the full opcode space the way the 8-bit harness does would therefore
+/// require declaring 224 "not yet covered" opcodes as a matter of routine, which is what the
+/// 8-bit harness's <c>OpcodesWithoutVectors</c> mechanism exists to flag as an exception, not a
+/// norm. Tasks 5-6 add entries to <see cref="ImplementedOpcodes"/> as they land sequences for
+/// LDA and STA.
 /// </para>
 /// </remarks>
 public class Harte816Tests(ITestOutputHelper output)
@@ -30,13 +31,13 @@ public class Harte816Tests(ITestOutputHelper output)
     /// <summary>
     /// How many opcodes <c>MicroOpTable.Emit816</c> has a real sequence for. Declared rather
     /// than measured here, so a sequence that regresses to empty — deleted or forgotten in
-    /// tasks 4-6 — fails <see cref="ImplementedOpcodes_MatchesDeclaredCount"/> instead of just
+    /// tasks 5-6 — fails <see cref="ImplementedOpcodes_MatchesDeclaredCount"/> instead of just
     /// quietly running a smaller, still-green suite. The same protection
-    /// <c>HarteTests{TVariant}.ExpectedImplementedOpcodes</c> gives the 8-bit cores. XCE is the
-    /// only one Task 3 lands (research document §9, row 19a); tasks 4-6 raise this as they add
-    /// LDA, STA, REP and SEP.
+    /// <c>HarteTests{TVariant}.ExpectedImplementedOpcodes</c> gives the 8-bit cores. XCE was
+    /// the only one Task 3 landed (research document §9, row 19a); Task 4 adds REP and SEP
+    /// (§9's "Immediate, and REP/SEP"); tasks 5-6 raise this as they add LDA and STA.
     /// </summary>
-    private static readonly int ExpectedImplementedOpcodes = 1;
+    private static readonly int ExpectedImplementedOpcodes = 3;
 
     /// <summary>
     /// Opcode bytes this phase has emitted a real <c>MicroOpTable.Emit816</c> sequence for —

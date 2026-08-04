@@ -68,6 +68,36 @@ public sealed partial class Cpu<TBus, TVariant>
                 }
                 break;
 
+            // REP clears the P bits set in the operand (_data); SEP sets them. Neither can
+            // touch E — only XCE does that — so only the m/x/XH/YH half of the asymmetry
+            // research document §11 draws applies here; SH has no rule to inherit at all.
+            //
+            // In emulation mode m and x cannot be cleared: Clark §6.4.2, verbatim, "when the e
+            // flag is 1, the m and x flag are forced to 1, so after the REP or SEP, both flags
+            // will still be 1 no matter what the operand is." Applied unconditionally after the
+            // operand's own effect, for both instructions — REP is the one that can actually
+            // violate it (its operand can ask to clear either bit); SEP can only set bits it
+            // would already be setting, so the force is a no-op there and kept only so the two
+            // cases read the same way rather than trusting an invariant this method does not
+            // itself maintain.
+            //
+            // Whenever x ends up set, XH and YH are forced to $00 — the same continuously-held
+            // invariant CpuState.X's own doc comment states and XCE already enforces on an E
+            // transition. Unconditional on "x is set" rather than "x just became set": harmless
+            // when it was already set and already zero, and it is what catches SEP #$10 setting
+            // x from a 16-bit-index start, which is the only case that actually loses data.
+            case Op.Rep:
+                _s.P &= (byte)~_data;
+                if (_s.E) _s.P |= Flag.M | Flag.X;
+                if (_s.XFlag) { _s.X &= 0x00FF; _s.Y &= 0x00FF; }
+                break;
+
+            case Op.Sep:
+                _s.P |= _data;
+                if (_s.E) _s.P |= Flag.M | Flag.X;
+                if (_s.XFlag) { _s.X &= 0x00FF; _s.Y &= 0x00FF; }
+                break;
+
             // Stores. The value lands in _data, which the writing micro-op then commits.
             case Op.Sta: _data = A8; break;
             case Op.Stx: _data = X8; break;

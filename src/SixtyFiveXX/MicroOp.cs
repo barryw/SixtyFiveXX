@@ -342,6 +342,32 @@ internal enum MicroOp : byte
     /// the address is simply <c>(PBR &lt;&lt; 16) | PC</c> with no further adjustment.
     /// </summary>
     ImpliedExec816,
+
+    /// <summary>
+    /// <c>REP</c>/<c>SEP</c>'s cycle 2: reads the one-byte operand at <c>PBR,PC</c> into
+    /// <c>_data</c>, then <c>PC++</c>. No <c>Exec()</c> here — datasheet Note 1 (research
+    /// document §9) spends a whole extra cycle before the operation actually runs, unlike
+    /// <see cref="ImmExec"/>'s ordinary immediate mode, which reads and executes in the same
+    /// cycle. Drives <c>VDA=0 VPA=1</c>, the same pins <see cref="FetchAddrLo"/> and every
+    /// other live-PC operand read use.
+    /// </summary>
+    RepSepOperand,
+
+    /// <summary>
+    /// <c>REP</c>/<c>SEP</c>'s cycle 3, and the reason the instruction is 3 cycles rather than
+    /// 2: an internal cycle, then run the operation. Datasheet Note 1, verbatim: "REP, SEP are
+    /// always 3 cycle instructions and VPA is low during the third cycle. The address bus is
+    /// PC+1 during the third cycle." Note 1 states VPA alone; VDA is settled by research
+    /// document §9's own convention rather than stated outright — every cycle in that section
+    /// that is neither a live program-stream read nor an actual data access drives
+    /// <c>VDA=0 VPA=0</c>, with no counterexample, so this is <see cref="IBus.Internal"/>
+    /// exactly as <see cref="ImpliedExec816"/> is. "PC+1" is the operand byte's own address —
+    /// the same one <see cref="RepSepOperand"/> just read — not a third, unfetched byte;
+    /// <c>PC</c> has already advanced past it by this cycle, so the address is <c>PC - 1</c>
+    /// from here, mirroring how <see cref="MicroOp.NopAbsExtraRead"/> re-derives an
+    /// already-consumed operand's address the same way.
+    /// </summary>
+    RepSepExec,
 }
 
 /// <summary>
@@ -495,6 +521,7 @@ internal static class MicroOps
                      MicroOp.ImmExecCmosArith, MicroOp.BitBranchFetch,
                      MicroOp.BrkPad, MicroOp.IntDummy,
                      MicroOp.WaiHold, MicroOp.StpHold,
+                     MicroOp.RepSepOperand,
                  })
         {
             pins[(int)op] = BusPins.Vpa;
@@ -547,12 +574,17 @@ internal static class MicroOps
     /// never gets that far), not a guess about what a future opcode in its slot will assert.
     /// <see cref="MicroOp.ImpliedExec816"/> is the first micro-op that is <c>None</c> because
     /// it genuinely drives neither pin — a real 65816 internal cycle, per research document §9.
+    /// <see cref="MicroOp.RepSepExec"/> is the second, for the same reason — see its own remarks
+    /// for why VDA is 0 there despite Note 1 stating only VPA outright.
     /// </summary>
     private static bool[] BuildInternalCycleTable()
     {
         var internalCycles = new bool[Enum.GetValues<MicroOp>().Length];
 
-        foreach (var op in new[] { MicroOp.End, MicroOp.Unimplemented816, MicroOp.ImpliedExec816 })
+        foreach (var op in new[]
+                 {
+                     MicroOp.End, MicroOp.Unimplemented816, MicroOp.ImpliedExec816, MicroOp.RepSepExec,
+                 })
         {
             internalCycles[(int)op] = true;
         }
