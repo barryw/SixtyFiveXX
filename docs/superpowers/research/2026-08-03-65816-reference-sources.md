@@ -450,3 +450,211 @@ SingleStepTests vectors are MIT and already consumed under that licence.
   source in 7c/7d. Use Clark's formulas and Table 5-7; the book is corroboration only.
 - **Appendix E of the book** is a reprint of the *1986* W65C816 data sheet. Superseded by §2.1 (2024) and
   deliberately not consulted; recorded so nobody mistakes it for a fourth source.
+
+---
+
+## 9. Per-cycle bus sequences for the phase 7b slice
+
+Added 2026-08-04, after phase 7a landed. Transcribed from **WDC datasheet Table 5-7** (pp. 36–42) —
+the source described in §2.1 — for every addressing mode phase 7b implements. Column order in the
+datasheet is `Cycle | VPB | MLB | VDA | VPA | Address Bus | Data Bus | RWB`; below, only the cycle
+number, the VDA/VPA pair, the address bus expression and what is on the data bus are kept, since VPB
+and MLB are `1` (inactive) throughout every one of these modes.
+
+Cycle numbers suffixed with a letter are **conditional** and carry the note that gates them:
+
+- `(1)` — the high half of a 16-bit access. Taken when the relevant width flag is 0.
+- `(2)` — the direct-page penalty. Taken when `DL != $00`.
+- `(4)` — the indexing cycle. Taken on a page cross, **or on a write, or when `x = 0`** (§3.2).
+
+`DO` is the direct-page offset operand byte, `AA` the effective address, `AAB` the bank byte of a long
+address, `SO` the stack-relative offset operand.
+
+### The notation that matters most
+
+**`IO` means an internal cycle: VDA and VPA are both 0 and no memory access occurs.** This is the
+behaviour `IBus.Internal` exists to model, added in phase 7a. Every `IO` row below is a call to it, not
+a read.
+
+### Implied — row 19a, and the first surprise
+
+```
+XCE (and CLC, SEC, TAX, TXS, TCD, TCS, TDC, TSC, TXY, TYX, NOP, …)  25 opcodes, 1 byte, 2 cycles
+  1   VDA=1 VPA=1   PBR,PC     OpCode
+  2   VDA=0 VPA=0   PBR,PC+1   IO
+```
+
+*** Cycle 2 is an internal cycle, not a dummy read. *** On every 65xx core this project has built so
+far, an implied instruction's second cycle is a genuine read at PC — `MicroOp.ImpliedExec` performs
+one. The 65816 does not read there at all. Any implied 65816 instruction built by reusing the existing
+implied micro-op will produce a bus access the vectors do not have, on the very first opcode
+implemented. This is also the concrete justification for phase 7a's `IBus.Internal`.
+
+Note the address driven: **`PBR,PC+1`** — one past the opcode, not the opcode's own address.
+
+### Direct — row 10a
+
+```
+LDA dp / STA dp   16 opcodes, 2 bytes, 3 / 4 / 5 cycles
+  1        VDA=1 VPA=1   PBR,PC       OpCode
+  2        VDA=0 VPA=1   PBR,PC+1     DO
+  2a  (2)  VDA=0 VPA=0   PBR,PC+1     IO        <- DL != $00
+  3        VDA=1 VPA=0   0,D+DO       Data Low
+  3a  (1)  VDA=1 VPA=0   0,D+DO+1     Data High
+```
+
+The data access is at **bank 0**, and the direct-page penalty's internal cycle drives `PBR,PC+1`.
+
+### Direct,X — row 16a
+
+```
+LDA dp,X / STA dp,X   12 opcodes, 2 bytes, 4 / 5 / 6 cycles
+  1        VDA=1 VPA=1   PBR,PC       OpCode
+  2        VDA=0 VPA=1   PBR,PC+1     DO
+  2a  (2)  VDA=0 VPA=0   PBR,PC+1     IO        <- DL != $00
+  3        VDA=0 VPA=0   PBR,PC+1     IO        <- the indexing cycle, unconditional
+  4        VDA=1 VPA=0   0,D+DO+X     Data Low
+  4a  (1)  VDA=1 VPA=0   0,D+DO+X+1   Data High
+```
+
+Two internal cycles at the same address when `DL != $00`. Cycle 3 is unconditional — unlike the 6502's
+`ZpIndexX`, which performs a real dummy read at the unindexed address.
+
+### Absolute — row 1a
+
+```
+  1        VDA=1 VPA=1   PBR,PC       OpCode
+  2        VDA=0 VPA=1   PBR,PC+1     AAL
+  3        VDA=0 VPA=1   PBR,PC+2     AAH
+  4        VDA=1 VPA=0   DBR,AA       Data Low
+  4a  (1)  VDA=1 VPA=0   DBR,AA+1     Data High
+```
+
+### Absolute,X — row 6a, and Absolute,Y — row 7
+
+```
+  1        VDA=1 VPA=1   PBR,PC              OpCode
+  2        VDA=0 VPA=1   PBR,PC+1            AAL
+  3        VDA=0 VPA=1   PBR,PC+2            AAH
+  3a  (4)  VDA=0 VPA=0   DBR,AAH,AAL+XL      IO        <- page cross, or write, or x=0
+  4        VDA=1 VPA=0   DBR,AA+X            Data Low
+  4a  (1)  VDA=1 VPA=0   DBR,AA+X+1          Data High
+```
+
+Cycle 3a's address is the **mis-indexed** one — high byte un-carried — which is the datasheet's "this
+cycle contains invalid addresses" in Note 4, and the direct analogue of the NMOS dummy read. `,Y` is
+identical with `YL` substituted.
+
+### (Direct,X) — row 11
+
+```
+  1        VDA=1 VPA=1   PBR,PC          OpCode
+  2        VDA=0 VPA=1   PBR,PC+1        DO
+  2a  (2)  VDA=0 VPA=0   PBR,PC+1        IO        <- DL != $00
+  3        VDA=0 VPA=0   PBR,PC+1        IO        <- the indexing cycle, unconditional
+  4        VDA=1 VPA=0   0,D+DO+X        AAL
+  5        VDA=1 VPA=0   0,D+DO+X+1      AAH
+  6        VDA=1 VPA=0   DBR,AA          Data Low
+  6a  (1)  VDA=1 VPA=0   DBR,AA+1        Data High
+```
+
+### (Direct) — row 12
+
+```
+  1        VDA=1 VPA=1   PBR,PC          OpCode
+  2        VDA=0 VPA=1   PBR,PC+1        DO
+  2a  (2)  VDA=0 VPA=0   PBR,PC+1        IO
+  3        VDA=1 VPA=0   0,D+DO          AAL
+  4        VDA=1 VPA=0   0,D+DO+1        AAH
+  5        VDA=1 VPA=0   DBR,AA          Data Low
+  5a  (1)  VDA=1 VPA=0   DBR,AA+1        Data High
+```
+
+Pointer fetched from **bank 0**; data addressed through **DBR**.
+
+### (Direct),Y — row 13
+
+```
+  1        VDA=1 VPA=1   PBR,PC              OpCode
+  2        VDA=0 VPA=1   PBR,PC+1            DO
+  2a  (2)  VDA=0 VPA=0   PBR,PC+1            IO
+  3        VDA=1 VPA=0   0,D+DO              AAL
+  4        VDA=1 VPA=0   0,D+DO+1            AAH
+  4a  (4)  VDA=0 VPA=0   DBR,AAH,AAL+YL      IO        <- page cross, or write, or x=0
+  5        VDA=1 VPA=0   DBR,AA+Y            Data Low
+  5a  (1)  VDA=1 VPA=0   DBR,AA+Y+1          Data High
+```
+
+### [Direct] — row 15
+
+```
+  1        VDA=1 VPA=1   PBR,PC          OpCode
+  2        VDA=0 VPA=1   PBR,PC+1        DO
+  2a  (2)  VDA=0 VPA=0   PBR,PC+1        IO
+  3        VDA=1 VPA=0   0,D+DO          AAL
+  4        VDA=1 VPA=0   0,D+DO+1        AAH
+  5        VDA=1 VPA=0   0,D+DO+2        AAB
+  6        VDA=1 VPA=0   AAB,AA          Data Low
+  6a  (1)  VDA=1 VPA=0   AAB,AA+1        Data High
+```
+
+Three-byte pointer from bank 0; the data bank comes from the **pointer's own third byte**, not DBR.
+
+### [Direct],Y — row 14
+
+As `[Direct]`, with the final access at `AAB,AA+Y` / `AAB,AA+Y+1`. ***No indexing cycle at all*** — no
+`(4)` row exists for this mode, which is why Clark's formula `7-m+w` for `$B7` carries no `p` term
+(§5). The 24-bit add needs no fixup.
+
+### Absolute Long — row 4a, and Absolute Long,X — row 5
+
+```
+  1        VDA=1 VPA=1   PBR,PC          OpCode
+  2        VDA=0 VPA=1   PBR,PC+1        AAL
+  3        VDA=0 VPA=1   PBR,PC+2        AAH
+  4        VDA=0 VPA=1   PBR,PC+3        AAB
+  5        VDA=1 VPA=0   AAB,AA          Data Low       (AAB,AA+X for long,X)
+  5a  (1)  VDA=1 VPA=0   AAB,AA+1        Data High      (AAB,AA+X+1 for long,X)
+```
+
+Also no indexing cycle for `long,X` — again matching Clark's flat `6-m`.
+
+### Stack Relative — row 23
+
+```
+  1        VDA=1 VPA=1   PBR,PC          OpCode
+  2        VDA=0 VPA=1   PBR,PC+1        SO
+  3        VDA=0 VPA=0   PBR,PC+1        IO        <- unconditional, and there is no (2) penalty
+  4        VDA=1 VPA=0   0,S+SO          Data Low
+  4a  (1)  VDA=1 VPA=0   0,S+SO+1        Data High
+```
+
+No direct-page penalty — confirming §5's observation that `w` appears only on direct-page modes.
+
+### (Stack Relative),Y — row 24
+
+```
+  1        VDA=1 VPA=1   PBR,PC          OpCode
+  2        VDA=0 VPA=1   PBR,PC+1        SO
+  3        VDA=0 VPA=0   PBR,PC+1        IO
+  4        VDA=1 VPA=0   0,S+SO          AAL
+  5        VDA=1 VPA=0   0,S+SO+1        AAH
+  6        VDA=0 VPA=0   0,S+SO+1        IO        <- second internal cycle, unconditional
+  7        VDA=1 VPA=0   DBR,AA+Y        Data Low
+  7a  (1)  VDA=1 VPA=0   DBR,AA+Y+1      Data High
+```
+
+Two internal cycles, the second driving `0,S+SO+1` rather than `PBR,PC+1`. Flat `8-m` in Clark — no
+`w`, no `p`.
+
+### Immediate, and REP/SEP
+
+Immediate is the operand fetched at `PBR,PC+1`, plus `PBR,PC+2` when the width flag is 0 — Note 1's
+"add 1 byte for immediate only". `REP`/`SEP` are three cycles always, and Note 1 states the third
+explicitly: **`VPA` low, address bus `PC+1`**.
+
+### What this section settles
+
+Every cycle of every mode in the 7b slice now has a stated address, a stated VDA/VPA pair, and a
+stated condition. The plan can be written against these rows rather than against a cycle count, and a
+disagreement with the vectors becomes a specific row to re-read rather than a search.
