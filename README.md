@@ -41,11 +41,15 @@ instruction.Length;      // 3
 instruction.ToString();  // "LDA $1234,X"
 ```
 
-Driven by the same opcode table the engine runs from, so the two cannot drift: adding an
-opcode to a variant makes it decodable in the commit that makes it executable. Walk memory
-by `Length`. Branches show the address they land on rather than the displacement they
-encode, and `BRK` is two bytes because its second byte is fetched and discarded rather
-than executed.
+Driven by the same opcode table the engine runs from, so mnemonic and operand text cannot
+drift from what the engine executes. For the five 8-bit cores, adding an opcode makes it
+decodable in the same commit that makes it executable, without exception. That does not yet
+hold for the 65816: 12 of its 15 addressing modes have no operand-format case here, so 20 of
+phase 7b's 32 implemented opcodes throw `NotSupportedException` on decode, and `LDA #`
+decodes at a fixed 2 bytes regardless of `m`, which is wrong once the accumulator is 16
+bits. Disassembler support for the 65816 is phase 7e's job. Walk memory by `Length`.
+Branches show the address they land on rather than the displacement they encode, and `BRK`
+is two bytes because its second byte is fetched and discarded rather than executed.
 
 `TBus` is a `struct` type parameter so the JIT specializes the core and inlines every
 memory access. Implement your own `struct` bus for address decoding, or wrap an

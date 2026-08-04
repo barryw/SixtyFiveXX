@@ -51,8 +51,7 @@ These came out of phase 7a's final review. Every one of them is live in this pha
 | `src/SixtyFiveXX/Op.cs` | Modify: `Xce`, `Rep`, `Sep` |
 | `src/SixtyFiveXX/MicroOp.cs` | Modify: the 65816 micro-ops, and their pin classification |
 | `src/SixtyFiveXX/MicroOpTable.cs` | Modify: wire the variant; add `Emit816` as a separate emission path |
-| `src/SixtyFiveXX/Cpu.816.cs` | Create: the 65816 micro-op implementations, kept out of `Cpu.cs` |
-| `src/SixtyFiveXX/Cpu.cs` | Modify: pin readback; route `Internal` cycles; 65816 reset |
+| `src/SixtyFiveXX/Cpu.cs` | Modify: pin readback; route `Internal` cycles; 65816 reset; the 65816 micro-op implementations. Planned as a separate `Cpu.816.cs` kept out of `Cpu.cs`; built into `Cpu.cs` itself instead — see `Cpu.Execute`'s `MicroOp` switch, which every variant already shares |
 | `tests/SixtyFiveXX.Conformance/Harte816Cache.cs` | Create: fetch/cache from the 65816 repository, `.e`/`.n` aware |
 | `tests/SixtyFiveXX.Conformance/Harte816Case.cs` | Create: the different JSON shape |
 | `tests/SixtyFiveXX.Conformance/Harte816Bus.cs` | Create: records reads, writes **and internal cycles** |
@@ -237,7 +236,7 @@ public void EveryMicroOpHasAPinClassification()
 
 ### Task 3: The conformance harness, and the first opcode
 
-**Files:** Create `Harte816Cache.cs`, `Harte816Case.cs`, `Harte816Bus.cs`, `Harte816Tests.cs` in `tests/SixtyFiveXX.Conformance/`. Modify `src/SixtyFiveXX/Cpu.816.cs` (create) and `MicroOpTable.cs`.
+**Files:** Create `Harte816Cache.cs`, `Harte816Case.cs`, `Harte816Bus.cs`, `Harte816Tests.cs` in `tests/SixtyFiveXX.Conformance/`. Modify `src/SixtyFiveXX/Cpu.cs` (the 65816 micro-op implementations landed there, not in a separate `Cpu.816.cs` — see the File Structure table above) and `MicroOpTable.cs`.
 
 Read `HarteCache.cs`, `HarteCase.cs`, `HarteBus.cs` and `HarteTests.cs` first and follow their structure — the download/cache/offline-override behaviour should be recognisably the same, and `SIXTYFIVEXX_HARTE_DIR` must keep working.
 

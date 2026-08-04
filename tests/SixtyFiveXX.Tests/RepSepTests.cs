@@ -153,12 +153,15 @@ public class RepSepTests
     /// Datasheet Note 1, verbatim: "REP, SEP are always 3 cycle instructions". Always, not
     /// "3-m" the way plain immediate instructions vary. <see cref="AddrMode.ImmediateByte"/>
     /// records that in the opcode table — the single source of truth for operand length and
-    /// cycle count — but today <c>Emit816</c> branches on <c>info.Operation</c>, never on
-    /// <c>info.Mode</c>, so nothing actually reads the mode yet and this test is what pins the
-    /// 3-cycle count in the meantime. The mode is for Task 5: once <c>LDA</c>/<c>STA</c>'s
-    /// immediate forms make the emitter distinguish it from the m-dependent
-    /// <see cref="AddrMode.Immediate"/>, a wrong mode here would silently let REP/SEP's cycle
-    /// count float with m too.
+    /// cycle count — but <c>Emit816</c>'s REP/SEP branch dispatches on <c>info.Operation</c>
+    /// alone and never reads <c>info.Mode</c> at all, so nothing today actually consults
+    /// <c>ImmediateByte</c>; this test is what pins the 3-cycle count instead. That stays true
+    /// even now that <c>LDA</c>/<c>STA</c>'s own fifteen addressing forms do read
+    /// <c>info.Mode</c> (<c>EmitLdaSta816</c>, to tell the m-dependent
+    /// <see cref="AddrMode.Immediate"/> from every other form): that switch decides
+    /// <c>LDA</c>/<c>STA</c>'s addressing, not REP/SEP's fixed width, so a wrong
+    /// <c>ImmediateByte</c> value in the table would still go unnoticed by the emitter and only
+    /// surface here.
     /// </summary>
     [Theory]
     [InlineData(0xC2)]
