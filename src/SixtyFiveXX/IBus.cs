@@ -15,6 +15,23 @@ public interface IBus
 
     /// <summary>Writes one byte. Called at most once per CPU cycle.</summary>
     void Write(int address, byte value);
+
+    /// <summary>
+    /// An internal-operation cycle: the core drives an address but performs no bus access.
+    /// </summary>
+    /// <remarks>
+    /// Only the 65816 has these. On every earlier core each cycle is a real access — the
+    /// dummy reads are reads — so nothing calls this yet. The 65816 core, arriving in a
+    /// later phase, is intended to guard the call with a compile-time variant test so the
+    /// JIT does not emit it for cores without internal cycles.
+    /// <para>
+    /// Defaulted, so no existing bus breaks. A bus that models read side effects should
+    /// implement it as a no-op — which is what the default does — and a bus that models the
+    /// physical address bus can observe the address here.
+    /// </para>
+    /// </remarks>
+    /// <param name="address">The address driven during this cycle.</param>
+    void Internal(int address) { }
 }
 
 /// <summary>
@@ -47,6 +64,11 @@ public readonly struct FlatBus : IBus
 
     /// <inheritdoc />
     public void Write(int address, byte value) => _ram[address & 0xFFFF] = value;
+
+    /// <inheritdoc />
+    /// <remarks>Flat memory has no side effects to suppress, so this does nothing. It is
+    /// declared rather than inherited so the call does not box — see <see cref="IBus.Internal"/>.</remarks>
+    public void Internal(int address) { }
 }
 
 /// <summary>
@@ -73,4 +95,7 @@ public readonly struct RefBus : IBus
 
     /// <inheritdoc />
     public void Write(int address, byte value) => _inner.Write(address, value);
+
+    /// <inheritdoc />
+    public void Internal(int address) => _inner.Internal(address);
 }
