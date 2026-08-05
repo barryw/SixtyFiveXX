@@ -443,7 +443,7 @@ SingleStepTests vectors are MIT and already consumed under that licence.
 - **Note 9** — the two-cycle wait at cycle 2 after `NMIB`/`IRQB`. Phase 7d, with interrupts.
 - **Note 11** — `BRK` bit 4 is `0` in emulation mode. Phase 7d.
 - **Note 16** — "COP Latches". Phase 7d.
-- **Note 17** — mode-dependent RMW direction. Phase 7c, with the read-modify-write opcodes; noted now
+- **Note 17** — mode-dependent RMW direction. Phase 7c′, with the read-modify-write opcodes; noted now
   because it is the first behaviour in this project that cannot be resolved at table-build time.
 - **The book's remaining cycle-count footnotes.** §3.2 showed footnote 3 is an incomplete simplification.
   The rest of Ch. 18's footnotes have not been audited opcode by opcode, and must not be used as a primary
