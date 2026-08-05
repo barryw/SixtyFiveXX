@@ -15,12 +15,13 @@ namespace SixtyFiveXX.Conformance;
 /// eight-character per-cycle pin string the 8-bit sets have nothing like — see
 /// <see cref="Harte816Case"/> and <see cref="Harte816Bus"/>.
 /// <para>
-/// Unlike <see cref="HarteTests{TVariant}"/>, this does not loop over all 256 opcodes. Only 98
+/// Unlike <see cref="HarteTests{TVariant}"/>, this does not loop over all 256 opcodes. Only 128
 /// of the 65816's opcodes are defined at all yet (<c>Opcodes65C816.Table</c>) — every one of
 /// them has a real sequence: <c>XCE</c>, <c>REP</c>, <c>SEP</c>, all fifteen addressing forms
-/// of <c>LDA</c>, <c>ORA</c>, <c>AND</c>, <c>EOR</c> and <c>CMP</c> plus <c>STA</c>'s fourteen,
-/// and three each of <c>CPX</c> and <c>CPY</c>. Looping over the full opcode space the way the
-/// 8-bit harness does would still require declaring 158 "not yet covered" opcodes as a matter of
+/// of <c>LDA</c>, <c>ORA</c>, <c>AND</c>, <c>EOR</c>, <c>CMP</c>, <c>ADC</c> and <c>SBC</c> plus
+/// <c>STA</c>'s fourteen, and three each of <c>CPX</c> and <c>CPY</c>. Looping over the full
+/// opcode space the way the
+/// 8-bit harness does would still require declaring 128 "not yet covered" opcodes as a matter of
 /// routine, which is what the 8-bit harness's <c>OpcodesWithoutVectors</c> mechanism exists to
 /// flag as an exception, not a norm.
 /// </para>
@@ -45,9 +46,13 @@ public class Harte816Tests(ITestOutputHelper output)
     /// task 3 adds <c>ORA</c>, <c>AND</c> and <c>EOR</c> in all fifteen addressing forms each,
     /// every one of them reusing an addressing sequence phase 7b already certified — 32 + 45 = 77.
     /// Task 4 adds <c>CMP</c> in all fifteen, and <c>CPX</c> and <c>CPY</c> in the three forms
-    /// each the 65816 gives them — immediate, direct page and absolute — 77 + 21 = 98.
+    /// each the 65816 gives them — immediate, direct page and absolute — 77 + 21 = 98. Task 5
+    /// adds <c>ADC</c> and <c>SBC</c> in all fifteen forms each, the first 65816 opcodes with a
+    /// decimal mode — and no extra cycle for it, so they reuse the same read tails again
+    /// (research document §12.5) — 98 + 30 = 128. <c>$EB</c> is not among them: on this part it
+    /// is <c>XBA</c>, not the NMOS 6502's undocumented <c>SBC</c> alias.
     /// </summary>
-    private static readonly int ExpectedImplementedOpcodes = 98;
+    private static readonly int ExpectedImplementedOpcodes = 128;
 
     /// <summary>
     /// Opcode bytes this phase has emitted a real <c>MicroOpTable.Emit816</c> sequence for —

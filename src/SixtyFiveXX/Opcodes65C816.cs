@@ -4,20 +4,22 @@ namespace SixtyFiveXX;
 /// The WDC 65C816 opcode table — phase 7b's slice of it.
 /// </summary>
 /// <remarks>
-/// Ninety-eight opcodes are defined: every addressing form of <c>LDA</c> and <c>STA</c>
-/// (<c>STA</c> has no immediate form), plus <c>XCE</c>, <c>REP</c> and <c>SEP</c> — phase 7b's
-/// thirty-two, chosen so the variant, its table and its reset semantics could be exercised end
-/// to end before any 65816 micro-op sequence existed — phase 7c task 3's forty-five:
-/// <c>ORA</c>, <c>AND</c> and <c>EOR</c> in all fifteen addressing forms each; and task 4's
-/// twenty-one: <c>CMP</c> in all fifteen, plus <c>CPX</c> and <c>CPY</c> in three each — the
-/// first opcodes here sized by <c>x</c> rather than <c>m</c>. Every one of them reuses an
-/// addressing sequence phase 7b already certified. The remaining 158 entries are
-/// <see cref="OpcodeInfo.Undefined"/> and throw <see cref="UndefinedOpcodeException"/> on
-/// fetch; later tasks in this phase fill the rest of the instruction set in.
+/// A hundred and twenty-eight opcodes are defined: every addressing form of <c>LDA</c> and
+/// <c>STA</c> (<c>STA</c> has no immediate form), plus <c>XCE</c>, <c>REP</c> and <c>SEP</c> —
+/// phase 7b's thirty-two, chosen so the variant, its table and its reset semantics could be
+/// exercised end to end before any 65816 micro-op sequence existed — phase 7c task 3's
+/// forty-five: <c>ORA</c>, <c>AND</c> and <c>EOR</c> in all fifteen addressing forms each;
+/// task 4's twenty-one: <c>CMP</c> in all fifteen, plus <c>CPX</c> and <c>CPY</c> in three each
+/// — the first opcodes here sized by <c>x</c> rather than <c>m</c>; and task 5's thirty:
+/// <c>ADC</c> and <c>SBC</c> in all fifteen each, the first opcodes here with a decimal mode.
+/// Every one of them reuses an addressing sequence phase 7b already certified. The remaining
+/// 128 entries are <see cref="OpcodeInfo.Undefined"/> and throw
+/// <see cref="UndefinedOpcodeException"/> on fetch; later tasks in this phase fill the rest of
+/// the instruction set in.
 /// </remarks>
 internal static class Opcodes65C816
 {
-    /// <summary>Opcode byte to descriptor. 98 entries defined, 158 undefined.</summary>
+    /// <summary>Opcode byte to descriptor. 128 entries defined, 128 undefined.</summary>
     public static readonly OpcodeInfo[] Table = BuildTable();
 
     private static OpcodeInfo[] BuildTable()
@@ -139,6 +141,42 @@ internal static class Opcodes65C816
         Set(0xC0, "CPY", AddrMode.Immediate,  Op.Cpy, Access.Read, Width.X);
         Set(0xC4, "CPY", AddrMode.DirectPage, Op.Cpy, Access.Read, Width.X);
         Set(0xCC, "CPY", AddrMode.Absolute,   Op.Cpy, Access.Read, Width.X);
+
+        // Arithmetic: fifteen forms each, Width.M, and the same addressing sequences the six
+        // full-mode ALU operations share (research document §12.5). $EB is deliberately absent
+        // from the SBC block — on the 65816 that byte is XBA, not the NMOS 6502's undocumented
+        // SBC alias.
+        Set(0x69, "ADC", AddrMode.Immediate,                  Op.Adc816, Access.Read, Width.M);
+        Set(0x65, "ADC", AddrMode.DirectPage,                 Op.Adc816, Access.Read, Width.M);
+        Set(0x75, "ADC", AddrMode.DirectPageX,                Op.Adc816, Access.Read, Width.M);
+        Set(0x6D, "ADC", AddrMode.Absolute,                   Op.Adc816, Access.Read, Width.M);
+        Set(0x7D, "ADC", AddrMode.AbsoluteX,                  Op.Adc816, Access.Read, Width.M);
+        Set(0x79, "ADC", AddrMode.AbsoluteY,                  Op.Adc816, Access.Read, Width.M);
+        Set(0x61, "ADC", AddrMode.DirectPageIndexedIndirectX, Op.Adc816, Access.Read, Width.M);
+        Set(0x71, "ADC", AddrMode.DirectPageIndirectY,        Op.Adc816, Access.Read, Width.M);
+        Set(0x72, "ADC", AddrMode.DirectPageIndirect,         Op.Adc816, Access.Read, Width.M);
+        Set(0x67, "ADC", AddrMode.DirectPageIndirectLong,     Op.Adc816, Access.Read, Width.M);
+        Set(0x77, "ADC", AddrMode.DirectPageIndirectLongY,    Op.Adc816, Access.Read, Width.M);
+        Set(0x6F, "ADC", AddrMode.AbsoluteLong,               Op.Adc816, Access.Read, Width.M);
+        Set(0x7F, "ADC", AddrMode.AbsoluteLongX,              Op.Adc816, Access.Read, Width.M);
+        Set(0x63, "ADC", AddrMode.StackRelative,              Op.Adc816, Access.Read, Width.M);
+        Set(0x73, "ADC", AddrMode.StackRelativeIndirectY,     Op.Adc816, Access.Read, Width.M);
+
+        Set(0xE9, "SBC", AddrMode.Immediate,                  Op.Sbc816, Access.Read, Width.M);
+        Set(0xE5, "SBC", AddrMode.DirectPage,                 Op.Sbc816, Access.Read, Width.M);
+        Set(0xF5, "SBC", AddrMode.DirectPageX,                Op.Sbc816, Access.Read, Width.M);
+        Set(0xED, "SBC", AddrMode.Absolute,                   Op.Sbc816, Access.Read, Width.M);
+        Set(0xFD, "SBC", AddrMode.AbsoluteX,                  Op.Sbc816, Access.Read, Width.M);
+        Set(0xF9, "SBC", AddrMode.AbsoluteY,                  Op.Sbc816, Access.Read, Width.M);
+        Set(0xE1, "SBC", AddrMode.DirectPageIndexedIndirectX, Op.Sbc816, Access.Read, Width.M);
+        Set(0xF1, "SBC", AddrMode.DirectPageIndirectY,        Op.Sbc816, Access.Read, Width.M);
+        Set(0xF2, "SBC", AddrMode.DirectPageIndirect,         Op.Sbc816, Access.Read, Width.M);
+        Set(0xE7, "SBC", AddrMode.DirectPageIndirectLong,     Op.Sbc816, Access.Read, Width.M);
+        Set(0xF7, "SBC", AddrMode.DirectPageIndirectLongY,    Op.Sbc816, Access.Read, Width.M);
+        Set(0xEF, "SBC", AddrMode.AbsoluteLong,               Op.Sbc816, Access.Read, Width.M);
+        Set(0xFF, "SBC", AddrMode.AbsoluteLongX,              Op.Sbc816, Access.Read, Width.M);
+        Set(0xE3, "SBC", AddrMode.StackRelative,              Op.Sbc816, Access.Read, Width.M);
+        Set(0xF3, "SBC", AddrMode.StackRelativeIndirectY,     Op.Sbc816, Access.Read, Width.M);
 
         // Mode switch and status-bit instructions. REP/SEP take AddrMode.ImmediateByte, not
         // AddrMode.Immediate: their operand is always 8 bits and they are flat 3-cycle

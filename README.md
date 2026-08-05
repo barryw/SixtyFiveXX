@@ -82,10 +82,12 @@ all fifteen 65816 addressing modes, plus `XCE`, `REP` and `SEP` — 32 opcodes i
 certified per-cycle in both emulation and native mode against 640,000 SingleStepTests
 vectors, including the full eight-character bus-qualifier pin string asserted on every cycle.
 
-**This is not a complete core.** 98 of the 65816's 256 opcodes are implemented — phase 7b's 32,
-plus phase 7c's in-progress bulk work, which has so far added `ORA`, `AND`, `EOR` and `CMP` in
-all fifteen addressing forms each, and `CPX` and `CPY` in three each. Every other opcode throws
-`UndefinedOpcodeException`. Phases 7c and 7d add the rest.
+**This is not a complete core.** 128 of the 65816's 256 opcodes are implemented — phase 7b's 32,
+plus phase 7c's in-progress bulk work, which has so far added `ORA`, `AND`, `EOR`, `CMP`, `ADC`
+and `SBC` in all fifteen addressing forms each, and `CPX` and `CPY` in three each. `ADC` and
+`SBC` are cycle- and result-correct in decimal mode at both operand widths, including 16-bit
+BCD, which no source documents — the correction algorithm was measured from the vectors. Every
+other opcode throws `UndefinedOpcodeException`. Phases 7c and 7d add the rest.
 
 **The state widening is a breaking change**: `CpuState.A`, `X`, `Y` and `S` are now `ushort`
 rather than `byte`.

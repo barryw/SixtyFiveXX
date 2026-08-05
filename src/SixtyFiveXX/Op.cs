@@ -132,4 +132,15 @@ internal enum Op : byte
 
     /// <summary>Set status bits: sets each flag whose bit is set in the operand. 65816 only.</summary>
     Sep,
+
+    /// <summary>
+    /// The 65816's <c>ADC</c> and <c>SBC</c>. Separate members from both <see cref="Adc"/>
+    /// (NMOS) and <see cref="AdcCmos"/>, by the 65816 design spec's pre-committed rule — reuse
+    /// only on a source stating the behaviour is identical, and Clark states a divergence
+    /// instead: decimal mode costs the 65816 no extra cycle, unlike the 65C02 (research
+    /// document §12.2). These are also the only arithmetic members that operate at two widths,
+    /// and no 65C02 has a 16-bit decimal mode for the 16-bit path to have inherited — research
+    /// document §12.1.
+    /// </summary>
+    Adc816, Sbc816,
 }

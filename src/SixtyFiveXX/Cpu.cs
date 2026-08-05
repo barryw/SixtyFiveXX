@@ -587,10 +587,8 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// <summary>
     /// The address of a direct-page indirect pointer's own high byte — <c>ptr + 1</c>, confined
     /// to bank 0 (the pointer itself always lives in bank 0: <see cref="MicroOp.FetchDpOffset"/>
-    /// forms <c>_ptr</c> as <c>(D + DO) &amp; 0xFFFF</c>). In emulation mode, when the low byte of
-    /// <c>D</c> is <c>$00</c>, the read wraps within the page instead of carrying into the next
-    /// one — the same condition <see cref="MicroOp.DirectPageIndexX"/> already applies to the
-    /// index add, applied here to the pointer's own <c>+1</c> read.
+    /// forms <c>_ptr</c> as <c>(D + DO) &amp; 0xFFFF</c>). In emulation mode, when <c>D</c> is
+    /// <c>$0000</c>, the read wraps within page zero instead of carrying into the next page.
     /// </summary>
     /// <remarks>
     /// Code-review fix. Clark's appendix, verbatim: "if the D register is $0000 (and the e flag
@@ -603,11 +601,21 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// call this (via <see cref="MicroOp.DpPtrReadHi"/> and <see cref="MicroOp.DpPtrReadHiY"/>);
     /// <c>[dp]</c> and <c>[dp],Y</c> are new to the 65816 and do not — their pointer reads
     /// (<see cref="MicroOp.LongPtrReadMid"/>, <see cref="MicroOp.LongPtrReadHi"/>) never wrap, at
-    /// any byte of the three-byte pointer. Zero vector coverage: 0 hits across all ten indirect
-    /// <c>.e</c> files for <c>DL == $00</c> with a pointer base at <c>$xxFF</c>.
+    /// any byte of the three-byte pointer.
+    /// <para>
+    /// The condition is <c>D == $0000</c>, exactly as Clark words it — <b>not</b>
+    /// <c>DL == $00</c>, which is what <see cref="MicroOp.DirectPageIndexX"/> uses for the index
+    /// add and what this method used until phase 7c task 5. Measured: research document §12.7.
+    /// Task 5's <c>SBC</c> vectors supplied the first vector in the corpus that discriminates the
+    /// two — <c>e1 e 8669</c>, <c>D = $F400</c> (so <c>DL == $00</c> but <c>D != $0000</c>),
+    /// pointer base <c>$F4FF</c> — and the hardware reads the high byte at <c>$F500</c>, without
+    /// wrapping. The earlier "zero vector coverage" note this remark carried was true when it was
+    /// written and is not any more. The index add's own <c>DL == $00</c> condition is confirmed,
+    /// separately and abundantly: 320 emulation vectors wrap it with <c>D != $0000</c>.
+    /// </para>
     /// </remarks>
     private int DirectPagePointerHighAddress() =>
-        _s.E && (_s.DP & 0xFF) == 0
+        _s.E && _s.DP == 0
             ? (_ptr & 0xFF00) | ((_ptr + 1) & 0xFF)
             : (_ptr & 0xFF0000) | ((_ptr + 1) & 0xFFFF);
 

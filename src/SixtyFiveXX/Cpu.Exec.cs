@@ -247,6 +247,13 @@ public sealed partial class Cpu<TBus, TVariant>
             case Op.AdcCmos: AdcCmos(_data); break;
             case Op.SbcCmos: SbcCmos(_data); break;
 
+            // 65816 arithmetic. Both widths and both modes live in one helper each, because the
+            // operand arrives in _data or _data16 depending on width and the helper is the only
+            // place that knows which. Never reached by an 8-bit core — Op.Adc816 appears in no
+            // table but the 65816's — so these need no variant guard, unlike Op.Lda's arm.
+            case Op.Adc816: Adc816(_data, _data16); break;
+            case Op.Sbc816: Sbc816(_data, _data16); break;
+
             // Undocumented combination read-modify-writes. Each performs a documented
             // memory operation and then a documented ALU operation on the result.
             // Rra and Isc inherit decimal-mode behaviour from Adc and Sbc.
@@ -503,6 +510,137 @@ public sealed partial class Cpu<TBus, TVariant>
         if ((hi & 0x10) != 0) hi -= 0x06;
 
         A8 = (byte)((hi << 4) | (lo & 0x0F));
+    }
+
+    /// <summary>
+    /// The 65816's add with carry, at whichever width <c>_wide</c> selects. No source describes
+    /// the decimal correction at either width, so every decimal behaviour below is measured
+    /// against the vectors rather than cited — research document §12.1's "Measured" block, which
+    /// names the vectors. Decimal mode costs no extra cycle on this part (§12.5), so there is
+    /// nothing here for the emitter to know about.
+    /// </summary>
+    private void Adc816(byte value8, ushort value16)
+    {
+        if (!_wide)
+        {
+            // Measured: the 65816's 8-bit decimal ADC is the 65C02's exactly, so this delegates
+            // rather than restating it — 150,000 emulation-mode vectors across all fifteen ADC
+            // opcodes, plus the 8-bit half of the native set, passed on the first run against
+            // this delegation. Note that the matching delegation does NOT hold for SBC; see
+            // Sbc816, where the vectors rejected it.
+            if (_s.D) { AdcCmos(value8); return; }
+
+            var carry8 = _s.C ? 1 : 0;
+            var sum8 = A8 + value8 + carry8;
+            _s.C = sum8 > 0xFF;
+            _s.V = (~(A8 ^ value8) & (A8 ^ sum8) & 0x80) != 0;
+            A8 = (byte)sum8;
+            SetZN(A8);
+            return;
+        }
+
+        if (_s.D)
+        {
+            // Measured, not cited: the four-digit generalisation of AdcCmos above — nibble-wise
+            // correction, V from the partially corrected top nibble, C from the corrected top
+            // nibble, N and Z from the final decimal result. All 150,000 native-mode vectors of
+            // the fifteen ADC opcodes passed against this on the first run, which is what settles
+            // §12.1's gap 5 (where decimal ADC's N comes from at 16 bits): the corrected result,
+            // the same place SBC's comes from, though nothing in any source licensed assuming so.
+            var dcarry = _s.C ? 1 : 0;
+            var n0 = (_s.A & 0x000F) + (value16 & 0x000F) + dcarry;
+            if (n0 > 0x09) n0 += 0x06;
+            var n1 = ((_s.A >> 4) & 0x0F) + ((value16 >> 4) & 0x0F) + (n0 > 0x0F ? 1 : 0);
+            if (n1 > 0x09) n1 += 0x06;
+            var n2 = ((_s.A >> 8) & 0x0F) + ((value16 >> 8) & 0x0F) + (n1 > 0x0F ? 1 : 0);
+            if (n2 > 0x09) n2 += 0x06;
+            var n3 = ((_s.A >> 12) & 0x0F) + ((value16 >> 12) & 0x0F) + (n2 > 0x0F ? 1 : 0);
+
+            _s.V = (~(_s.A ^ value16) & (_s.A ^ (n3 << 12)) & 0x8000) != 0;
+
+            if (n3 > 0x09) n3 += 0x06;
+            _s.C = n3 > 0x0F;
+            _s.A = (ushort)(((n3 & 0x0F) << 12) | ((n2 & 0x0F) << 8) |
+                            ((n1 & 0x0F) << 4) | (n0 & 0x0F));
+            SetZN16(_s.A);
+            return;
+        }
+
+        var carry = _s.C ? 1 : 0;
+        var sum = _s.A + value16 + carry;
+        _s.C = sum > 0xFFFF;
+        _s.V = (~(_s.A ^ value16) & (_s.A ^ sum) & 0x8000) != 0;
+        _s.A = (ushort)sum;
+        SetZN16(_s.A);
+    }
+
+    /// <summary>
+    /// The 65816's subtract with borrow. See <see cref="Adc816"/> for the measured-not-cited
+    /// standing of everything decimal here.
+    /// <para>
+    /// Unlike <see cref="Adc816"/>, this cannot delegate its 8-bit decimal path to the certified
+    /// CMOS helper, and the reason is a measured divergence from a source rather than a gap in
+    /// one: Clark's §6 preamble says the 65816 "has the same behavior as 65C02" for 8-bit
+    /// results, and for <c>SBC</c> that is not so. The 65816 corrects nibble-wise, the way NMOS
+    /// does; <see cref="SbcCmos"/> adjusts the binary difference by $60 and $06. The two agree
+    /// on every flag and on every valid-BCD input, and disagree on the accumulator as soon as a
+    /// digit is $A-$F — which is why only the vectors could tell them apart. Research document
+    /// §12.1's "Measured" block; vector <c>e9 e 15</c> is the hand-traced one.
+    /// </para>
+    /// <para>
+    /// The flags then split: C and V come from the binary difference, N and Z from the corrected
+    /// result. That is <see cref="SbcCmos"/>'s split rather than <see cref="Sbc"/>'s, at both
+    /// widths, and at 16 bits the N half is the one thing about 65816 decimal arithmetic any
+    /// source states — Clark's Example 2, §12.1, reproduced by
+    /// <c>W65C816AluTests.Sbc_SixteenBitDecimal_MatchesClarksWorkedExample</c>.
+    /// </para>
+    /// </summary>
+    private void Sbc816(byte value8, ushort value16)
+    {
+        if (!_wide)
+        {
+            var borrow8 = _s.C ? 0 : 1;
+            var binary8 = A8 - value8 - borrow8;
+            _s.C = binary8 >= 0;
+            _s.V = ((A8 ^ value8) & (A8 ^ binary8) & 0x80) != 0;
+
+            if (_s.D)
+            {
+                var d0 = (A8 & 0x0F) - (value8 & 0x0F) - borrow8;
+                var d1 = (A8 >> 4) - (value8 >> 4);
+                if ((d0 & 0x10) != 0) { d0 -= 0x06; d1--; }
+                if ((d1 & 0x10) != 0) d1 -= 0x06;
+                A8 = (byte)((d1 << 4) | (d0 & 0x0F));
+            }
+            else A8 = (byte)binary8;
+
+            SetZN(A8);
+            return;
+        }
+
+        var borrow = _s.C ? 0 : 1;
+        var binary = _s.A - value16 - borrow;
+        _s.C = binary >= 0;
+        _s.V = ((_s.A ^ value16) & (_s.A ^ binary) & 0x8000) != 0;
+
+        if (_s.D)
+        {
+            var n0 = (_s.A & 0x0F) - (value16 & 0x0F) - borrow;
+            var n1 = ((_s.A >> 4) & 0x0F) - ((value16 >> 4) & 0x0F);
+            var n2 = ((_s.A >> 8) & 0x0F) - ((value16 >> 8) & 0x0F);
+            var n3 = ((_s.A >> 12) & 0x0F) - ((value16 >> 12) & 0x0F);
+
+            if ((n0 & 0x10) != 0) { n0 -= 0x06; n1--; }
+            if ((n1 & 0x10) != 0) { n1 -= 0x06; n2--; }
+            if ((n2 & 0x10) != 0) { n2 -= 0x06; n3--; }
+            if ((n3 & 0x10) != 0) n3 -= 0x06;
+
+            _s.A = (ushort)(((n3 & 0x0F) << 12) | ((n2 & 0x0F) << 8) |
+                            ((n1 & 0x0F) << 4) | (n0 & 0x0F));
+        }
+        else _s.A = (ushort)binary;
+
+        SetZN16(_s.A);
     }
 
     /// <summary>

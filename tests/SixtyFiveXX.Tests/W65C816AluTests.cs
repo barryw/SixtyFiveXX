@@ -133,4 +133,148 @@ public class W65C816AluTests
         Assert.Equal(0xC002, cpu.State.PC);
         Assert.True(cpu.State.Z);
     }
+
+    /// <summary>
+    /// 16-bit binary add: V comes from bit 15, C from bit 16. Fails against an 8-bit
+    /// <c>Adc</c> reached with a 16-bit operand.
+    /// </summary>
+    [Fact]
+    public void Adc_SixteenBitBinary_TakesOverflowFromBitFifteen()
+    {
+        var ram = new BankedBus();
+        ram[0xC000] = 0x69;       // ADC #
+        ram[0xC001] = 0x01;
+        ram[0xC002] = 0x00;       // operand $0001
+
+        var cpu = Banked816TestMachine.Make(ram);
+        cpu.State.E = false;
+        cpu.State.M = false;      // 16-bit accumulator
+        cpu.State.D = false;
+        cpu.State.C = false;
+        cpu.State.A = 0x7FFF;
+
+        cpu.Step();
+
+        Assert.Equal(0x8000, cpu.State.A);
+        Assert.True(cpu.State.V);
+        Assert.True(cpu.State.N);
+        Assert.False(cpu.State.C);
+    }
+
+    /// <summary>
+    /// 8-bit add on the 65816 must not disturb the hidden B accumulator, which is a real risk
+    /// here because <c>Adc</c> writes its result through <c>A8</c> internally rather than at the
+    /// call site. Fails against an <c>A8</c> setter that assigns the whole 16-bit field.
+    /// </summary>
+    [Fact]
+    public void Adc_EightBitMode_PreservesTheHiddenBAccumulator()
+    {
+        var ram = new BankedBus();
+        ram[0xC000] = 0x69;       // ADC #
+        ram[0xC001] = 0x01;
+
+        var cpu = Banked816TestMachine.Make(ram);
+        cpu.State.E = false;
+        cpu.State.M = true;       // 8-bit accumulator
+        cpu.State.D = false;
+        cpu.State.C = false;
+        cpu.State.A = 0x1210;     // B = $12
+
+        cpu.Step();
+
+        Assert.Equal(0x1211, cpu.State.A);
+    }
+
+    /// <summary>
+    /// 16-bit subtract: C is the absence of a borrow out of bit 16.
+    /// </summary>
+    [Fact]
+    public void Sbc_SixteenBitBinary_ClearsCarryOnABorrow()
+    {
+        var ram = new BankedBus();
+        ram[0xC000] = 0xE9;       // SBC #
+        ram[0xC001] = 0x01;
+        ram[0xC002] = 0x00;       // operand $0001
+
+        var cpu = Banked816TestMachine.Make(ram);
+        cpu.State.E = false;
+        cpu.State.M = false;      // 16-bit accumulator
+        cpu.State.D = false;
+        cpu.State.C = true;       // no incoming borrow
+        cpu.State.A = 0x0000;
+
+        cpu.Step();
+
+        Assert.Equal(0xFFFF, cpu.State.A);
+        Assert.False(cpu.State.C);
+        Assert.True(cpu.State.N);
+    }
+
+    /// <summary>
+    /// Clark's Example 2, verbatim and in full — the only 16-bit decimal result any surveyed
+    /// source states, and so the one citable check on the whole 16-bit decimal algorithm
+    /// (research document §12.1). It also pins <c>SBC</c>'s decimal <c>N</c> at 16 bits to the
+    /// <em>corrected</em> result rather than the binary intermediate: Clark's Example 1 is the
+    /// same operands with <c>d = 0</c> and gives $DFFE, whose bit 15 is 1, while this one gives
+    /// $7998 and <c>n = 0</c>. Fails against an implementation that leaves N binary — which is
+    /// what the task brief's hypothesis did, and what vector <c>e9 n 49</c> independently
+    /// rejected.
+    /// </summary>
+    [Fact]
+    public void Sbc_SixteenBitDecimal_MatchesClarksWorkedExample()
+    {
+        var ram = new BankedBus();
+        ram[0xC000] = 0xE9;       // SBC #
+        ram[0xC001] = 0x03;
+        ram[0xC002] = 0x20;       // operand $2003
+
+        var cpu = Banked816TestMachine.Make(ram);
+        cpu.State.E = false;
+        cpu.State.M = false;      // m = 0
+        cpu.State.D = true;       // d = 1
+        cpu.State.C = true;       // c = 1
+        cpu.State.A = 0x0001;
+
+        cpu.Step();
+
+        Assert.Equal(0x7998, cpu.State.A);
+        Assert.False(cpu.State.N);
+        Assert.False(cpu.State.Z);
+        Assert.False(cpu.State.C);
+    }
+
+    /// <summary>
+    /// The 65816's 8-bit decimal <c>SBC</c> corrects nibble-wise, the way NMOS does — <em>not</em>
+    /// by the $60/$06 adjustment of the binary difference that <c>SbcCmos</c> uses. Measured, and
+    /// contrary to Clark's §6 preamble, which groups 8-bit results with the 65C02's: research
+    /// document §12.1's "Measured" block, established by vector <c>e9 e 15</c> and 29 others.
+    /// <para>
+    /// $B0 - $4D - 1 in decimal mode: the two algorithms agree on every flag and disagree only on
+    /// the accumulator. Nibble-wise borrows $06 out of the low digit and one out of the high,
+    /// giving $6C; the CMOS $60/$06 form leaves the binary $62 alone (it did not go negative) and
+    /// subtracts $06 for the low-nibble borrow, giving $5C. Delegating this branch to
+    /// <c>SbcCmos</c> — the obvious refactor, and what the task brief proposed — fails here.
+    /// The $12 high byte doubles as a hidden-B accumulator check.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Sbc_EightBitDecimal_CorrectsNibbleWiseNotLikeTheSixtyFiveCTwo()
+    {
+        var ram = new BankedBus();
+        ram[0xC000] = 0xE9;       // SBC #
+        ram[0xC001] = 0x4D;
+
+        var cpu = Banked816TestMachine.Make(ram);
+        cpu.State.E = false;
+        cpu.State.M = true;       // 8-bit accumulator
+        cpu.State.D = true;
+        cpu.State.C = false;      // an incoming borrow
+        cpu.State.A = 0x12B0;
+
+        cpu.Step();
+
+        Assert.Equal(0x126C, cpu.State.A);
+        Assert.True(cpu.State.C);
+        Assert.False(cpu.State.N);
+    }
 }

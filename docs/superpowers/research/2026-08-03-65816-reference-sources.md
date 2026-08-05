@@ -915,6 +915,59 @@ decimal `SBC` must reproduce: `A = $0001`, `m = 0`, `d = 1`, `c = 1`, `SBC #$200
 `n = 0`, `z = 0`, `c = 0`. Everything else about the algorithm has to come from the vectors, and when it
 does it belongs back in this section **labelled as measured, not cited** — the form §11 uses.
 
+#### Measured — the five gaps closed, phase 7c task 5
+
+Added 2026-08-05, after task 5. Everything in this block is **measured against the 600,000
+SingleStepTests vectors of the thirty `ADC`/`SBC` opcodes**, not cited. Nothing below has a source.
+Where a source says otherwise, that is called out — one of these findings contradicts Clark.
+
+The algorithm, at both widths and for both instructions, is the **nibble-wise** correction: each BCD
+digit is corrected in turn and its carry or borrow propagates into the next. Not the `$60`/`$06`
+adjustment of the binary result that `SbcCmos` uses. Implemented in `Cpu.Exec.cs`, `Adc816`/`Sbc816`.
+
+| Gap | Measured answer |
+| --- | --- |
+| 1. The correction algorithm | Nibble-wise, at 8 and 16 bits, for both instructions. Two digits at `m = 1`, four at `m = 0`, same rule repeated |
+| 2. How `V` is computed | `ADC`: from the **partially corrected** top digit — the sum before that digit's own `+$06`. `SBC`: from the **binary** difference. Both are exactly what the 8-bit NMOS/CMOS helpers in this codebase already did; `V` needed no new rule at either width |
+| 3. Where `Z` and `C` come from | `ADC`: both from the corrected result (`C` = carry out of the corrected top digit). `SBC`: `C` from the binary difference, `Z` from the corrected result. `Z` is genuinely discriminated — `A = $0010`, `SBC #$000F`, `c = 0`, `d = 1` gives a binary `$0000` but a corrected `$000A` |
+| 4. Invalid BCD digits (`$A`-`$F`) | Fall out of the nibble-wise rule with no special case. This is the *only* thing that distinguishes nibble-wise from `$60`/`$06`, and it is what made gap 1 measurable at all |
+| 5. `ADC`'s decimal `N` at 16 bits | The **corrected** result — the same source as `SBC`'s, though no source licensed assuming so. `SetZN16` on the corrected accumulator; passed first run |
+
+**The one finding that contradicts a source.** Clark's §6 preamble, quoted above, groups emulation mode
+and 8-bit native mode and says the 65816 "has the same behavior as 65C02" — hedged with "In general",
+and enumerating `n`, `z` and `c`. Task 5 took that as a hypothesis and delegated both 8-bit decimal
+paths to this codebase's certified `AdcCmos`/`SbcCmos`. **For `ADC` the hypothesis held; for `SBC` it
+did not.**
+
+> **Measured: the 65816's decimal `SBC` corrects nibble-wise (like NMOS), not by the 65C02's
+> `$60`/`$06` adjustment — at 8 bits as well as 16.**
+
+Established by all thirty `SBC` test cases failing at once (fifteen opcodes × two modes) and by this
+hand-trace of the first of them, **`e9 e 15`**: `A = $60B0` so `A8 = $B0`, `p = $3A` so `d = 1` and
+`c = 0`, operand `$4D`, expected final `A8 = $6C`.
+
+- `SbcCmos`'s rule: `binary = $B0 - $4D - 1 = $62`; `$62 >= 0` so no `-$60`; the low-nibble borrow
+  (`$0 - $D - 1 < 0`) takes `-$06` → **`$5C`**. Wrong.
+- Nibble-wise: `lo = $0 - $D - 1 = -14`, negative, so `-$06` and borrow one from the high digit;
+  `hi = $B - $4 - 1 = 6` → `$6C`. **Right.**
+
+Every flag agreed in that vector, and in all thirty: only the accumulator diverged, and only because
+the operand's `$D` digit is not valid BCD. Note what this means for gap 1's constraint — the §6
+preamble constrains 8-bit behaviour *loosely enough to be wrong*, so its "In general" is doing real
+work and it cannot be treated as a specification of anything.
+
+**The second correction, from the same run: `SBC`'s decimal `N` at 16 bits.** Vector **`e9 n 49`** —
+`A = $2A35`, `m = 0`, `d = 1`, `c = 0`, operand `$F5C0`. The accumulator was already right
+(`$D414`); `N` alone diverged. The binary difference is `$3474`, bit 15 clear; the corrected result is
+`$D414`, bit 15 set; the vector wants `n = 1`. So `N` comes from the corrected result — which is
+exactly what Clark's Example 2 already said, and what a `SBC` written from `Sbc`'s all-flags-binary
+shape gets wrong. `Z` moved with it, per gap 3.
+
+**What was right first time, and is therefore also measured:** every one of the fifteen `ADC` opcodes
+passed in both modes on the first run — the 8-bit delegation to `AdcCmos`, the four-digit nibble-wise
+16-bit path, `V` from the partially corrected top digit, and `N`/`Z` from the corrected result. Gap 5
+is closed in the affirmative, on 150,000 native-mode vectors, having been open on principle.
+
 ### 12.2 The `Op` member decision — new members (the plan's §10.2)
 
 **Verdict: `Op.Adc816` and `Op.Sbc816`, new members. `Op.AdcCmos`/`Op.SbcCmos` are not reused.**
@@ -1162,27 +1215,72 @@ transcription from memory would plausibly go wrong:
 
 ### 12.6 The gaps this section records, listed in one place
 
-Everything above either carries a named source or appears here. Task 5 owns the first block; nothing else
-in phase 7c depends on the rest.
+Everything above either carries a named source or appears here. Task 5 owned the first block; nothing
+else in phase 7c depended on the rest.
 
-| # | Gap | Status | Who resolves it |
+**All five are now closed, by measurement.** They are left standing below, with what the sources said
+when they were opened, because the difference between "no source says this" and "the vectors say this"
+is the thing this document exists to keep visible. The answers are in §12.1's **Measured** block, which
+names the vectors; the one-line versions are in the right-hand column.
+
+| # | Gap | Status when opened | Resolved |
 | --- | --- | --- | --- |
-| 1 | The decimal correction algorithm for `ADC`/`SBC`, at 8 **or** 16 bits | **The sources are silent.** Clark gives none at any width; the datasheet gives none | Task 5, from vectors — write back here labelled *measured* |
-| 2 | How `V` is computed in decimal mode | **The sources are silent.** Clark: "overwritten … can be considered invalid". Table 7-1's "N,V and Z flags valid" is the same wording already measured to overstate for the 65C02 | Task 5, from vectors |
-| 3 | Whether `Z` and `C` come from the corrected result or the binary intermediate | **The sources are silent.** Clark's wording implies the corrected result but Example 2 does not discriminate | Task 5, from vectors |
-| 4 | Decimal behaviour on invalid BCD digits (`$A`–`$F` nibbles) | **The sources are silent.** Not mentioned anywhere surveyed | Task 5, from vectors |
-| 5 | Whether `ADC`'s decimal `N` at 16 bits comes from the corrected result or the binary intermediate | **The sources are silent for `ADC`.** Example 2 pins `N` for `SBC` only; Clark gives no decimal `ADC` example at any width. This codebase's own NMOS `Adc`/`Sbc` already diverge on the general question (`src/SixtyFiveXX/Cpu.Exec.cs:380` vs `:444`), so the `SBC` answer must not be assumed for `ADC` | Task 5, from vectors |
+| 1 | The decimal correction algorithm for `ADC`/`SBC`, at 8 **or** 16 bits | **The sources are silent.** Clark gives none at any width; the datasheet gives none | **Measured**, task 5: nibble-wise at both widths, both instructions. *Not* the 65C02's `$60`/`$06` form — see the contradiction below |
+| 2 | How `V` is computed in decimal mode | **The sources are silent.** Clark: "overwritten … can be considered invalid". Table 7-1's "N,V and Z flags valid" is the same wording already measured to overstate for the 65C02 | **Measured**, task 5: `ADC` from the partially corrected top digit, `SBC` from the binary difference — the 8-bit helpers' existing rules, unchanged at 16 bits |
+| 3 | Whether `Z` and `C` come from the corrected result or the binary intermediate | **The sources are silent.** Clark's wording implies the corrected result but Example 2 does not discriminate | **Measured**, task 5: `ADC` both from the corrected result; `SBC` `C` from the binary difference and `Z` from the corrected result |
+| 4 | Decimal behaviour on invalid BCD digits (`$A`–`$F` nibbles) | **The sources are silent.** Not mentioned anywhere surveyed | **Measured**, task 5: falls out of the nibble-wise rule, no special case — and is the only thing that discriminated gap 1 |
+| 5 | Whether `ADC`'s decimal `N` at 16 bits comes from the corrected result or the binary intermediate | **The sources are silent for `ADC`.** Example 2 pins `N` for `SBC` only; Clark gives no decimal `ADC` example at any width. This codebase's own NMOS `Adc`/`Sbc` already diverge on the general question (`src/SixtyFiveXX/Cpu.Exec.cs:380` vs `:444`), so the `SBC` answer must not be assumed for `ADC` | **Measured**, task 5: the corrected result, the same as `SBC`'s. Passed first run on 150,000 native-mode vectors |
 
-All five are about the *arithmetic*. Gaps 1 and 3 are constrained at `m = 1` by Clark's §6 preamble
-("the same behavior as 65C02", 8-bit results) — a hypothesis for task 5 to measure, not a citation to
-implement against, and one that says nothing about `m = 0`. Gaps 2 and 4 are unconstrained at every width.
-Gap 5 is scoped to `m = 0` by definition — at `m = 1` the §6 preamble's `n`/`z`/`c` claim is asserted for
-`ADC` as for `SBC`, the same hypothesis rather than a citation — and within that scope no source speaks
-to it at all.
+**One source turned out to be wrong, and it is the one that constrained gaps 1 and 3 at `m = 1`.**
+Clark's §6 preamble ("the same behavior as 65C02", 8-bit results) was treated as a hypothesis to
+measure rather than a citation to implement against — correctly, as it happens. It holds for `ADC` and
+fails for `SBC`: the 65816's decimal `SBC` corrects nibble-wise at 8 bits too, where the 65C02 adjusts
+by `$60`/`$06`. §12.1's Measured block has the hand-trace. The precedence rule in §4 did its job, and
+"In general" was load-bearing.
 
 What is **not** a gap, so nobody re-opens it: `SBC`'s decimal `N` source at 16 bits (Clark's Example 2,
-§12.1) — but not `ADC`'s, which is gap 5 above; whether emulation mode and 8-bit native mode differ in
-decimal behaviour (Clark's §6 preamble groups them — §12.1); the decimal cycle count (§12.5, two sources
-agreeing, plus the §6 preamble's worked example a third time); the `Op` member verdict (§12.2, decided by
-a pre-committed rule on a stated divergence); row 17 (§12.3, transcribed); the x-width immediates (§12.4,
-transcribed); and all 121 cycle formulas (§12.5, transcribed).
+§12.1, and now the vectors agreeing); whether emulation mode and 8-bit native mode differ in decimal
+behaviour (Clark's §6 preamble groups them — §12.1); the decimal cycle count (§12.5, two sources
+agreeing, plus the §6 preamble's worked example a third time — and confirmed by 600,000 vectors passing
+with no micro-op change); the `Op` member verdict (§12.2, decided by a pre-committed rule on a stated
+divergence, and vindicated: `SBC`'s divergence is real); row 17 (§12.3, transcribed); the x-width
+immediates (§12.4, transcribed); and all 121 cycle formulas (§12.5, transcribed).
+
+### 12.7 The direct-page indirect pointer's high byte wraps on `D == $0000`, not on `DL == $00` — measured
+
+Added 2026-08-05, during phase 7c task 5.
+
+Task 5's vectors surfaced one non-arithmetic failure, and it is worth its own subsection because it
+falsifies a "zero vector coverage" note that a phase 7b code review had left in the source.
+
+`Cpu.DirectPagePointerHighAddress` decides where an "old" direct-page indirect mode — `(dp)`, `(dp,X)`,
+`(dp),Y` — reads the *high byte of its pointer* when the pointer's own low byte sits at `$xxFF`. Clark's
+appendix is the source, verbatim (already quoted in that method's remarks):
+
+> if the D register is $0000 (and the e flag is 1), then LDA ($FF) uses a pointer whose low byte is at
+> $0000FF and whose high byte is at $000000 (like the 65C02)
+
+Phase 7b implemented that as `E && (D & $FF) == $00` — generalising Clark's `D == $0000` to "`DL` is
+zero", by analogy with `MicroOp.DirectPageIndexX`, which really does use the `DL` condition. At the time
+no vector could tell the two apart, and the method's remarks said so.
+
+**Measured, from vector `e1 e 8669`** (`SBC (dp,X)`, emulation mode): `D = $F400` — so `DL == $00` but
+`D != $0000` — direct-page offset `$B0`, `X = $4F`, giving a pointer base of `$F4FF`. The hardware reads
+the pointer's high byte at **`$F500`**. It does not wrap. Reading it at `$F400` yields a pointer of
+`$002F` instead of `$3E2F`, an operand of `$00` instead of `$B3`, and a final `A` of `$3108` against the
+vector's `$3155`.
+
+So the condition is Clark's literal one, `D == $0000`, and the generalisation was wrong. Two things keep
+this narrow:
+
+- **The index add's `DL == $00` condition is not affected and is separately confirmed.** A sweep of all
+  24 cached "old" indirect `.e` files found 320 emulation vectors where `MicroOp.DirectPageIndexX`'s
+  wrap is discriminated with `D != $0000`, and every one of them wraps. The two conditions genuinely
+  differ; only the pointer's `+1` read follows `D == $0000`.
+- **`e1 e 8669` is the only vector in the corpus that discriminates the pointer read at all** — 1 hit
+  across those same 24 files, and the `.n` files cannot contribute because the whole rule is gated on
+  `E`. With `D == $0000` specifically there are zero vectors, so the wrapping half of the rule still
+  rests on Clark alone, exactly as before. What changed is that the non-wrapping half is now measured.
+
+The same shape as §11: a rule the earlier sections do not state, measured from the vectors, and agreeing
+with the one source that speaks to it once that source is read literally rather than generalised.
