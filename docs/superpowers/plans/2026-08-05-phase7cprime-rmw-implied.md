@@ -165,9 +165,18 @@ git commit -m "docs: research §13, the facts phase 7c-prime needs before any op
 
 **Interfaces:**
 - Consumes: research §13.1, §13.2, §13.3; `_wide`; `EmitAddressed816`.
-- Produces: `MicroOp.RmwRead816`, `RmwReadHigh816`, `RmwReadHigh816Carry`, `RmwModifyWrite816`, `RmwModifyRead816`, `RmwWriteHigh816`, `RmwWriteHigh816Carry`, `RmwWrite816`; `private ushort Asl16(ushort)`, `Lsr16`, `Rol16`, `Ror16` in `Cpu.Exec.cs`; a `Log` on `BankedBus`. Tasks 3 and 4 reuse all of them.
+- Produces: `MicroOp.RmwRead816`, `RmwReadHigh816`, `RmwReadHigh816Carry`, `RmwModifyWrite816`, `RmwModifyRead816`, `RmwModifyRead816Carry`, `RmwWriteHigh816`, `RmwWriteHigh816Carry`, `RmwWrite816`; `private ushort Asl16(ushort)`, `Lsr16`, `Rol16`, `Ror16` in `Cpu.Exec.cs`; a `Log` on `BankedBus`. Tasks 3 and 4 reuse all of them.
 
-**Read research §13 before writing.** Two findings change the code: §13.1 decides whether `RmwModifyRead816` calls `ReadBus` or `InternalCycle`, and §13.2 decides the write order. The sequence below assumes a real read and high-then-low writes; **if §13 says otherwise, follow §13 and say so in your report.**
+**Read research §13 before writing. It has already answered the two open questions, and one answer changes the code below.**
+
+- **§13.3 confirms `ASL abs` is `8-2m`.** The six-slot shape survives unchanged — 16-bit costs exactly one extra read and one extra write.
+- **§13.1 refutes the assumption this task was drafted on.** The native middle cycle is **an internal cycle**, not a real read: Table 5-7 prints `VDA=0 VPA=0`, data bus `IO`, `RWB=1` on it in all four RMW rows (1d, 6b, 10b, 16b). So `RmwModifyRead816` calls `InternalCycle`, **not** `ReadBus`. The step-5 code below has been corrected accordingly.
+
+Three further findings from §13, each of which the draft got wrong:
+
+1. **`MLB` is asserted on the internal middle cycle**, so its pins are `BusPins.Mlb` **alone** — a combination that does not yet exist in this codebase.
+2. **The middle cycle drives the `+1` (high) address**, not the low one the draft assumed. §13.1 records the `m = 1` case as a **gap** — no source states which address it drives at 8-bit width — so implement the documented 16-bit behaviour, and let the vectors settle 8-bit. If they disagree with whatever you choose, that is a measurement to write back into §13.1, not a constant to tune.
+3. **Clark §6.1.3's prose has the m-flag polarity inverted for `ASL`'s carry bit.** The helpers in step 7 are written correctly — carry comes from bit 15 at 16-bit width. **Do not "correct" them toward Clark's sentence**; §13 records the inversion.
 
 - [ ] **Step 1: Give `BankedBus` an access log**
 
@@ -356,7 +365,7 @@ public class W65C816RmwTests
 Run: `dotnet test tests/SixtyFiveXX.Tests -f net10.0 --filter "FullyQualifiedName~W65C816RmwTests"`
 Expected: **FAIL, 5**, with `UndefinedOpcodeException` — `$06` and `$0E` are not in the 65816 table.
 
-- [ ] **Step 4: Add the eight micro-ops**
+- [ ] **Step 4: Add the nine micro-ops**
 
 In `src/SixtyFiveXX/MicroOp.cs`, beside the existing 65816 members, with an XML `<summary>` on each naming the research §13.1 row it comes from:
 
@@ -366,6 +375,7 @@ In `src/SixtyFiveXX/MicroOp.cs`, beside the existing 65816 members, with an XML 
     RmwReadHigh816Carry,
     RmwModifyWrite816,
     RmwModifyRead816,
+    RmwModifyRead816Carry,
     RmwWriteHigh816,
     RmwWriteHigh816Carry,
     RmwWrite816,
@@ -374,8 +384,10 @@ In `src/SixtyFiveXX/MicroOp.cs`, beside the existing 65816 members, with an XML 
 Classify them in `MicroOps`:
 
 - `BuildWriteTable` gains `RmwModifyWrite816`, `RmwWriteHigh816`, `RmwWriteHigh816Carry`, `RmwWrite816`. **RDY must never halt these.**
-- `BuildPinsTable` gains all eight in the `BusPins.Vda | BusPins.Mlb` group — the locked cycles of a read-modify-write, which is what `MLB` exists to signal. Extend that group's comment to say the 65816's are there too.
-- `BuildInternalCycleTable` gains `RmwModifyRead816` **only if research §13.1 says the native middle cycle is an internal cycle.** If §13.1 says it is a real read, it goes in the pins group above and not here.
+- `BuildPinsTable` gains the seven that touch the bus — `RmwRead816`, both `RmwReadHigh816*`, `RmwModifyWrite816`, both `RmwWriteHigh816*` and `RmwWrite816` — in the `BusPins.Vda | BusPins.Mlb` group. Extend that group's comment to say the 65816's are there too.
+- **`RmwModifyRead816` and `RmwModifyRead816Carry` get `BusPins.Mlb` ALONE** — a combination no micro-op in this codebase has yet. They perform no access (VDA and VPA are both 0 per §13.1) but `MLB` stays asserted through the locked sequence.
+- `BuildInternalCycleTable` gains both of them, because `Cpu.Tick`'s RDY halt path uses that table to decide between `InternalCycle` and `ReadBus` and would otherwise fake a read on a halted cycle.
+- **`MicroOps.IsInternalCycle`'s own `<summary>` currently says it lists "the micro-ops `PinsFor` legitimately classifies `BusPins.None`".** These two are the first members that perform no access while asserting a pin, so that sentence becomes false. Correct it: the table means *performs no bus access*, which until now coincided with `None` pins.
 
 `BusPinsTests.EveryMicroOpHasAPinClassification` fails until every one is classified — that is the tripwire working.
 
@@ -411,11 +423,25 @@ In `src/SixtyFiveXX/Cpu.cs`'s `Execute` switch:
                 _mpc += 2;                        // skip the read-form and the high-byte write
                 break;
 
+            // Native mode: an INTERNAL cycle, not a read — research document §13.1, Table 5-7
+            // rows 1d/6b/10b/16b all print VDA=0 VPA=0, data bus IO, RWB=1. MLB is still
+            // asserted, which is why these two carry BusPins.Mlb alone. The address driven is the
+            // high one (AA+1) at 16 bits; §13.1 records the 8-bit case as a gap, so _addr is used
+            // there and the vectors settle it.
+            //
+            // Two variants for the same reason the read and write halves have two: whether the
+            // "+1" carries into the next bank is a property of the addressing mode, decided at
+            // table-build time, not something a shared micro-op can test.
             case MicroOp.RmwModifyRead816:
-                // Native mode: the CMOS-style dummy read. Same cycle, opposite direction.
-                ReadBus(_addr);
+                InternalCycle(_wide ? HighByteAddressBank0() : _addr);
                 Exec();
                 if (!_wide) _mpc++;               // 8-bit: skip the high-byte write
+                break;
+
+            case MicroOp.RmwModifyRead816Carry:
+                InternalCycle(_wide ? HighByteAddressCarry() : _addr);
+                Exec();
+                if (!_wide) _mpc++;
                 break;
 
             case MicroOp.RmwWriteHigh816:
@@ -471,7 +497,7 @@ with:
                     MicroOp.RmwRead816,
                     carry ? MicroOp.RmwReadHigh816Carry : MicroOp.RmwReadHigh816,
                     MicroOp.RmwModifyWrite816,
-                    MicroOp.RmwModifyRead816,
+                    carry ? MicroOp.RmwModifyRead816Carry : MicroOp.RmwModifyRead816,
                     carry ? MicroOp.RmwWriteHigh816Carry : MicroOp.RmwWriteHigh816,
                     MicroOp.RmwWrite816,
                 ]);
