@@ -1176,8 +1176,9 @@ in phase 7c depends on the rest.
 All five are about the *arithmetic*. Gaps 1 and 3 are constrained at `m = 1` by Clark's §6 preamble
 ("the same behavior as 65C02", 8-bit results) — a hypothesis for task 5 to measure, not a citation to
 implement against, and one that says nothing about `m = 0`. Gaps 2 and 4 are unconstrained at every width.
-Gap 5 is scoped to `m = 0` by definition — at `m = 1` the §6 preamble's `n`/`z`/`c` claim covers `ADC`
-same as `SBC` — and within that scope no source speaks to it at all.
+Gap 5 is scoped to `m = 0` by definition — at `m = 1` the §6 preamble's `n`/`z`/`c` claim is asserted for
+`ADC` as for `SBC`, the same hypothesis rather than a citation — and within that scope no source speaks
+to it at all.
 
 What is **not** a gap, so nobody re-opens it: `SBC`'s decimal `N` source at 16 bits (Clark's Example 2,
 §12.1) — but not `ADC`'s, which is gap 5 above; whether emulation mode and 8-bit native mode differ in
