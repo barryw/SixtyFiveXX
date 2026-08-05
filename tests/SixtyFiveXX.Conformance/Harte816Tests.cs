@@ -20,10 +20,9 @@ namespace SixtyFiveXX.Conformance;
 /// them has a real sequence: <c>XCE</c>, <c>REP</c>, <c>SEP</c>, all fifteen addressing forms
 /// of <c>LDA</c>, <c>ORA</c>, <c>AND</c>, <c>EOR</c>, <c>CMP</c>, <c>ADC</c> and <c>SBC</c> plus
 /// <c>STA</c>'s fourteen, and three each of <c>CPX</c> and <c>CPY</c>. Looping over the full
-/// opcode space the way the
-/// 8-bit harness does would still require declaring 128 "not yet covered" opcodes as a matter of
-/// routine, which is what the 8-bit harness's <c>OpcodesWithoutVectors</c> mechanism exists to
-/// flag as an exception, not a norm.
+/// opcode space the way the 8-bit harness does would still require declaring 128 "not yet
+/// covered" opcodes as a matter of routine, which is what the 8-bit harness's
+/// <c>OpcodesWithoutVectors</c> mechanism exists to flag as an exception, not a norm.
 /// </para>
 /// </remarks>
 public class Harte816Tests(ITestOutputHelper output)

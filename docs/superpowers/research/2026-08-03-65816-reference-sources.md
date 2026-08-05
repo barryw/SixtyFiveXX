@@ -170,7 +170,9 @@ and
 
 That last sentence rules out the obvious shortcut of testing `D == 0`. The condition is `E && DL == $00`,
 and the wrapped address keeps `DH` — Clark's §5.1.3 example gives `0 : DH : $LL+X` with the low byte
-truncated to 8 bits.
+truncated to 8 bits. (This is the direct-page *index add*'s condition — confirmed, 320 discriminating
+vectors. The indirect pointer's own `+1` read is a separate rule, narrower than this one: `D == $0000`,
+not `DL == $00`. See §12.7, measured in phase 7c after this section was written.)
 
 Mode-invariant forcing, from §6.10.4 (`XCE`) and §6.4.2 (`REP`/`SEP`):
 
@@ -424,7 +426,7 @@ SingleStepTests vectors are MIT and already consumed under that licence.
 | P register bit 4 | `x` flag in native mode, `b` (break) in emulation mode. | Clark §4 + datasheet §2.8; **book is wrong**, §3.1 |
 | P register bit 5 | `m` flag. Never the break flag. | Clark §4; **book is wrong**, §3.1 |
 | Direct-page penalty | +1 cycle when `DL != $00`. | Note 2 |
-| Direct-page page-wrap condition | `E == 1 && DL == $00`, keeping `DH`. Not `D == 0`. | 2.2, §5.1.1 + appendix |
+| Direct-page page-wrap condition | `E == 1 && DL == $00`, keeping `DH`. Not `D == 0`. This is the *index add*'s condition; the indirect pointer's own `+1` read is narrower — `D == $0000` — see §12.7. | 2.2, §5.1.1 + appendix |
 | Which things wrap in bank 0 | Direct page, stack, `(abs)`/`[abs]` pointers. | 2.2, §5.1.2 |
 | Which things wrap in bank K | `(abs,X)` pointers, and PC — so branches wrap at the bank boundary. | 2.2, §5.1.2 |
 | Does `abs,X` cross into the next bank? | Yes — "Otherwise, wrapping does not occur at bank boundaries." | 2.2, §5.1.2 |
@@ -929,7 +931,7 @@ adjustment of the binary result that `SbcCmos` uses. Implemented in `Cpu.Exec.cs
 | --- | --- |
 | 1. The correction algorithm | Nibble-wise, at 8 and 16 bits, for both instructions. Two digits at `m = 1`, four at `m = 0`, same rule repeated |
 | 2. How `V` is computed | `ADC`: from the **partially corrected** top digit — the sum before that digit's own `+$06`. `SBC`: from the **binary** difference. Both are exactly what the 8-bit NMOS/CMOS helpers in this codebase already did; `V` needed no new rule at either width |
-| 3. Where `Z` and `C` come from | `ADC`: both from the corrected result (`C` = carry out of the corrected top digit). `SBC`: `C` from the binary difference, `Z` from the corrected result. `Z` is genuinely discriminated — `A = $0010`, `SBC #$000F`, `c = 0`, `d = 1` gives a binary `$0000` but a corrected `$000A` |
+| 3. Where `Z` and `C` come from | `ADC`: both from the corrected result (`C` = carry out of the corrected top digit) — discriminated by vector `73 n 1007`. `SBC`: `C` from the binary difference, `Z` from the corrected result — discriminated by vector `fd n 3835`. Each is the sole discriminating vector among 37,519 |
 | 4. Invalid BCD digits (`$A`-`$F`) | Fall out of the nibble-wise rule with no special case. This is the *only* thing that distinguishes nibble-wise from `$60`/`$06`, and it is what made gap 1 measurable at all |
 | 5. `ADC`'s decimal `N` at 16 bits | The **corrected** result — the same source as `SBC`'s, though no source licensed assuming so. `SetZN16` on the corrected accumulator; passed first run |
 
@@ -1273,10 +1275,12 @@ vector's `$3155`.
 So the condition is Clark's literal one, `D == $0000`, and the generalisation was wrong. Two things keep
 this narrow:
 
-- **The index add's `DL == $00` condition is not affected and is separately confirmed.** A sweep of all
-  24 cached "old" indirect `.e` files found 320 emulation vectors where `MicroOp.DirectPageIndexX`'s
-  wrap is discriminated with `D != $0000`, and every one of them wraps. The two conditions genuinely
-  differ; only the pointer's `+1` read follows `D == $0000`.
+- **The index add's `DL == $00` condition is not affected and is separately confirmed.** A sweep of the
+  "old" `.e` files wherever `MicroOp.DirectPageIndexX`'s wrap applies found 320 emulation vectors
+  discriminated with `D != $0000`, and every one of them wraps. Sixteen files actually contributed a
+  discriminating vector; eight of those are plain `dp,X`, not indirect — the 24 purely indirect `.e`
+  files alone account for only 162 of the 320. The two conditions genuinely differ; only the pointer's
+  `+1` read follows `D == $0000`.
 - **`e1 e 8669` is the only vector in the corpus that discriminates the pointer read at all** — 1 hit
   across those same 24 files, and the `.n` files cannot contribute because the whole rule is gated on
   `E`. With `D == $0000` specifically there are zero vectors, so the wrapping half of the rule still

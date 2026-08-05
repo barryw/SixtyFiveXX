@@ -429,10 +429,11 @@ internal enum MicroOp : byte
     /// Code-review fix: this is one of the "old" indirect modes (present on the 65C02) — Clark
     /// §5.1.1, verbatim: "Page boundary wrapping only occurs in emulation mode, and only for
     /// 'old' instructions and addressing modes." So the <c>ptr + 1</c> read itself, not only the
-    /// index add <see cref="DirectPageIndexX"/> already guards, must wrap within the page when
-    /// <c>E == 1 &amp;&amp; DL == $00</c> — Clark's appendix: "LDA ($FF) uses a pointer whose low
-    /// byte is at $0000FF and whose high byte is at $000000 (like the 65C02)". Zero vector
-    /// coverage: no <c>.e</c> vector places a pointer at <c>DL == $00</c>, base <c>$xxFF</c>.
+    /// index add <see cref="DirectPageIndexX"/> already guards, must wrap within the page in
+    /// emulation mode — on <c>D == $0000</c>, not <c>DL == $00</c>; see
+    /// <see cref="Cpu{TBus,TVariant}.DirectPagePointerHighAddress"/> for the condition, the vector that
+    /// discriminates it from the index add's condition, and why. Measured: research document
+    /// §12.7.
     /// </para>
     /// </summary>
     DpPtrReadHi,

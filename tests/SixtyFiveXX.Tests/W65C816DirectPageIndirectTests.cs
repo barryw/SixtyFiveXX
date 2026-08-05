@@ -12,7 +12,7 @@ namespace SixtyFiveXX.Tests;
 /// <item>Finding 2: a 16-bit access's high byte must carry into the next bank for every
 /// DBR-relative and long mode, and must stay confined to bank 0 only for plain direct page.</item>
 /// <item>Finding 3: the indirect pointer's own <c>+1</c> read must page-wrap in emulation mode
-/// with <c>DL == $00</c> for the "old" modes — <c>(dp)</c>, <c>(dp,X)</c>, <c>(dp),Y</c> — and
+/// with <c>D == $0000</c> for the "old" modes — <c>(dp)</c>, <c>(dp,X)</c>, <c>(dp),Y</c> — and
 /// must not for the "new" <c>[dp]</c>/<c>[dp],Y</c>.</item>
 /// <item>Finding 4: the indexing-cycle skip for <c>(dp),Y</c> must be selected from
 /// <c>info.Access</c> at table-build time, not from <c>_op == Op.Lda</c> at run time.</item>
@@ -90,11 +90,16 @@ public class W65C816DirectPageIndirectTests
     /// Finding 3's actual fix. Clark's appendix, verbatim: "if the D register is $0000 (and the e
     /// flag is 1), then LDA ($FF) uses a pointer whose low byte is at $0000FF and whose high byte
     /// is at $000000 (like the 65C02)". <c>(dp)</c> is an "old" mode (present on the 65C02), so
-    /// with <c>E = 1</c> and <c>DL = $00</c> the pointer's own high-byte read must wrap within the
-    /// page instead of the plain <c>ptr + 1</c> a non-wrapping read would use.
+    /// with <c>E = 1</c> and <c>D = $0000</c> the pointer's own high-byte read must wrap within
+    /// the page instead of the plain <c>ptr + 1</c> a non-wrapping read would use. Note what this
+    /// does <b>not</b> pin down: <c>D = $0000</c> also makes <c>DL == $00</c>, so this case alone
+    /// cannot tell Clark's actual condition apart from the over-generalised <c>DL == $00</c> phase
+    /// 7b shipped with — see
+    /// <see cref="LdaDirectPageIndirect_InEmulationModeWithDlZeroButDNonzero_PointerHighByteDoesNotWrap"/>
+    /// for the test that does.
     /// </summary>
     [Fact]
-    public void LdaDirectPageIndirect_InEmulationModeWithDlZero_PointerHighByteWrapsWithinThePage()
+    public void LdaDirectPageIndirect_InEmulationModeWithDpZero_PointerHighByteWrapsWithinThePage()
     {
         var ram = new BankedBus();
         ram[0xC000] = 0xB2;              // LDA (dp)
@@ -106,7 +111,40 @@ public class W65C816DirectPageIndirectTests
 
         var cpu = MakeCpu(ram);
         cpu.State.E = true;              // emulation mode forces M = 1 too
-        cpu.State.DP = 0x0000;           // DL = $00
+        cpu.State.DP = 0x0000;           // D = $0000
+
+        cpu.Step();
+
+        Assert.Equal(0x99, cpu.State.A & 0xFF);
+    }
+
+    /// <summary>
+    /// The discriminator between Clark's actual <c>D == $0000</c> condition and the
+    /// over-generalised <c>DL == $00</c> phase 7b shipped with — the offline twin of the vector
+    /// that caught the bug, <c>e1 e 8669</c> (<c>SBC (dp,X)</c>, emulation mode; research document
+    /// §12.7). With <c>D = $F400</c>, <c>DL == $00</c> but <c>D != $0000</c>, so the pointer's own
+    /// <c>+1</c> read must NOT wrap — Clark's condition is narrower than the index add's. Pointer
+    /// base is <c>$F4FF</c> (<c>D + DO</c>); the hardware reads the high byte from <c>$F500</c>,
+    /// one page past the low byte, not wrapped back to <c>$F400</c>. A decoy sits at the wrapped
+    /// address a buggy <c>DL == $00</c> implementation would read the pointer high byte from, and
+    /// a second decoy sits at the data address that wrong pointer would resolve to, so a
+    /// regression fails on a visibly wrong accumulator value rather than a silent zero.
+    /// </summary>
+    [Fact]
+    public void LdaDirectPageIndirect_InEmulationModeWithDlZeroButDNonzero_PointerHighByteDoesNotWrap()
+    {
+        var ram = new BankedBus();
+        ram[0xC000] = 0xB2;              // LDA (dp)
+        ram[0xC001] = 0xFF;              // DO -> pointer at D + DO = $F400 + $FF = $F4FF
+        ram[0x00F4FF] = 0x34;            // pointer low
+        ram[0x00F500] = 0x12;            // pointer high, NOT wrapped (D != $0000) -> AA = $1234
+        ram[0x00F400] = 0x56;            // decoy: where a wrapping implementation reads the pointer high byte from
+        ram[0x001234] = 0x99;            // data at the correctly-formed pointer, AA = $1234, DBR = $00
+        ram[0x005634] = 0xEE;            // decoy: where the wrongly-wrapped pointer ($5634) would read data from
+
+        var cpu = MakeCpu(ram);
+        cpu.State.E = true;              // emulation mode forces M = 1 too
+        cpu.State.DP = 0xF400;           // DL == $00 but D != $0000 — the discriminating case
 
         cpu.Step();
 
