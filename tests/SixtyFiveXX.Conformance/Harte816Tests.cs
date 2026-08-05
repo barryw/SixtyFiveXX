@@ -15,34 +15,51 @@ namespace SixtyFiveXX.Conformance;
 /// eight-character per-cycle pin string the 8-bit sets have nothing like — see
 /// <see cref="Harte816Case"/> and <see cref="Harte816Bus"/>.
 /// <para>
-/// Unlike <see cref="HarteTests{TVariant}"/>, this does not loop over all 256 opcodes. Only 32
+/// Unlike <see cref="HarteTests{TVariant}"/>, this does not loop over all 256 opcodes. Only 153
 /// of the 65816's opcodes are defined at all yet (<c>Opcodes65C816.Table</c>) — every one of
-/// them now has a real sequence, as of task 6: <c>XCE</c>, <c>REP</c>, <c>SEP</c>, and all
-/// fifteen addressing forms of <c>LDA</c>/<c>STA</c>. Looping over the full opcode space the
-/// way the 8-bit harness does would still require declaring 224 "not yet covered" opcodes as a
-/// matter of routine, which is what the 8-bit harness's <c>OpcodesWithoutVectors</c> mechanism
-/// exists to flag as an exception, not a norm.
+/// them has a real sequence: <c>XCE</c>, <c>REP</c>, <c>SEP</c>, all fifteen addressing forms
+/// of <c>LDA</c>, <c>ORA</c>, <c>AND</c>, <c>EOR</c>, <c>CMP</c>, <c>ADC</c> and <c>SBC</c> plus
+/// <c>STA</c>'s fourteen, three each of <c>CPX</c> and <c>CPY</c>, <c>BIT</c>'s five, five each
+/// of <c>LDX</c> and <c>LDY</c>, three each of <c>STX</c> and <c>STY</c>, and <c>STZ</c>'s four.
+/// Looping over the full opcode space the way the 8-bit harness does would still require
+/// declaring 103 "not yet covered" opcodes as a matter of routine, which is what the 8-bit harness's
+/// <c>OpcodesWithoutVectors</c> mechanism exists to flag as an exception, not a norm.
 /// </para>
 /// </remarks>
 public class Harte816Tests(ITestOutputHelper output)
 {
     /// <summary>
     /// How many opcodes <c>MicroOpTable.Emit816</c> has a real sequence for. Declared rather
-    /// than measured here, so a sequence that regresses to empty — deleted or forgotten in
-    /// tasks 5-6 — fails <see cref="ImplementedOpcodes_MatchesDeclaredCount"/> instead of just
-    /// quietly running a smaller, still-green suite. The same protection
+    /// than measured here, so a sequence that regresses to empty — deleted or forgotten
+    /// somewhere along the way — fails <see cref="ImplementedOpcodes_MatchesDeclaredCount"/>
+    /// instead of just quietly running a smaller, still-green suite. The same protection
     /// <c>HarteTests{TVariant}.ExpectedImplementedOpcodes</c> gives the 8-bit cores. XCE was
-    /// the only one Task 3 landed (research document §9, row 19a); Task 4 added REP and SEP
-    /// (§9's "Immediate, and REP/SEP"); Task 5 added LDA and STA's seven direct-page forms each
-    /// (research document §9's "Direct", "Direct,X", "(Direct,X)", "(Direct)", "(Direct),Y",
-    /// "[Direct]" and "[Direct],Y" blocks) — 3 + 14 = 17. Task 6 adds LDA and STA's remaining
-    /// seven forms each — absolute, absolute,X, absolute,Y, long, long,X, stack,S,
-    /// (stack,S),Y (§9's "Absolute", "Absolute,X — row 6a, and Absolute,Y — row 7", "Absolute
-    /// Long — row 4a, and Absolute Long,X — row 5", "Stack Relative — row 23" and "(Stack
-    /// Relative),Y — row 24" blocks) — plus LDA's immediate form (§9's "Immediate, and
-    /// REP/SEP"; STA has none) — 17 + 14 + 1 = 32, all 32 opcodes phase 7b is gated on.
+    /// the only one phase 7b task 3 landed (research document §9, row 19a); phase 7b task 4
+    /// added REP and SEP (§9's "Immediate, and REP/SEP"); phase 7b task 5 added LDA and STA's
+    /// seven direct-page forms each (research document §9's "Direct", "Direct,X",
+    /// "(Direct,X)", "(Direct)", "(Direct),Y", "[Direct]" and "[Direct],Y" blocks) — 3 + 14 =
+    /// 17. Phase 7b task 6 adds LDA and STA's remaining seven forms each — absolute,
+    /// absolute,X, absolute,Y, long, long,X, stack,S, (stack,S),Y (§9's "Absolute",
+    /// "Absolute,X — row 6a, and Absolute,Y — row 7", "Absolute Long — row 4a, and Absolute
+    /// Long,X — row 5", "Stack Relative — row 23" and "(Stack Relative),Y — row 24" blocks) —
+    /// plus LDA's immediate form (§9's "Immediate, and REP/SEP"; STA has none) — 17 + 14 + 1 =
+    /// 32, all 32 opcodes phase 7b is gated on. Phase 7c task 3 adds <c>ORA</c>, <c>AND</c> and
+    /// <c>EOR</c> in all fifteen addressing forms each, every one of them reusing an addressing
+    /// sequence phase 7b already certified — 32 + 45 = 77. Phase 7c task 4 adds <c>CMP</c> in
+    /// all fifteen, and <c>CPX</c> and <c>CPY</c> in the three forms each the 65816 gives them
+    /// — immediate, direct page and absolute — 77 + 21 = 98. Phase 7c task 5 adds <c>ADC</c>
+    /// and <c>SBC</c> in all fifteen forms each, the first 65816 opcodes with a decimal mode —
+    /// and no extra cycle for it, so they reuse the same read tails again (research document
+    /// §12.5) — 98 + 30 = 128. <c>$EB</c> is not among them: on this part it is <c>XBA</c>, not
+    /// the NMOS 6502's undocumented <c>SBC</c> alias. Phase 7c task 6 adds <c>BIT</c>'s five
+    /// opcodes — immediate plus its four other addressing forms — 128 + 5 = 133. <c>$89</c>
+    /// takes <c>Op.BitImm</c>, which sets Z alone; the other four take <c>Op.Bit</c>, which also
+    /// takes N and V from the operand's top two bits. Phase 7c task 7 adds <c>LDX</c> and
+    /// <c>LDY</c> in five forms each, <c>STX</c> and <c>STY</c> in three each, and <c>STZ</c> in
+    /// four — 133 + 20 = 153 — along with the one addressing mode this phase adds, <c>dp,Y</c>,
+    /// which <c>LDX</c> and <c>STX</c> use and no other instruction on the part does.
     /// </summary>
-    private static readonly int ExpectedImplementedOpcodes = 32;
+    private static readonly int ExpectedImplementedOpcodes = 153;
 
     /// <summary>
     /// Opcode bytes this phase has emitted a real <c>MicroOpTable.Emit816</c> sequence for —
@@ -74,9 +91,9 @@ public class Harte816Tests(ITestOutputHelper output)
 
     /// <summary>
     /// Guards the exact failure this measured derivation exists to prevent: if a sequence is
-    /// forgotten or deleted in tasks 4-6, the measured count drops below the declared one and
-    /// this fails loudly, rather than <see cref="ImplementedOpcodes"/> just running — and
-    /// reporting green over — fewer opcodes.
+    /// forgotten or deleted anywhere along the way, the measured count drops below the declared
+    /// one and this fails loudly, rather than <see cref="ImplementedOpcodes"/> just running —
+    /// and reporting green over — fewer opcodes.
     /// </summary>
     [Fact]
     public void ImplementedOpcodes_MatchesDeclaredCount() =>

@@ -170,7 +170,9 @@ and
 
 That last sentence rules out the obvious shortcut of testing `D == 0`. The condition is `E && DL == $00`,
 and the wrapped address keeps `DH` — Clark's §5.1.3 example gives `0 : DH : $LL+X` with the low byte
-truncated to 8 bits.
+truncated to 8 bits. (This is the direct-page *index add*'s condition — confirmed, 320 discriminating
+vectors. The indirect pointer's own `+1` read is a separate rule, narrower than this one: `D == $0000`,
+not `DL == $00`. See §12.7, measured in phase 7c after this section was written.)
 
 Mode-invariant forcing, from §6.10.4 (`XCE`) and §6.4.2 (`REP`/`SEP`):
 
@@ -424,7 +426,7 @@ SingleStepTests vectors are MIT and already consumed under that licence.
 | P register bit 4 | `x` flag in native mode, `b` (break) in emulation mode. | Clark §4 + datasheet §2.8; **book is wrong**, §3.1 |
 | P register bit 5 | `m` flag. Never the break flag. | Clark §4; **book is wrong**, §3.1 |
 | Direct-page penalty | +1 cycle when `DL != $00`. | Note 2 |
-| Direct-page page-wrap condition | `E == 1 && DL == $00`, keeping `DH`. Not `D == 0`. | 2.2, §5.1.1 + appendix |
+| Direct-page page-wrap condition | `E == 1 && DL == $00`, keeping `DH`. Not `D == 0`. This is the *index add*'s condition; the indirect pointer's own `+1` read is narrower — `D == $0000` — see §12.7. | 2.2, §5.1.1 + appendix |
 | Which things wrap in bank 0 | Direct page, stack, `(abs)`/`[abs]` pointers. | 2.2, §5.1.2 |
 | Which things wrap in bank K | `(abs,X)` pointers, and PC — so branches wrap at the bank boundary. | 2.2, §5.1.2 |
 | Does `abs,X` cross into the next bank? | Yes — "Otherwise, wrapping does not occur at bank boundaries." | 2.2, §5.1.2 |
@@ -443,7 +445,7 @@ SingleStepTests vectors are MIT and already consumed under that licence.
 - **Note 9** — the two-cycle wait at cycle 2 after `NMIB`/`IRQB`. Phase 7d, with interrupts.
 - **Note 11** — `BRK` bit 4 is `0` in emulation mode. Phase 7d.
 - **Note 16** — "COP Latches". Phase 7d.
-- **Note 17** — mode-dependent RMW direction. Phase 7c, with the read-modify-write opcodes; noted now
+- **Note 17** — mode-dependent RMW direction. Phase 7c′, with the read-modify-write opcodes; noted now
   because it is the first behaviour in this project that cannot be resolved at table-build time.
 - **The book's remaining cycle-count footnotes.** §3.2 showed footnote 3 is an incomplete simplification.
   The rest of Ch. 18's footnotes have not been audited opcode by opcode, and must not be used as a primary
@@ -741,3 +743,548 @@ the book, wrong twice in §3, is right here and is the only source that explains
 **Contrast with `m`, `x`, `XH`, `YH`**, whose forcing follows the new `E` alone: those live in the
 processor status register and the index registers, and nothing about them survives a mode change the way
 a stack address does. Do not generalise `SH`'s rule to them; the vectors disagree, and so does the book.
+
+---
+
+## 12. Phase 7c's four unsettled questions — the section the 7c plan calls "§10"
+
+Added 2026-08-05, before any phase 7c code was written. Same practice as §9: transcribe first, implement
+second.
+
+**Numbering note, read this before hunting for a missing section.** The phase 7c plan
+(`docs/superpowers/plans/2026-08-05-phase7c-bulk-alu.md`) names this section **§10** and its parts
+**§10.1**–**§10.5**, because it was written when this document ended at §9. Phase 7b then added §10
+(reset initialisation) and §11 (`XCE` and `SH`), and both are cited by section number from doc comments —
+§10 from `src/SixtyFiveXX/Cpu.cs` (lines 617 and 642) and `tests/SixtyFiveXX.Tests/W65C816StateTests.cs`
+(line 105), §11 from `src/SixtyFiveXX/Cpu.Exec.cs` (line 96). Renumbering them would silently falsify
+those comments, so this material lands at §12 instead. The mapping is exact and one-to-one:
+
+| The plan says | Read as | Subject |
+| --- | --- | --- |
+| §10.1 | §12.1 | 16-bit decimal `ADC`/`SBC` |
+| §10.2 | §12.2 | the `Op` member decision |
+| §10.3 | §12.3 | Table 5-7's `Direct,Y` row |
+| §10.4 | §12.4 | the x-width immediates |
+| §10.5 | §12.5 | a cycle formula for every opcode in phase 7c |
+
+**Sources, fetched for this section rather than recalled.** Clark, "65C816 Opcodes", from the GitHub
+mirror `https://raw.githubusercontent.com/6502org/6502.org/main/public/tutorials/65c816opcodes.html`
+(137,171 bytes, footer "Last Updated September 28, 2015") — the mirror because 6502.org itself 404s
+non-browser agents (§2.2). WDC W65C816S datasheet from
+`https://www.westerndesigncenter.com/wdc/documentation/w65c816s.pdf` (1,532,025 bytes, header
+"March 13, 2024"), Table 5-7 on pp. 36–42 and Table 7-1 on p. 49. Quotations below are verbatim from
+those two files. Notation is §5's: `m` and `x` are the flag values (0 or 1), `w` is 1 when `DL != $00`
+and 0 otherwise, `p` is 1 on a page cross.
+
+### 12.1 16-bit decimal `ADC` and `SBC` — mostly a recorded gap (the plan's §10.1)
+
+**Summary in one line: Clark states the flag *meanings* in decimal mode, gives one worked 16-bit example,
+and states that 8-bit decimal behaves like the 65C02 — but is silent on the correction algorithm at every
+width. The datasheet is silent too.**
+
+**What Clark does state.** §4, on the `d` flag:
+
+> When the d flag is 0, the ADC and SBC instructions perform binary arithmetic. When the d flag is 1,
+> the ADC and SBC instructions perform BCD arithmetic.
+
+§6.1.1.1, the arithmetic itself, which is stated once and not per-mode:
+
+> The formula for ADC is:
+>
+> accumulator = accumulator + data + carry
+>
+> The formula for SBC can be written several ways; one way is:
+>
+> accumulator = accumulator - data - 1 + carry
+
+and, immediately after the binary-mode flag rules, the whole of what §6.1.1.1 says about decimal-mode
+flags:
+
+> When the d flag is 1, the n, z, and c flags have the same meaning (i.e. the n flag reflects the high
+> bit of the result, the z flag indicates when the result is zero, and the carry indicates when the
+> result is outside the range 0 to 9999). The v flag is overwritten, but BCD is really an unsigned
+> representation, so the v flag can be considered invalid, since it does not represent a signed
+> arithmetic overflow.
+
+Note that this passage is width-neutral: it does not distinguish `m = 0` from `m = 1`, and "the range 0
+to 9999" is the four-digit range, so the sentence is at least written with the 16-bit case in view. The
+preceding binary-mode paragraphs *do* split by width explicitly ("bit 15 when the m flag is 0, bit 7 when
+the m flag is 1"); the decimal paragraph does not.
+
+**The one worked 16-bit decimal example Clark gives**, §6.1.1.1, verbatim:
+
+> Example 2: If the accumulator is $0001, the m flag is 0, the d flag is 1, and the c flag is 1, then
+> after SBC #$2003
+>
+> the accumulator will be $7998
+> the n flag will be 0
+> the z flag will be 0
+> the c flag will be 0
+
+This is the only place any source surveyed states a 16-bit decimal result, and it is an `SBC` example —
+Clark gives no decimal `ADC` example at any width. It pins down exactly one thing beyond the accumulator
+value, for `SBC`: **`N` comes from the corrected result, not from the binary intermediate.** Whether
+`ADC`'s decimal `N` at 16 bits comes from the same place is a separate, unestablished question; see gap 5
+below. The binary intermediate is not inferred here — Clark's **Example 1** immediately above is the same
+operands with `d = 0` and states the accumulator will be `$DFFE`, whose bit 15 is 1. For `d = 1` Clark
+states `n = 0`, which is bit 15 of the corrected `$7998`. `Z` and `C` are not discriminated by this
+example (both agree between the binary intermediate and the corrected result), and `V` is not listed at
+all.
+
+**What Clark states about 8-bit decimal, in the §6 preamble rather than in §6.1.1.1.** This passage sits
+under the heading `6  INSTRUCTIONS`, after the column key and before §6.1.1.1, which is why a search
+confined to the `ADC SBC` section misses it. Verbatim:
+
+> In general, in emulation mode (and for 8-bit results in native mode), the 65C816 has the same behavior
+> as 65C02 but the same cycle counts as the NMOS 6502. For example, when the d flag is 1 and the m flag
+> is 1, ADC #$00 will have valid n, z, and c flag results (like the 65C02, but unlike the NMOS 6502), but
+> will take 2 cycles (like the NMOS 6502, but unlike the 65C02).
+
+Three things follow, and the limits on each matter as much as the claim:
+
+- **Emulation mode and 8-bit native mode are grouped together**, both described as behaving like the
+  65C02. So the question "does decimal behaviour differ between emulation mode and 8-bit native mode?"
+  is **not** a gap — Clark answers it, in the negative. The hedge "In general" is his, and is preserved
+  here rather than dropped; it is a general statement, not a per-flag guarantee.
+- **It is scoped to 8-bit results.** It says nothing whatever about `m = 0`, which is the case phase 7c
+  must newly implement. The 16-bit correction algorithm remains what Example 2 alone speaks to.
+- **It enumerates `n`, `z` and `c`, and omits `v`.** That omission is consistent with §6.1.1.1's "the v
+  flag is overwritten … can be considered invalid", and with this codebase's measured finding that the
+  65C02's decimal `V` is computed exactly as NMOS does. `V` is not covered by the identity claim.
+
+It also corroborates §12.5's cycle answer a third time, from a worked example rather than a rule:
+`ADC #$00` with `d = 1`, `m = 1` takes 2 cycles, which is `3-m` with no decimal term.
+
+**What Clark does not state — recorded as silence, in those words.** The document was searched in full
+for `decimal`, `BCD`, `nibble`, `digit`, `$06`, `$60`, `correct`, `adjust`, `d flag`, `additional` and
+`cycle`. **The sources are silent on the decimal correction algorithm.**
+
+*(Search note, because it cost this section a revision: the §6 preamble passage above contains neither
+"decimal" nor "BCD" — it says "when the d flag is 1" — so the first pass over this section, searching only
+the obvious decimal vocabulary, missed it and wrongly recorded emulation-versus-native decimal behaviour
+as a gap. Clark names flags by letter far more often than by name. Search `d flag`, not `decimal`. A
+second trap in the same document: it is paginated with form feeds, so `takes no additional cycles` spans
+a blank line as `additional\n\ncycles` and does not match as a literal phrase.)* Clark nowhere describes a correction — not nibble-wise, not
+`$60`/`$06`-style as this codebase's `SbcCmos` uses, not anything, and not at 8 bits either. The brief's
+anticipated shape ("Clark describes 8-bit decimal mode but says nothing about 16-bit") does not apply:
+Clark describes the algorithm at *no* width. He states what the flags mean, what one 16-bit `SBC`
+produces, and that 8-bit decimal behaves like the 65C02 — and stops short of ever saying how the
+correction is performed, on any part, at any width.
+
+Specifically, the following are **not** established by any source and must be treated as open by task 5:
+
+1. **The correction algorithm**, at 8 or 16 bits. No source surveyed gives one.
+2. **How `V` is computed in decimal mode.** Clark says only that it "is overwritten" and "can be
+   considered invalid". "Overwritten with what" is not stated.
+3. **Whether `Z` and `C` are taken from the corrected result or the binary intermediate.** Clark's
+   wording ("the z flag indicates when the result is zero", "the carry indicates when the result is
+   outside the range 0 to 9999") reads as the corrected result, but Example 2 does not discriminate, and
+   he never uses the words "binary result" or "intermediate" in a decimal-mode sentence. `N` alone is
+   pinned for `SBC`, by Example 2.
+4. **Behaviour on invalid BCD input digits** (nibbles `$A`–`$F`). Not mentioned anywhere.
+5. **Whether `ADC`'s decimal `N` at 16 bits comes from the corrected result or the binary intermediate.**
+   Example 2 pins this for `SBC` only; Clark gives no decimal `ADC` example at any width, so nothing
+   licenses carrying the `SBC` answer over to `ADC`. This is not academic: this codebase's own NMOS pair
+   already diverges on the general question of where decimal `N` comes from. In
+   `src/SixtyFiveXX/Cpu.Exec.cs`, `Adc`'s decimal path takes `N` from the partially corrected high nibble
+   (`_s.N = (hi & 0x08) != 0;`, line 380), while `Sbc`'s takes it from the binary difference computed
+   before any decimal correction runs (`_s.N = (binary & 0x80) != 0;`, line 444). `ADC` and `SBC` are not
+   guaranteed to agree here, and the 65816 must be measured rather than assumed.
+
+Note what is **not** on that list any more: whether decimal behaviour differs between emulation mode and
+8-bit native mode. The §6 preamble quoted above groups the two, so that question is answered by a source
+and is not a gap. Note also that the preamble constrains gaps 1 and 3 **at 8 bits only** — it asserts
+65C02-like behaviour there without giving the algorithm, so task 5 may use the 65C02 path as a *hypothesis*
+for `m = 1` and must still measure it, and must not carry that hypothesis to `m = 0`, which no source
+covers.
+
+**What the datasheet adds, and why it is not a specification of the above.** Table 7-1 "Caveats" (p. 49),
+`(Flag Reg)` row, `W65C816S` column, verbatim:
+
+> N,V and Z flags valid in decimal mode. D=0 after reset/interrupt
+
+Three reasons that sentence does not close gaps 1–5. It says nothing about the algorithm. It says nothing
+about `C`. And it is **word-for-word the same claim the same table's row makes for the W65C02 and
+W65C02S columns** ("N,V and Z flags valid in decimal mode. D=0 after reset/interrupt") — a claim this
+project has already measured to overstate the real part. `Op.AdcCmos`'s doc comment, from a core
+certified against every decimal vector of `$69`, `$72`, `$E9` and `$F2`, records: *"N and Z come from the
+final decimal result, while C and V are computed exactly as NMOS does — so 'correct N/V/Z' overstates it,
+V included."* A row already known to overstate `V` for the 65C02 cannot be read as a specification of
+`V` for the 65816.
+
+**What task 5 can use.** Clark's Example 2 is a citable, single-point check that any candidate 16-bit
+decimal `SBC` must reproduce: `A = $0001`, `m = 0`, `d = 1`, `c = 1`, `SBC #$2003` → `A = $7998`,
+`n = 0`, `z = 0`, `c = 0`. Everything else about the algorithm has to come from the vectors, and when it
+does it belongs back in this section **labelled as measured, not cited** — the form §11 uses.
+
+#### Measured — the five gaps closed, phase 7c task 5
+
+Added 2026-08-05, after task 5. Everything in this block is **measured against the 600,000
+SingleStepTests vectors of the thirty `ADC`/`SBC` opcodes**, not cited. Nothing below has a source.
+Where a source says otherwise, that is called out — one of these findings contradicts Clark.
+
+The algorithm, at both widths and for both instructions, is the **nibble-wise** correction: each BCD
+digit is corrected in turn and its carry or borrow propagates into the next. Not the `$60`/`$06`
+adjustment of the binary result that `SbcCmos` uses. Implemented in `Cpu.Exec.cs`, `Adc816`/`Sbc816`.
+
+| Gap | Measured answer |
+| --- | --- |
+| 1. The correction algorithm | Nibble-wise, at 8 and 16 bits, for both instructions. Two digits at `m = 1`, four at `m = 0`, same rule repeated |
+| 2. How `V` is computed | `ADC`: from the **partially corrected** top digit — the sum before that digit's own `+$06`. `SBC`: from the **binary** difference. Both are exactly what the 8-bit NMOS/CMOS helpers in this codebase already did; `V` needed no new rule at either width |
+| 3. Where `Z` and `C` come from | `ADC`: both from the corrected result (`C` = carry out of the corrected top digit) — discriminated by vector `73 n 1007`. `SBC`: `C` from the binary difference, `Z` from the corrected result — discriminated by vector `fd n 3835`. Each is the sole discriminating vector in its own corpus — 37,519 16-bit decimal `ADC` vectors, 37,465 `SBC` |
+| 4. Invalid BCD digits (`$A`-`$F`) | Fall out of the nibble-wise rule with no special case. This is the *only* thing that distinguishes nibble-wise from `$60`/`$06`, and it is what made gap 1 measurable at all |
+| 5. `ADC`'s decimal `N` at 16 bits | The **corrected** result — the same source as `SBC`'s, though no source licensed assuming so. `SetZN16` on the corrected accumulator; passed first run |
+
+**The one finding that contradicts a source.** Clark's §6 preamble, quoted above, groups emulation mode
+and 8-bit native mode and says the 65816 "has the same behavior as 65C02" — hedged with "In general",
+and enumerating `n`, `z` and `c`. Task 5 took that as a hypothesis and delegated both 8-bit decimal
+paths to this codebase's certified `AdcCmos`/`SbcCmos`. **For `ADC` the hypothesis held; for `SBC` it
+did not.**
+
+> **Measured: the 65816's decimal `SBC` corrects nibble-wise (like NMOS), not by the 65C02's
+> `$60`/`$06` adjustment — at 8 bits as well as 16.**
+
+Established by all thirty `SBC` test cases failing at once (fifteen opcodes × two modes) and by this
+hand-trace of the first of them, **`e9 e 15`**: `A = $60B0` so `A8 = $B0`, `p = $3A` so `d = 1` and
+`c = 0`, operand `$4D`, expected final `A8 = $6C`.
+
+- `SbcCmos`'s rule: `binary = $B0 - $4D - 1 = $62`; `$62 >= 0` so no `-$60`; the low-nibble borrow
+  (`$0 - $D - 1 < 0`) takes `-$06` → **`$5C`**. Wrong.
+- Nibble-wise: `lo = $0 - $D - 1 = -14`, negative, so `-$06` and borrow one from the high digit;
+  `hi = $B - $4 - 1 = 6` → `$6C`. **Right.**
+
+Every flag agreed in that vector, and in all thirty: only the accumulator diverged, and only because
+the operand's `$D` digit is not valid BCD. Note what this means for gap 1's constraint — the §6
+preamble constrains 8-bit behaviour *loosely enough to be wrong*, so its "In general" is doing real
+work and it cannot be treated as a specification of anything.
+
+**The second correction, from the same run: `SBC`'s decimal `N` at 16 bits.** Vector **`e9 n 49`** —
+`A = $2A35`, `m = 0`, `d = 1`, `c = 0`, operand `$F5C0`. The accumulator was already right
+(`$D414`); `N` alone diverged. The binary difference is `$3474`, bit 15 clear; the corrected result is
+`$D414`, bit 15 set; the vector wants `n = 1`. So `N` comes from the corrected result — which is
+exactly what Clark's Example 2 already said, and what a `SBC` written from `Sbc`'s all-flags-binary
+shape gets wrong. `Z` moved with it, per gap 3.
+
+**What was right first time, and is therefore also measured:** every one of the fifteen `ADC` opcodes
+passed in both modes on the first run — the 8-bit delegation to `AdcCmos`, the four-digit nibble-wise
+16-bit path, `V` from the partially corrected top digit, and `N`/`Z` from the corrected result. Gap 5
+is closed in the affirmative, on 150,000 native-mode vectors, having been open on principle.
+
+### 12.2 The `Op` member decision — new members (the plan's §10.2)
+
+**Verdict: `Op.Adc816` and `Op.Sbc816`, new members. `Op.AdcCmos`/`Op.SbcCmos` are not reused.**
+
+The rule is the spec's, pre-committed and not re-litigated here
+(`docs/superpowers/specs/2026-08-03-65816-core-design.md`): *"reuse only if the sources state the
+behaviour is identical; any divergence, or any silence, gets its own members."*
+
+**The sentence the verdict rests on**, Clark §6.1.1.1, verbatim:
+
+> Note that like the NMOS 6502, but unlike the 65C02, decimal mode (i.e. when the d flag is 1) takes no
+> additional cycles.
+
+That is an explicit statement of *difference* from the 65C02 in decimal mode, from the higher-precedence
+of the two prose sources, and the datasheet states the same difference independently in Table 7-1's
+Timing sub-row `D. Decimal Mode` (§12.5). So this verdict does not rest on silence alone — there is a
+stated divergence.
+
+**The one statement of identity that does exist, and why it does not reach far enough.** Clark's §6
+preamble (quoted in full in §12.1) says the 65816 "has the same behavior as 65C02" — but only "in
+general", only **in emulation mode and for 8-bit results in native mode**, and its worked example
+enumerates `n`, `z` and `c` while omitting `v`. Three reasons that does not license reuse under the rule:
+
+1. **It does not cover `m = 0`.** Sixteen-bit decimal arithmetic is exactly what phase 7c adds, and no
+   source states it matches anything — the 65C02 has no 16-bit decimal mode to match.
+2. **It does not cover `V`.** The one flag `Op.AdcCmos`'s doc comment records as the 65C02's surprise
+   (*"C and V are computed exactly as NMOS does"*) is the one flag the sentence leaves out.
+3. **An `Op` member is selected once, not per width.** A member that was right for `m = 1` and unstated
+   for `m = 0` would still need a 16-bit path behind it, so the reuse it would buy is nil.
+
+The rule admits reuse only on a positive statement that *the* decimal behaviour is identical. What exists
+is a hedged, width-limited, `V`-omitting statement of partial identity sitting alongside a flat statement
+of divergence on timing. Divergence, partial identity and silence all point the same way.
+
+Two supporting facts, neither of them the reason but both worth recording:
+
+- **The existing helpers could not be reused as written even if the behaviour were identical.** `Adc`,
+  `AdcCmos`, `Sbc` and `SbcCmos` in `src/SixtyFiveXX/Cpu.Exec.cs` operate on `A8` and hard-code 8-bit
+  constants throughout (`0x0F`, `0x06`, `0x60`, `0x80`, `> 0xFF`). A 16-bit path is a different function
+  regardless of which `Op` member selects it.
+- **The precedent is this codebase's own.** `Op.AdcCmos`/`Op.SbcCmos` already exist as members separate
+  from `Op.Adc`/`Op.Sbc`, and their shared doc comment states why: *"Decimal mode differs from NMOS in
+  the accumulator correction as well as the flags, so these are separate members rather than a variant
+  test inside `Adc`."* Phase 4's ledger — the 65C02 family, where this separation was introduced — records
+  evidence for it rather than assertion: a reviewer deliberately broke `AdcCmos`'s `V` formula in a
+  worktree (dropped a `<<4`) and re-ran the Synertek Harte suite, and 9 of 256 opcodes failed, including
+  `$69` — direct evidence the vectors discriminate on this exact formula
+  (`.superpowers/sdd/progress.md`, "PHASE 4 FINAL REVIEW"). §1 of this document quotes the same doc
+  comment as one of the three findings where the documentation was wrong or silent and the vectors were
+  right. Adding a third pair for the 65816 is the same decision taken again for the same reason, not a
+  new pattern.
+
+### 12.3 Table 5-7's `Direct,Y` row — row 17 (the plan's §10.3)
+
+**Row number: 17**, headed `17. Direct, Y d,y`, opcode list `LDX, STX`, footed
+`2 OpCodes, 2 bytes, 4,5 and 6 cycles`. It is on datasheet p. 40, immediately below rows 16a and 16b.
+Transcribed in §9's format, same conventions — `(1)` is the 16-bit high half, `(2)` the direct-page
+penalty, `DO` the direct-page offset operand byte, `IO` an internal cycle with `VDA = VPA = 0` and no
+memory access:
+
+#### Direct,Y — row 17
+
+```
+LDX dp,Y / STX dp,Y   2 opcodes, 2 bytes, 4 / 5 / 6 cycles
+  1        VDA=1 VPA=1   PBR,PC       OpCode
+  2        VDA=0 VPA=1   PBR,PC+1     DO
+  2a  (2)  VDA=0 VPA=0   PBR,PC+1     IO        <- DL != $00
+  3        VDA=0 VPA=0   PBR,PC+1     IO        <- the indexing cycle, unconditional
+  4        VDA=1 VPA=0   0,D+DO+Y     Data Low
+  4a  (1)  VDA=1 VPA=0   0,D+DO+Y+1   Data High
+```
+
+**It does mirror §9's `Direct,X` block (row 16a) exactly with `Y` substituted — checked cell by cell
+against the table rather than assumed.** Same six rows, same `VDA`/`VPA` pairs, same `(2)` on 2a and
+`(1)` on 4a, same unconditional internal cycle 3 at `PBR,PC+1`, same bank-0 data access. The only
+differences are the index register in the address expression and the header line: row 16a is
+`12 OpCodes, 2 bytes, 4,5,and 6 cycles` for `ADC, AND, BIT, CMP, EOR, LDA LDY, ORA, SBC, STA, STY, STZ`,
+row 17 is `2 OpCodes, 2 bytes, 4,5 and 6 cycles` for `LDX, STX`. The width flag gating the `(1)` row is
+`x` here rather than `m`, since `LDX`/`STX` are x-width — which is Clark's `5-x+w` for `$B6`/`$96`
+(§12.5), against `5-m+w` for the row-16a opcodes.
+
+**Row 17 is the only Table 5-7 row phase 7c needs that §9 does not already have.** Cross-check of every
+7c opcode against the table's own opcode lists, as printed on pp. 36–42 (the grouped rows are given once
+where their lists are identical; punctuation slips in the datasheet's own lists are reproduced):
+
+| Row | Header | Covers, in this phase |
+| --- | --- | --- |
+| 1a | `ADC, AND, BIT, CMP, CPX, CPY, EOR, LDA, LDX LDY ORA, SBC, STA, STX, STY, STZ` | all `abs` forms |
+| 5 | `ADC, AND, CMP, EOR, LDA, ORA, SBC, STA` | `long,X` |
+| 4a | same eight | `long` |
+| 6a | `ADC, AND, BIT, CMP, EOR, LDA, LDY, ORA, SBC, STA, STZ` | `abs,X`, incl. `BIT`, `LDY`, `STZ` |
+| 7 | `ADC, AND, CMP, EOR, LDA, LDX, ORA, SBC, STA` | `abs,Y`, incl. `LDX` |
+| 10a | `ADC AND BIT, CMP, CPX, CPY ,EOR, LDA, LDX, LDY, ORA, SBC, STA, STX, STY, STZ` | all `dp` forms |
+| 11 / 12 / 13 / 14 / 15 | `ADC, AND, CMP, EOR, LDA, ORA, SBC, STA` each | `(dp,X)`, `(dp)`, `(dp),Y`, `[dp],Y`, `[dp]` |
+| 16a | `ADC, AND, BIT, CMP, EOR, LDA LDY, ORA, SBC, STA, STY, STZ` | `dp,X`, incl. `BIT`, `LDY`, `STY`, `STZ` |
+| **17** | **`LDX, STX`** | **`dp,Y` — the row added above** |
+| 18 | `ADC, AND, BIT, CMP, CPX, CPY, EOR, LDA, LDX, LDY, ORA, REP, SBC, SEP` | all immediates |
+| 23 / 24 | `ADC, AND, CMP, EOR, LDA, ORA, SBC, STA` each | `sr,S`, `(sr,S),Y` |
+
+Note what that table also settles by omission. `STZ` appears in rows 1a, 6a, 10a and 16a and nowhere
+else; `STX` in rows 1a, 10a and 17 only; `STY` in rows 1a, 10a and 16a only. That is exactly the mode
+set Clark gives each of them (§12.5) — four modes for `STZ`, three each for `STX` and `STY` — so neither
+source has a mode the other lacks for these opcodes.
+
+### 12.4 The x-width immediates (the plan's §10.4)
+
+**Confirmed: `LDX #`, `LDY #`, `CPX #` and `CPY #` are `3-x` cycles and `3-x` bytes, mirroring
+`LDA #`'s `3-m`.** Clark's rows, verbatim, columns `OP LEN CYCLES MODE nvmxdizc e SYNTAX`:
+
+```
+A2  3-x  3-x  imm  x.....x. .  LDX #$54       (Clark 6.5)
+A0  3-x  3-x  imm  x.....x. .  LDY #$54       (Clark 6.5)
+E0  3-x  3-x  imm  x.....xx .  CPX #$54       (Clark 6.1.1.2)
+C0  3-x  3-x  imm  x.....xx .  CPY #$54       (Clark 6.1.1.2)
+A9  3-m  3-m  imm  m.....m. .  LDA #$54       (Clark 6.5, already in §5)
+```
+
+Both the `LEN` and the `CYCLES` column read `3-x`, so the byte count and the cycle count move together,
+exactly as `LDA #`'s do with `m`.
+
+**One correction to the task brief:** only `LDX #` and `LDY #` are in Clark §6.5. `CPX #` and `CPY #`
+are in **§6.1.1.2** (`CMP CPX CPY`), which is where the compares live. The formulas are as the brief
+predicted; the section reference is not.
+
+The datasheet corroborates from the other direction. Table 5-7 row 18 is
+`18.Immediate #`, `14 OpCodes, 2 and 3 bytes, 2 and 3 cycles`, with the conditional cycle `2a` carrying
+notes `(1)` and `(8)`, and Note 1 reads: *"Add 1 byte (for immediate only) for M=0 or X=0 (i.e. 16-bit
+data), add 1 cycle for M=0 or X=0."* Note the "**or X=0**" — the datasheet's own note is explicit that
+the immediate widening is driven by `x` as well as by `m`, and row 18's opcode list includes `CPX, CPY,
+LDX, LDY` alongside the m-width ones.
+
+### 12.5 A cycle formula for every opcode in phase 7c (the plan's §10.5)
+
+**The answer task 5's shape depends on, first: the 65816's `ADC` and `SBC` formulas carry no
+decimal-mode term at all — decimal mode costs no extra cycle on this part, so `ADC`/`SBC` use the
+ordinary read tail and task 5 needs no new micro-op, no conditionally-skipped slot, and no 65816
+analogue of `MicroOp.BcdExtra`.**
+
+Two independent sources, in the two-of-three agreement §4 asks for. Clark §6.1.1.1, verbatim:
+
+> Note that like the NMOS 6502, but unlike the 65C02, decimal mode (i.e. when the d flag is 1) takes no
+> additional cycles.
+
+WDC datasheet Table 7-1 "Caveats" (p. 49), Timing sub-row `D. Decimal Mode`, read across its four
+columns — `NMOS 6502` / `W65C02` / `W65C02S` / `W65C816S`:
+
+```
+D. Decimal Mode    No add. cycles    Add 1 cycle    Add 1 Cycle    No add. cycles
+```
+
+(The Timing cell is one merged cell holding sub-rows A–D per column; the row alignment was verified
+against a rendering of p. 49, not only against extracted text, because a mis-aligned read of that cell
+would flip this answer.) Corroborating both: every one of the thirty `ADC`/`SBC` formulas below carries
+`m`, `w`, `x` and `p` terms and no `d` term — Clark's cycle column has no way to express a decimal
+penalty for this part because there is none.
+
+**The six full-mode ALU operations.** `ORA`, `AND`, `EOR`, `ADC`, `CMP` and `SBC` have **identical cycle
+and byte formulas in every one of the fifteen modes** — checked opcode by opcode across Clark §6.1.2.1
+(`AND EOR ORA`), §6.1.1.1 (`ADC SBC`) and §6.1.1.2 (`CMP`), not assumed from one of them. The formulas
+are also identical to `LDA`'s in §5, mode for mode.
+
+| Mode | ORA | AND | EOR | ADC | CMP | SBC | cycles | bytes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| immediate | `$09` | `$29` | `$49` | `$69` | `$C9` | `$E9` | `3-m` | `3-m` |
+| direct | `$05` | `$25` | `$45` | `$65` | `$C5` | `$E5` | `4-m+w` | 2 |
+| direct,X | `$15` | `$35` | `$55` | `$75` | `$D5` | `$F5` | `5-m+w` | 2 |
+| absolute | `$0D` | `$2D` | `$4D` | `$6D` | `$CD` | `$ED` | `5-m` | 3 |
+| absolute,X | `$1D` | `$3D` | `$5D` | `$7D` | `$DD` | `$FD` | `6-m-x+x*p` | 3 |
+| absolute,Y | `$19` | `$39` | `$59` | `$79` | `$D9` | `$F9` | `6-m-x+x*p` | 3 |
+| (direct,X) | `$01` | `$21` | `$41` | `$61` | `$C1` | `$E1` | `7-m+w` | 2 |
+| (direct),Y | `$11` | `$31` | `$51` | `$71` | `$D1` | `$F1` | `7-m+w-x+x*p` | 2 |
+| (direct) | `$12` | `$32` | `$52` | `$72` | `$D2` | `$F2` | `6-m+w` | 2 |
+| \[direct\] | `$07` | `$27` | `$47` | `$67` | `$C7` | `$E7` | `7-m+w` | 2 |
+| \[direct\],Y | `$17` | `$37` | `$57` | `$77` | `$D7` | `$F7` | `7-m+w` | 2 |
+| long | `$0F` | `$2F` | `$4F` | `$6F` | `$CF` | `$EF` | `6-m` | 4 |
+| long,X | `$1F` | `$3F` | `$5F` | `$7F` | `$DF` | `$FF` | `6-m` | 4 |
+| stack,S | `$03` | `$23` | `$43` | `$63` | `$C3` | `$E3` | `5-m` | 2 |
+| (stack,S),Y | `$13` | `$33` | `$53` | `$73` | `$D3` | `$F3` | `8-m` | 2 |
+
+**`BIT` and the remaining loads, stores and compares.** Clark §6.1.2.2 (`BIT`), §6.5 (`LDX LDY STX STY
+STZ`) and §6.1.1.2 (`CPX CPY`):
+
+| Op | Mode | Opcode | cycles | bytes | Clark § |
+| --- | --- | --- | --- | --- | --- |
+| `BIT` | immediate | `$89` | `3-m` | `3-m` | 6.1.2.2 |
+| `BIT` | direct | `$24` | `4-m+w` | 2 | 6.1.2.2 |
+| `BIT` | direct,X | `$34` | `5-m+w` | 2 | 6.1.2.2 |
+| `BIT` | absolute | `$2C` | `5-m` | 3 | 6.1.2.2 |
+| `BIT` | absolute,X | `$3C` | `6-m-x+x*p` | 3 | 6.1.2.2 |
+| `LDX` | immediate | `$A2` | `3-x` | `3-x` | 6.5 |
+| `LDX` | direct | `$A6` | `4-x+w` | 2 | 6.5 |
+| `LDX` | direct,Y | `$B6` | `5-x+w` | 2 | 6.5 |
+| `LDX` | absolute | `$AE` | `5-x` | 3 | 6.5 |
+| `LDX` | absolute,Y | `$BE` | `6-2*x+x*p` | 3 | 6.5 |
+| `LDY` | immediate | `$A0` | `3-x` | `3-x` | 6.5 |
+| `LDY` | direct | `$A4` | `4-x+w` | 2 | 6.5 |
+| `LDY` | direct,X | `$B4` | `5-x+w` | 2 | 6.5 |
+| `LDY` | absolute | `$AC` | `5-x` | 3 | 6.5 |
+| `LDY` | absolute,X | `$BC` | `6-2*x+x*p` | 3 | 6.5 |
+| `STX` | direct | `$86` | `4-x+w` | 2 | 6.5 |
+| `STX` | direct,Y | `$96` | `5-x+w` | 2 | 6.5 |
+| `STX` | absolute | `$8E` | `5-x` | 3 | 6.5 |
+| `STY` | direct | `$84` | `4-x+w` | 2 | 6.5 |
+| `STY` | direct,X | `$94` | `5-x+w` | 2 | 6.5 |
+| `STY` | absolute | `$8C` | `5-x` | 3 | 6.5 |
+| `STZ` | direct | `$64` | `4-m+w` | 2 | 6.5 |
+| `STZ` | direct,X | `$74` | `5-m+w` | 2 | 6.5 |
+| `STZ` | absolute | `$9C` | `5-m` | 3 | 6.5 |
+| `STZ` | absolute,X | `$9E` | `6-m` | 3 | 6.5 |
+| `CPX` | immediate | `$E0` | `3-x` | `3-x` | 6.1.1.2 |
+| `CPX` | direct | `$E4` | `4-x+w` | 2 | 6.1.1.2 |
+| `CPX` | absolute | `$EC` | `5-x` | 3 | 6.1.1.2 |
+| `CPY` | immediate | `$C0` | `3-x` | `3-x` | 6.1.1.2 |
+| `CPY` | direct | `$C4` | `4-x+w` | 2 | 6.1.1.2 |
+| `CPY` | absolute | `$CC` | `5-x` | 3 | 6.1.1.2 |
+
+Ninety opcodes in the first table plus thirty-one in the second is **121**, the phase's full count.
+
+Six things fall out of those tables that §5's `LDA`/`STA` slice could not show, each a place a
+transcription from memory would plausibly go wrong:
+
+- **`LDX abs,Y` and `LDY abs,X` are `6-2*x+x*p`, not `6-m-x+x*p`.** This is the one formula *shape* §5
+  does not contain. The reason is structural rather than special-cased: in `6-m-x+x*p` the `-m` is the
+  data width and the `-x` the index width, and for `LDX`/`LDY` both are `x`, so the two terms collapse
+  into `-2*x`. It still shares Table 5-7 rows 7 and 6a with the m-width opcodes (§12.3) — the bus
+  sequence is the same, only the flag gating the `(1)` row differs.
+- **`STZ abs,X` is `6-m` with no `p` term** — an indexed write, so it always pays, page cross or not.
+  Same rule §3.2 established for `STA abs,X`, and the only indexed write among the new store opcodes.
+- **`BIT abs,X` is `6-m-x+x*p`**, an ordinary m-width indexed read; `BIT` gains a `dp,X` and an `abs,X`
+  form on this part that the NMOS `BIT` does not have.
+- **`BIT #` is `3-m` and affects only `z`.** Clark §6.1.2.2: *"Immediate addressing only affects the z
+  flag (with the result of the bitwise And), but does not affect the n and v flags. All other addressing
+  modes of BIT affect the n, v, and z flags. This is the only instruction in the 6502 family where the
+  flags affected depends on the addressing mode."* Clark's flag column shows this directly: `$89` is
+  `......m.` against `mm....m.` for the other four.
+- **`BIT`'s `n` and `v` come from the data, at the 16-bit positions when `m = 0`.** Clark §6.1.2.2:
+  *"The n flag reflects the high bit of the data (note: just the data, not the bitwise And of the
+  accumulator and the data). The v flag reflects the second highest bit of the data (i.e. bit 14 of the
+  data when the m flag is 0, and bit 6 of the data when the m flag is 1 …)."*
+- **`CMP`/`CPX`/`CPY` are always binary and never touch `v`.** Clark §6.1.1.2, on `CMP` versus `SBC`:
+  *"A. It is always a binary subtraction (i.e. SBC as though the d flag was 0) B. It does not include
+  the carry in the formula (i.e. register - data; in other words, SBC as though the carry was set before
+  the SBC) C. The v flag is not affected."* So §12.1's open questions do not reach the compares — they
+  are settled, and they are settled by a source rather than by a vector.
+
+### 12.6 The gaps this section records, listed in one place
+
+Everything above either carries a named source or appears here. Task 5 owned the first block; nothing
+else in phase 7c depended on the rest.
+
+**All five are now closed, by measurement.** They are left standing below, with what the sources said
+when they were opened, because the difference between "no source says this" and "the vectors say this"
+is the thing this document exists to keep visible. The answers are in §12.1's **Measured** block, which
+names the vectors; the one-line versions are in the right-hand column.
+
+| # | Gap | Status when opened | Resolved |
+| --- | --- | --- | --- |
+| 1 | The decimal correction algorithm for `ADC`/`SBC`, at 8 **or** 16 bits | **The sources are silent.** Clark gives none at any width; the datasheet gives none | **Measured**, task 5: nibble-wise at both widths, both instructions. *Not* the 65C02's `$60`/`$06` form — see the contradiction below |
+| 2 | How `V` is computed in decimal mode | **The sources are silent.** Clark: "overwritten … can be considered invalid". Table 7-1's "N,V and Z flags valid" is the same wording already measured to overstate for the 65C02 | **Measured**, task 5: `ADC` from the partially corrected top digit, `SBC` from the binary difference — the 8-bit helpers' existing rules, unchanged at 16 bits. No discriminating-vector figure is available for this gap: it closed by matching the existing 8-bit rule rather than by a single vector that distinguishes one candidate answer from another |
+| 3 | Whether `Z` and `C` come from the corrected result or the binary intermediate | **The sources are silent.** Clark's wording implies the corrected result but Example 2 does not discriminate | **Measured**, task 5: `ADC` both from the corrected result; `SBC` `C` from the binary difference and `Z` from the corrected result |
+| 4 | Decimal behaviour on invalid BCD digits (`$A`–`$F` nibbles) | **The sources are silent.** Not mentioned anywhere surveyed | **Measured**, task 5: falls out of the nibble-wise rule, no special case — and is the only thing that discriminated gap 1 |
+| 5 | Whether `ADC`'s decimal `N` at 16 bits comes from the corrected result or the binary intermediate | **The sources are silent for `ADC`.** Example 2 pins `N` for `SBC` only; Clark gives no decimal `ADC` example at any width. This codebase's own NMOS `Adc`/`Sbc` already diverge on the general question (`src/SixtyFiveXX/Cpu.Exec.cs:380` vs `:444`), so the `SBC` answer must not be assumed for `ADC` | **Measured**, task 5: the corrected result, the same as `SBC`'s. Passed first run on 150,000 native-mode vectors — 25,426 of the 37,519 16-bit decimal `ADC` vectors discriminate `N` |
+
+**One source turned out to be wrong, and it is the one that constrained gaps 1 and 3 at `m = 1`.**
+Clark's §6 preamble ("the same behavior as 65C02", 8-bit results) was treated as a hypothesis to
+measure rather than a citation to implement against — correctly, as it happens. It holds for `ADC` and
+fails for `SBC`: the 65816's decimal `SBC` corrects nibble-wise at 8 bits too, where the 65C02 adjusts
+by `$60`/`$06`. §12.1's Measured block has the hand-trace. The precedence rule in §4 did its job, and
+"In general" was load-bearing.
+
+What is **not** a gap, so nobody re-opens it: `SBC`'s decimal `N` source at 16 bits (Clark's Example 2,
+§12.1, and now the vectors agreeing); whether emulation mode and 8-bit native mode differ in decimal
+behaviour (Clark's §6 preamble groups them — §12.1); the decimal cycle count (§12.5, two sources
+agreeing, plus the §6 preamble's worked example a third time — and confirmed by 600,000 vectors passing
+with no micro-op change); the `Op` member verdict (§12.2, decided by a pre-committed rule on a stated
+divergence, and vindicated: `SBC`'s divergence is real); row 17 (§12.3, transcribed); the x-width
+immediates (§12.4, transcribed); and all 121 cycle formulas (§12.5, transcribed).
+
+### 12.7 The direct-page indirect pointer's high byte wraps on `D == $0000`, not on `DL == $00` — measured
+
+Added 2026-08-05, during phase 7c task 5.
+
+Task 5's vectors surfaced one non-arithmetic failure, and it is worth its own subsection because it
+falsifies a "zero vector coverage" note that a phase 7b code review had left in the source.
+
+`Cpu.DirectPagePointerHighAddress` decides where an "old" direct-page indirect mode — `(dp)`, `(dp,X)`,
+`(dp),Y` — reads the *high byte of its pointer* when the pointer's own low byte sits at `$xxFF`. Clark's
+appendix is the source, verbatim (already quoted in that method's remarks):
+
+> if the D register is $0000 (and the e flag is 1), then LDA ($FF) uses a pointer whose low byte is at
+> $0000FF and whose high byte is at $000000 (like the 65C02)
+
+Phase 7b implemented that as `E && (D & $FF) == $00` — generalising Clark's `D == $0000` to "`DL` is
+zero", by analogy with `MicroOp.DirectPageIndexX`, which really does use the `DL` condition. At the time
+no vector could tell the two apart, and the method's remarks said so.
+
+**Measured, from vector `e1 e 8669`** (`SBC (dp,X)`, emulation mode): `D = $F400` — so `DL == $00` but
+`D != $0000` — direct-page offset `$B0`, `X = $4F`, giving a pointer base of `$F4FF`. The hardware reads
+the pointer's high byte at **`$F500`**. It does not wrap. Reading it at `$F400` yields a pointer of
+`$002F` instead of `$3E2F`, an operand of `$00` instead of `$B3`, and a final `A` of `$3108` against the
+vector's `$3155`.
+
+So the condition is Clark's literal one, `D == $0000`, and the generalisation was wrong. Two things keep
+this narrow:
+
+- **The index add's `DL == $00` condition is not affected and is separately confirmed.** A sweep of the
+  "old" `.e` files wherever `MicroOp.DirectPageIndexX`'s wrap applies found 320 emulation vectors
+  discriminated with `D != $0000`, and every one of them wraps. Sixteen files actually contributed a
+  discriminating vector; eight of those are plain `dp,X`, not indirect — the 24 purely indirect `.e`
+  files alone account for only 162 of the 320. The two conditions genuinely differ; only the pointer's
+  `+1` read follows `D == $0000`.
+- **`e1 e 8669` is the only vector in the corpus that discriminates the pointer read at all** — 1 hit
+  across those same 24 files, and the `.n` files cannot contribute because the whole rule is gated on
+  `E`. With `D == $0000` specifically there are zero vectors, so the wrapping half of the rule still
+  rests on Clark alone, exactly as before. What changed is that the non-wrapping half is now measured.
+
+The same shape as §11: a rule the earlier sections do not state, measured from the vectors, and agreeing
+with the one source that speaks to it once that source is read literally rather than generalised.

@@ -44,10 +44,10 @@ instruction.ToString();  // "LDA $1234,X"
 Driven by the same opcode table the engine runs from, so mnemonic and operand text cannot
 drift from what the engine executes. For the five 8-bit cores, adding an opcode makes it
 decodable in the same commit that makes it executable, without exception. That does not yet
-hold for the 65816: 12 of its 15 addressing modes have no operand-format case here, so 20 of
-phase 7b's 32 implemented opcodes throw `NotSupportedException` on decode, and `LDA #`
-decodes at a fixed 2 bytes regardless of `m`, which is wrong once the accumulator is 16
-bits. Disassembler support for the 65816 is phase 7e's job. Walk memory by `Length`.
+hold for the 65816: most of its addressing modes have no operand-format case here, so many
+implemented opcodes throw `NotSupportedException` on decode, and `LDA #` decodes at a fixed
+2 bytes regardless of `m`, which is wrong once the accumulator is 16 bits. Disassembler
+support for the 65816 is phase 7e's job. Walk memory by `Length`.
 Branches show the address they land on rather than the displacement they encode, and `BRK`
 is two bytes because its second byte is fetched and discarded rather than executed.
 
@@ -65,7 +65,7 @@ existing `IBus` reference in `RefBus` and pay one virtual call per access.
 | 65C02 Rockwell | Complete | Harte SingleStepTests + Klaus 65C02 extended |
 | 65C02 WDC | Complete | Harte SingleStepTests + Klaus 65C02 extended |
 | 6510 | Complete | The 6502 suites for the inherited opcodes + VICE `cpuport/test1` for the `$00`/`$01` port |
-| 65816 | Phase 7b: 32 of 256 opcodes | Harte SingleStepTests/65816, per-cycle, including bus-qualifier pins |
+| 65816 | Phases 7b–7c: partial (see below) | Harte SingleStepTests/65816, per-cycle, including bus-qualifier pins |
 
 IRQ and NMI (hardware-correct sampling, edge latching, and BRK/NMI hijacking), the RDY
 halt line, and the SO pin are complete, alongside `Reset()` and `BRK`.
@@ -82,8 +82,16 @@ all fifteen 65816 addressing modes, plus `XCE`, `REP` and `SEP` — 32 opcodes i
 certified per-cycle in both emulation and native mode against 640,000 SingleStepTests
 vectors, including the full eight-character bus-qualifier pin string asserted on every cycle.
 
-**This is not a complete core.** 32 of the 65816's 256 opcodes are implemented; every other
-opcode throws `UndefinedOpcodeException`. Phases 7c and 7d add the rest.
+**This is not a complete core.** 153 of the 65816's 256 opcodes are implemented — phase 7b's 32,
+plus phase 7c's bulk work, which added `ORA`, `AND`, `EOR`, `CMP`, `ADC` and `SBC` in all fifteen
+addressing forms each, `CPX` and `CPY` in three each, `BIT` in five, `LDX` and `LDY` in five each,
+`STX` and `STY` in three each, and `STZ` in four.
+`ADC` and `SBC` are cycle- and result-correct in decimal mode at both operand widths, including
+16-bit BCD, which no source documents — the correction algorithm was measured from the vectors.
+`BIT`'s immediate opcode is a genuinely different operation from its other four forms, not just
+a narrower addressing mode: it sets Z alone, leaving N and V untouched. `LDX` and `STX` bring
+`dp,Y`, the one addressing mode phase 7c adds and the only one no other instruction on the part
+uses. Every other opcode throws `UndefinedOpcodeException`. Phases 7c′ and 7d add the rest.
 
 **The state widening is a breaking change**: `CpuState.A`, `X`, `Y` and `S` are now `ushort`
 rather than `byte`.

@@ -360,40 +360,61 @@ internal sealed class MicroOpTable
     /// document §9 row 19a. Task 4 added <c>REP</c>/<c>SEP</c>'s real three-cycle sequence — a
     /// fetch, <see cref="MicroOp.RepSepOperand"/>, then <see cref="MicroOp.RepSepExec"/>'s
     /// internal cycle, §9's "Immediate, and REP/SEP". Tasks 5 and 6 add every remaining LDA/STA
-    /// form via <see cref="EmitLdaSta816"/> — the first place emission genuinely depends on
+    /// form via <see cref="EmitAddressed816"/> — the first place emission genuinely depends on
     /// <c>info.Mode</c> rather than <c>info.Operation</c> alone, which is why that method takes
     /// the whole descriptor and switches on the mode instead of being folded into the <c>if</c>
-    /// chain here.
+    /// chain here. Phase 7c task 3 made that the fall-through for every addressed opcode rather
+    /// than an opt-in for two operations, so each <c>if</c> here now <c>return</c>s: without
+    /// that, an opcode matching one of the early branches would go on to have an addressing
+    /// sequence concatenated onto it.
     /// </remarks>
     private static void Emit816(List<MicroOp> ops, OpcodeInfo info)
     {
-        if (info.Operation == Op.Xce) ops.Add(MicroOp.ImpliedExec816);
+        if (info.Operation == Op.Xce)
+        {
+            ops.Add(MicroOp.ImpliedExec816);
+            return;
+        }
 
         if (info.Operation is Op.Rep or Op.Sep)
+        {
             ops.AddRange([MicroOp.RepSepOperand, MicroOp.RepSepExec]);
+            return;
+        }
 
-        if (info.Operation is Op.Lda or Op.Sta)
-            EmitLdaSta816(ops, info);
+        // Everything else on the 65816 forms an effective address and then reads or writes it.
+        // Routed by mode and access rather than by an ever-growing list of operations: the
+        // emitter's own `default:` throw is the tripwire for a mode with no sequence, and
+        // keeping every addressed opcode on one path is what makes it a real tripwire rather
+        // than one that only fires for operations somebody remembered to list here.
+        EmitAddressed816(ops, info);
     }
 
     /// <summary>
-    /// Every LDA/STA addressing form, built directly against research document §9's per-mode
-    /// blocks. Named <c>EmitDirectPage816</c> through task 5, when it covered only the
-    /// seven direct-page modes; task 6 folded the remaining eight forms (absolute, long,
+    /// Every 65816 addressing form, built directly against research document §9's per-mode
+    /// blocks. Named <c>EmitDirectPage816</c> through phase 7b task 5, when it covered only the
+    /// seven direct-page modes; phase 7b task 6 folded the remaining eight forms (absolute, long,
     /// stack-relative, immediate) into the same switch rather than a second method, since every
     /// one of them ends the same way — <c>info.Mode</c> drives the addressing prefix and, for
     /// every mode but immediate, which "+1" high-byte micro-op closes the sequence, while
-    /// <c>info.Access</c> (<c>LDA</c> reads, <c>STA</c> writes) drives which pair of low/high
-    /// access micro-ops does: <see cref="MicroOp.ReadExec816"/> and a read-high micro-op, or
+    /// <c>info.Access</c> drives which pair of low/high access micro-ops does:
+    /// <see cref="MicroOp.ReadExec816"/> and a read-high micro-op, or
     /// <see cref="MicroOp.ExecWrite816"/> and a write-high one. Immediate is the one mode that
     /// does not share that tail — it has no effective address for <see cref="MicroOp.ReadExec816"/>
     /// to read — so it returns before the <c>switch</c> rather than adding a case to it.
+    /// <para>
+    /// Called <c>EmitLdaSta816</c> until phase 7c task 3, when <c>ORA</c>/<c>AND</c>/<c>EOR</c>
+    /// joined <c>LDA</c>/<c>STA</c> on it unchanged: nothing below reads <c>info.Operation</c>,
+    /// only <c>info.Mode</c> and <c>info.Access</c>, so an operation that reuses a certified
+    /// addressing mode costs a table entry and an <c>Exec</c> arm and nothing here.
+    /// </para>
     /// </summary>
-    private static void EmitLdaSta816(List<MicroOp> ops, OpcodeInfo info)
+    private static void EmitAddressed816(List<MicroOp> ops, OpcodeInfo info)
     {
         if (info.Mode == AddrMode.Immediate)
         {
-            // LDA # ($A9) only — STA has no immediate form. ImmExec816 ends the instruction
+            // The accumulator's immediate forms — LDA/ORA/AND/EOR #; STA has none, and phase
+            // 7c task 3 added the other three here. ImmExec816 ends the instruction
             // after the low byte when M selects 8 bits; ImmExecHigh816 supplies the second
             // operand byte otherwise. Distinct from AddrMode.ImmediateByte (REP/SEP's fixed
             // 8-bit operand, MicroOp.RepSepOperand/RepSepExec): this operand's width and the
@@ -411,6 +432,12 @@ internal sealed class MicroOpTable
 
             case AddrMode.DirectPageX:
                 ops.AddRange([MicroOp.FetchDpOffset, MicroOp.DirectPagePenalty, MicroOp.DirectPageIndexX]);
+                break;
+
+            // Research document §12.3. Identical in shape to DirectPageX with Y substituted —
+            // LDX and STX are the only instructions that use it.
+            case AddrMode.DirectPageY:
+                ops.AddRange([MicroOp.FetchDpOffset, MicroOp.DirectPagePenalty, MicroOp.DirectPageIndexY]);
                 break;
 
             case AddrMode.DirectPageIndirect:
@@ -513,21 +540,26 @@ internal sealed class MicroOpTable
                 break;
 
             default:
-                throw new InvalidOperationException($"{info.Mnemonic}: {info.Mode} has no LDA/STA sequence.");
+                throw new InvalidOperationException(
+                    $"{info.Mnemonic}: {info.Mode} has no 65816 addressing sequence.");
         }
 
-        // Code-review fix (task 5), extended by task 6: only the two plain direct-page forms
-        // and plain stack-relative are bank-0-confined (their data access is 0,D+DO[+X] or
-        // 0,S+SO); every other mode's final access goes through DBR or the operand's own bank
-        // byte, and its "+1" must carry into the next bank rather than wrap — Clark §5.2
-        // Example 2, cited at Cpu.HighByteAddressCarry. (sr,S),Y is NOT in the bank-0-confined
-        // set despite sharing sr,S's bank-0 pointer fetch: task 6 review found this mode's
+        // Code-review fix (phase 7b task 5), extended by phase 7b task 6 and again by phase 7c
+        // task 7: only the three plain direct-page forms — dp, dp,X and dp,Y — and plain
+        // stack-relative are bank-0-confined (their data access is 0,D+DO[+X|+Y] or 0,S+SO);
+        // dp,Y joined the set with the mode itself in phase 7c task 7, since it is direct-page
+        // addressing and confined exactly as dp,X is. Every other mode's final access goes
+        // through DBR or the operand's own bank byte, and its "+1" must carry into the next bank
+        // rather than wrap — Clark §5.2 Example 2, cited at Cpu.HighByteAddressCarry. (sr,S),Y is
+        // NOT in the bank-0-confined set despite sharing sr,S's bank-0 pointer fetch: phase 7b
+        // task 6 review found this mode's
         // *final* access, DBR,AA+Y (§9 row 24, cycles 7/7a), goes through DBR exactly like
         // (dp),Y's does — indistinguishable from (dp),Y's bank-carry requirement, and wrongly
         // grouped with plain sr,S here originally. Zero vector coverage: catching it needs
         // M=0 with the indexed pointer landing exactly on $xxFFFF, which no SingleStepTests
         // vector for $B3/$93 happens to hit across 10,000 tries each.
-        var carry = info.Mode is not (AddrMode.DirectPage or AddrMode.DirectPageX or AddrMode.StackRelative);
+        var carry = info.Mode is not (AddrMode.DirectPage or AddrMode.DirectPageX
+            or AddrMode.DirectPageY or AddrMode.StackRelative);
 
         if (info.Access == Access.Write)
         {

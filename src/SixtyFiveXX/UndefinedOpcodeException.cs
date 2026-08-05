@@ -5,11 +5,14 @@ namespace SixtyFiveXX;
 /// </summary>
 /// <remarks>
 /// Unreachable for the five 8-bit cores: all 256 entries in each of their tables are defined.
-/// Reachable for <c>W65C816Variant</c>, whose opcode table defines only the 32 opcodes phase 7b
-/// implemented — <c>LDA</c>/<c>STA</c> across all 15 addressing modes, plus <c>XCE</c>,
-/// <c>REP</c> and <c>SEP</c> — and leaves the other 224 undefined until phases 7c and 7d fill
-/// them in. It is deliberately loud: silently treating an unknown opcode as a NOP hides real
-/// bugs in the code under test.
+/// Reachable for <c>W65C816Variant</c>, whose opcode table is still being filled in — phase 7b
+/// landed <c>LDA</c>/<c>STA</c> across all 15 addressing modes plus <c>XCE</c>, <c>REP</c> and
+/// <c>SEP</c>, and phases 7c, 7c′ and 7d add the rest. No count is quoted here deliberately: it
+/// moves with every task of those phases, and a number in this comment would be wrong more often
+/// than right. <c>Opcodes65C816.Table</c> is the live answer, and
+/// <c>Harte816Tests.ExpectedImplementedOpcodes</c> is the one place a count is asserted rather
+/// than described. The throw is deliberately loud: silently treating an unknown opcode as a NOP
+/// hides real bugs in the code under test.
 /// </remarks>
 public sealed class UndefinedOpcodeException : Exception
 {

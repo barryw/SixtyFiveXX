@@ -157,7 +157,7 @@ public class RepSepTests
     /// alone and never reads <c>info.Mode</c> at all, so nothing today actually consults
     /// <c>ImmediateByte</c>; this test is what pins the 3-cycle count instead. That stays true
     /// even now that <c>LDA</c>/<c>STA</c>'s own fifteen addressing forms do read
-    /// <c>info.Mode</c> (<c>EmitLdaSta816</c>, to tell the m-dependent
+    /// <c>info.Mode</c> (<c>EmitAddressed816</c>, to tell the m-dependent
     /// <see cref="AddrMode.Immediate"/> from every other form): that switch decides
     /// <c>LDA</c>/<c>STA</c>'s addressing, not REP/SEP's fixed width, so a wrong
     /// <c>ImmediateByte</c> value in the table would still go unnoticed by the emitter and only

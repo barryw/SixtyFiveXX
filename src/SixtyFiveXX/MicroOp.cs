@@ -408,6 +408,16 @@ internal enum MicroOp : byte
     DirectPageIndexX,
 
     /// <summary>
+    /// <c>dp,Y</c>'s indexing cycle: <see cref="DirectPageIndexX"/> with <c>Y</c> substituted for
+    /// <c>X</c> — an internal cycle at the offset byte's own address, then <c>Y</c> folded into
+    /// <c>_addr</c>, wrapping within the page in emulation mode when <c>DL == $00</c> and taking a
+    /// plain 16-bit add otherwise. Research document §12.3. Unlike <see cref="DirectPageIndexX"/>,
+    /// no indirect mode shares it: <c>dp,Y</c> is used by <c>LDX</c> and <c>STX</c> and by nothing
+    /// else on the part, so this micro-op has exactly two callers.
+    /// </summary>
+    DirectPageIndexY,
+
+    /// <summary>
     /// The low byte of an indirect direct-page pointer: <c>ptr = _addr</c> (the direct-page
     /// address <see cref="FetchDpOffset"/>, and for the indexed form
     /// <see cref="DirectPageIndexX"/>, already formed); <c>tmp = Read(ptr)</c>. Shared by every
@@ -429,10 +439,11 @@ internal enum MicroOp : byte
     /// Code-review fix: this is one of the "old" indirect modes (present on the 65C02) — Clark
     /// §5.1.1, verbatim: "Page boundary wrapping only occurs in emulation mode, and only for
     /// 'old' instructions and addressing modes." So the <c>ptr + 1</c> read itself, not only the
-    /// index add <see cref="DirectPageIndexX"/> already guards, must wrap within the page when
-    /// <c>E == 1 &amp;&amp; DL == $00</c> — Clark's appendix: "LDA ($FF) uses a pointer whose low
-    /// byte is at $0000FF and whose high byte is at $000000 (like the 65C02)". Zero vector
-    /// coverage: no <c>.e</c> vector places a pointer at <c>DL == $00</c>, base <c>$xxFF</c>.
+    /// index add <see cref="DirectPageIndexX"/> already guards, must wrap within the page in
+    /// emulation mode — on <c>D == $0000</c>, not <c>DL == $00</c>; see
+    /// <see cref="Cpu{TBus,TVariant}.DirectPagePointerHighAddress"/> for the condition, the vector that
+    /// discriminates it from the index add's condition, and why. Measured: research document
+    /// §12.7.
     /// </para>
     /// </summary>
     DpPtrReadHi,
@@ -936,15 +947,18 @@ internal static class MicroOps
     /// <see cref="MicroOp.RepSepExec"/> is the second, for the same reason — see its own remarks
     /// for why VDA is 0 there despite Note 1 stating only VPA outright.
     /// <see cref="MicroOp.DirectPagePenalty"/>, <see cref="MicroOp.DirectPageIndexX"/> and
-    /// <see cref="MicroOp.IndexDirectPageIndirectY"/> are task 5's three — every one of them is
-    /// an <c>IO</c> row in research document §9's direct-page blocks, driving an address with no
-    /// memory access at all, the same shape as the first two.
+    /// <see cref="MicroOp.IndexDirectPageIndirectY"/> are phase 7b task 5's three — every one of
+    /// them is an <c>IO</c> row in research document §9's direct-page blocks, driving an address
+    /// with no memory access at all, the same shape as the first two.
     /// <see cref="MicroOp.AbsIndexFixup"/>, <see cref="MicroOp.StackRelativePenalty"/> and
-    /// <see cref="MicroOp.IndexStackRelativeIndirectY"/> are task 6's three — the conditional
-    /// indexing cycle of <c>abs,X</c>/<c>abs,Y</c> (§9 row 6a/7's "3a"), <c>sr,S</c>'s
+    /// <see cref="MicroOp.IndexStackRelativeIndirectY"/> are phase 7b task 6's three — the
+    /// conditional indexing cycle of <c>abs,X</c>/<c>abs,Y</c> (§9 row 6a/7's "3a"), <c>sr,S</c>'s
     /// unconditional penalty cycle (§9 row 23's "3"), and <c>(sr,S),Y</c>'s second unconditional
     /// internal cycle (§9 row 24's "6") — each an <c>IO</c> row with no memory access, the same
-    /// shape as task 5's three.
+    /// shape as phase 7b task 5's three.
+    /// <see cref="MicroOp.DirectPageIndexY"/> is phase 7c task 7's one — <c>dp,Y</c>'s indexing
+    /// cycle, the same <c>IO</c> row of §9's direct-page block that
+    /// <see cref="MicroOp.DirectPageIndexX"/> already occupies, with Y substituted.
     /// </summary>
     private static bool[] BuildInternalCycleTable()
     {
@@ -953,7 +967,8 @@ internal static class MicroOps
         foreach (var op in new[]
                  {
                      MicroOp.End, MicroOp.Unimplemented816, MicroOp.ImpliedExec816, MicroOp.RepSepExec,
-                     MicroOp.DirectPagePenalty, MicroOp.DirectPageIndexX, MicroOp.IndexDirectPageIndirectY,
+                     MicroOp.DirectPagePenalty, MicroOp.DirectPageIndexX, MicroOp.DirectPageIndexY,
+                     MicroOp.IndexDirectPageIndirectY,
                      MicroOp.AbsIndexFixup, MicroOp.StackRelativePenalty, MicroOp.IndexStackRelativeIndirectY,
                  })
         {

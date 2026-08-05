@@ -53,7 +53,7 @@ public class W65C816AbsoluteLongStackRelativeTests
     /// (<c>$000000</c>); wrongly grouping <c>sr,S</c> with the carrying family instead would spill
     /// into <c>$010000</c>, the decoy. Task 6's review found and fixed the identical mistake in
     /// the opposite direction for <c>(sr,S),Y</c> (below); this pins the mode it left unpinned —
-    /// removing <c>StackRelative</c> from <c>MicroOpTable.EmitLdaSta816</c>'s bank-0 exclusion set
+    /// removing <c>StackRelative</c> from <c>MicroOpTable.EmitAddressed816</c>'s bank-0 exclusion set
     /// would go unnoticed otherwise, since no SingleStepTests vector for <c>$A3</c>/<c>$83</c>
     /// happens to land <c>S + SO</c> exactly on <c>$FFFF</c> with <c>m=0</c> across 10,000 tries.
     /// </summary>

@@ -10,9 +10,11 @@ namespace SixtyFiveXX;
 /// and the addressing mode come out of the row <c>MicroOpTable</c> turned into a micro-op
 /// sequence. For the five 8-bit cores, adding an opcode makes it decodable in the same
 /// commit that makes it executable, without exception. The 65816 does not have that
-/// property yet: 12 of its 15 addressing modes have no case in the <c>switch</c> below and
+/// property yet: most of its addressing modes have no case in the <c>switch</c> below and
 /// throw <see cref="NotSupportedException"/>, and <see cref="AddrMode.Immediate"/> decodes
-/// at a fixed length that ignores the <c>m</c> flag. Phase 7e closes the gap.
+/// at a fixed length that ignores the <c>m</c> flag. Phase 7e closes the gap. No count is
+/// quoted deliberately — it has drifted with every task of phase 7c, and the <c>switch</c>
+/// below is the live answer.
 /// </para>
 /// <para>
 /// <strong>Decoding reads the bus.</strong> On a flat memory map that is free; on a bus

@@ -109,6 +109,15 @@ internal enum AddrMode : byte
     DirectPageX,
 
     /// <summary>
+    /// <c>dp,Y</c> — <see cref="DirectPage"/> indexed by Y before the read. Data is in bank 0,
+    /// and the index add wraps within the direct page when <c>E == 1</c> and <c>DL == $00</c>,
+    /// exactly as <see cref="DirectPageX"/> does. Used by <c>LDX</c> and <c>STX</c> and by no
+    /// other 65816 instruction. Distinct from <see cref="ZeroPageY"/>, which is the eight-bit
+    /// cores' mode and has neither the direct register nor the emulation-mode condition.
+    /// </summary>
+    DirectPageY,
+
+    /// <summary>
     /// <c>(dp)</c> — a two-byte pointer fetched from bank 0 at <c>0,D+DO</c>; the data it
     /// points at is addressed through <c>DBR</c>.
     /// </summary>
