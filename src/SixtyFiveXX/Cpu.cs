@@ -61,8 +61,32 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// instead of adding to it, which would otherwise silently drop this paragraph from
     /// <see cref="S8"/>'s documentation.
     /// </para>
+    /// <para>
+    /// <see cref="A8"/>'s setter is the exception to that: on the 65816 it preserves A's high
+    /// byte, which is the hidden B accumulator that <c>XBA</c> exchanges with. An 8-bit
+    /// operation on A must not disturb it. The <c>TVariant.Variant</c> test is a compile-time
+    /// constant per closed generic type, so for the five 8-bit cores this folds back to a plain
+    /// <c>_s.A = value</c> and costs nothing — zeroing a high byte those cores have no
+    /// architectural use for, exactly as the paragraph above describes. <c>LDA</c> is the reason
+    /// that is worth stating: until phase 7c it was the one operation that preserved that byte on
+    /// an 8-bit core, and only as an artifact of the hand-rolled <c>_s.A = (_s.A &amp; 0xFF00) | _data</c>
+    /// it used to carry for the 65816's sake. Folding that onto this setter aligned it with the
+    /// other thirteen A-writing operations, at the cost of one assertion in
+    /// <c>UnusedFlagBitRegressionTests</c> — which is the only place in the repository that ever
+    /// put anything in an 8-bit core's A high byte, and did so as a probe, not a requirement.
+    /// <see cref="X8"/> and <see cref="Y8"/> deliberately do NOT get this treatment: there is no
+    /// hidden high byte for the index registers, and whenever <c>x</c> is set their high bytes
+    /// are $00 by a continuously held invariant this core enforces in <c>FetchOpcode</c>,
+    /// <see cref="Op.Xce"/>, <see cref="Op.Rep"/> and <see cref="Op.Sep"/>.
+    /// </para>
     /// </remarks>
-    private byte A8 { get => (byte)_s.A; set => _s.A = value; }
+    private byte A8
+    {
+        get => (byte)_s.A;
+        set => _s.A = TVariant.Variant == CpuVariant.W65C816
+            ? (ushort)((_s.A & 0xFF00) | value)
+            : value;
+    }
 
     /// <inheritdoc cref="A8"/>
     private byte X8 { get => (byte)_s.X; set => _s.X = value; }
@@ -136,6 +160,29 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// micro-op ever touches it.
     /// </summary>
     private ushort _data16;
+
+    /// <summary>
+    /// True when the instruction now executing takes a 16-bit operand. Resolved once, in
+    /// <see cref="FetchOpcode"/>, from the opcode's <see cref="Width"/> and the matching status
+    /// flag; the width-deciding micro-ops read it rather than testing <c>m</c> or <c>x</c>
+    /// themselves.
+    /// </summary>
+    /// <remarks>
+    /// <b>Latched at fetch, not sampled per cycle.</b> Nothing in phase 7c can change <c>m</c> or
+    /// <c>x</c> part-way through an instruction, so the distinction is unobservable there — but
+    /// it becomes observable in phase 7d, when <c>PLP</c> and <c>RTI</c> can rewrite <c>P</c>
+    /// mid-sequence. Latching is deliberate and is what a decoder that resolves width once
+    /// actually does: an instruction already committed to a 16-bit access does not become an
+    /// 8-bit one halfway through. Do not "fix" this into a live read of <c>_s.M</c>.
+    /// <para>
+    /// Assigned only under a compile-time variant guard, so for the five 8-bit cores the
+    /// assignment is never emitted and this stays <see langword="false"/> for the lifetime of the
+    /// core. Every read of it in variant-shared code must still sit behind
+    /// <c>TVariant.Variant != CpuVariant.W65C816 ||</c> — see <see cref="Op.Lda"/>'s arm — so the
+    /// field is never loaded on an 8-bit core's hot path.
+    /// </para>
+    /// </remarks>
+    private bool _wide;
 
     /// <summary>+0x100 or -0x100, applied by <see cref="MicroOp.BranchFixup"/>.</summary>
     private int _branchFix;
@@ -834,6 +881,20 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
 
         _op = info.Operation;
         _opcode = opcode;
+
+        // Resolve this instruction's operand width once, here, rather than per access cycle.
+        // The guard is a compile-time constant per closed generic type, so the five 8-bit cores
+        // emit nothing at all and _wide stays false for them — which matters because Flag.M and
+        // Flag.X alias Flag.U and Flag.B, so reading _s.M on a 6502 reads its always-set unused
+        // bit. See the remarks on _wide.
+        if (TVariant.Variant == CpuVariant.W65C816)
+            _wide = info.Width switch
+            {
+                Width.M => !_s.M,
+                Width.X => !_s.XFlag,
+                _ => false,
+            };
+
         _mpc = _ops[entry] == MicroOp.End ? -1 : entry;
     }
 
@@ -975,7 +1036,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
 
             case MicroOp.ReadExec816:
                 _data = ReadBus(_addr);
-                if (_s.M) { Exec(); EndInstruction(); }
+                if (!_wide) { Exec(); EndInstruction(); }
                 break;
 
             case MicroOp.ReadExecHigh816:
@@ -996,7 +1057,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
 
             case MicroOp.ExecWrite816:
                 Exec();
-                if (_s.M) { WriteBus(_addr, _data); EndInstruction(); }
+                if (!_wide) { WriteBus(_addr, _data); EndInstruction(); }
                 else WriteBus(_addr, (byte)_data16);
                 break;
 
@@ -1014,7 +1075,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             case MicroOp.ImmExec816:
                 _data = ReadBus(PcAddress());
                 _s.PC++;
-                if (_s.M) { Exec(); EndInstruction(); }
+                if (!_wide) { Exec(); EndInstruction(); }
                 break;
 
             case MicroOp.ImmExecHigh816:

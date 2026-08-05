@@ -21,41 +21,42 @@ internal static class Opcodes65C816
         var t = new OpcodeInfo[256];
         for (var i = 0; i < t.Length; i++) t[i] = OpcodeInfo.Undefined;
 
-        void Set(int opcode, string mnemonic, AddrMode mode, Op op, Access access) =>
-            t[opcode] = new OpcodeInfo(mnemonic, mode, op, access);
+        void Set(int opcode, string mnemonic, AddrMode mode, Op op, Access access,
+                 Width width = Width.None) =>
+            t[opcode] = new OpcodeInfo(mnemonic, mode, op, access, width);
 
         // LDA — every addressing form the 65816 has.
-        Set(0xA9, "LDA", AddrMode.Immediate,                  Op.Lda, Access.Read);
-        Set(0xA5, "LDA", AddrMode.DirectPage,                 Op.Lda, Access.Read);
-        Set(0xB5, "LDA", AddrMode.DirectPageX,                Op.Lda, Access.Read);
-        Set(0xAD, "LDA", AddrMode.Absolute,                   Op.Lda, Access.Read);
-        Set(0xBD, "LDA", AddrMode.AbsoluteX,                  Op.Lda, Access.Read);
-        Set(0xB9, "LDA", AddrMode.AbsoluteY,                  Op.Lda, Access.Read);
-        Set(0xA1, "LDA", AddrMode.DirectPageIndexedIndirectX, Op.Lda, Access.Read);
-        Set(0xB1, "LDA", AddrMode.DirectPageIndirectY,        Op.Lda, Access.Read);
-        Set(0xB2, "LDA", AddrMode.DirectPageIndirect,         Op.Lda, Access.Read);
-        Set(0xA7, "LDA", AddrMode.DirectPageIndirectLong,     Op.Lda, Access.Read);
-        Set(0xB7, "LDA", AddrMode.DirectPageIndirectLongY,    Op.Lda, Access.Read);
-        Set(0xAF, "LDA", AddrMode.AbsoluteLong,               Op.Lda, Access.Read);
-        Set(0xBF, "LDA", AddrMode.AbsoluteLongX,              Op.Lda, Access.Read);
-        Set(0xA3, "LDA", AddrMode.StackRelative,              Op.Lda, Access.Read);
-        Set(0xB3, "LDA", AddrMode.StackRelativeIndirectY,     Op.Lda, Access.Read);
+        Set(0xA9, "LDA", AddrMode.Immediate,                  Op.Lda, Access.Read, Width.M);
+        Set(0xA5, "LDA", AddrMode.DirectPage,                 Op.Lda, Access.Read, Width.M);
+        Set(0xB5, "LDA", AddrMode.DirectPageX,                Op.Lda, Access.Read, Width.M);
+        Set(0xAD, "LDA", AddrMode.Absolute,                   Op.Lda, Access.Read, Width.M);
+        Set(0xBD, "LDA", AddrMode.AbsoluteX,                  Op.Lda, Access.Read, Width.M);
+        Set(0xB9, "LDA", AddrMode.AbsoluteY,                  Op.Lda, Access.Read, Width.M);
+        Set(0xA1, "LDA", AddrMode.DirectPageIndexedIndirectX, Op.Lda, Access.Read, Width.M);
+        Set(0xB1, "LDA", AddrMode.DirectPageIndirectY,        Op.Lda, Access.Read, Width.M);
+        Set(0xB2, "LDA", AddrMode.DirectPageIndirect,         Op.Lda, Access.Read, Width.M);
+        Set(0xA7, "LDA", AddrMode.DirectPageIndirectLong,     Op.Lda, Access.Read, Width.M);
+        Set(0xB7, "LDA", AddrMode.DirectPageIndirectLongY,    Op.Lda, Access.Read, Width.M);
+        Set(0xAF, "LDA", AddrMode.AbsoluteLong,               Op.Lda, Access.Read, Width.M);
+        Set(0xBF, "LDA", AddrMode.AbsoluteLongX,              Op.Lda, Access.Read, Width.M);
+        Set(0xA3, "LDA", AddrMode.StackRelative,              Op.Lda, Access.Read, Width.M);
+        Set(0xB3, "LDA", AddrMode.StackRelativeIndirectY,     Op.Lda, Access.Read, Width.M);
 
         // STA — the same forms as LDA, minus immediate: there is no such thing as STA #imm.
-        Set(0x85, "STA", AddrMode.DirectPage,                 Op.Sta, Access.Write);
-        Set(0x95, "STA", AddrMode.DirectPageX,                Op.Sta, Access.Write);
-        Set(0x8D, "STA", AddrMode.Absolute,                   Op.Sta, Access.Write);
-        Set(0x9D, "STA", AddrMode.AbsoluteX,                  Op.Sta, Access.Write);
-        Set(0x99, "STA", AddrMode.AbsoluteY,                  Op.Sta, Access.Write);
-        Set(0x81, "STA", AddrMode.DirectPageIndexedIndirectX, Op.Sta, Access.Write);
-        Set(0x91, "STA", AddrMode.DirectPageIndirectY,        Op.Sta, Access.Write);
-        Set(0x92, "STA", AddrMode.DirectPageIndirect,         Op.Sta, Access.Write);
-        Set(0x87, "STA", AddrMode.DirectPageIndirectLong,     Op.Sta, Access.Write);
-        Set(0x97, "STA", AddrMode.DirectPageIndirectLongY,    Op.Sta, Access.Write);
-        Set(0x8F, "STA", AddrMode.AbsoluteLong,               Op.Sta, Access.Write);
-        Set(0x9F, "STA", AddrMode.AbsoluteLongX,              Op.Sta, Access.Write);
-        Set(0x83, "STA", AddrMode.StackRelative,              Op.Sta, Access.Write);
-        Set(0x93, "STA", AddrMode.StackRelativeIndirectY,     Op.Sta, Access.Write);
+        Set(0x85, "STA", AddrMode.DirectPage,                 Op.Sta, Access.Write, Width.M);
+        Set(0x95, "STA", AddrMode.DirectPageX,                Op.Sta, Access.Write, Width.M);
+        Set(0x8D, "STA", AddrMode.Absolute,                   Op.Sta, Access.Write, Width.M);
+        Set(0x9D, "STA", AddrMode.AbsoluteX,                  Op.Sta, Access.Write, Width.M);
+        Set(0x99, "STA", AddrMode.AbsoluteY,                  Op.Sta, Access.Write, Width.M);
+        Set(0x81, "STA", AddrMode.DirectPageIndexedIndirectX, Op.Sta, Access.Write, Width.M);
+        Set(0x91, "STA", AddrMode.DirectPageIndirectY,        Op.Sta, Access.Write, Width.M);
+        Set(0x92, "STA", AddrMode.DirectPageIndirect,         Op.Sta, Access.Write, Width.M);
+        Set(0x87, "STA", AddrMode.DirectPageIndirectLong,     Op.Sta, Access.Write, Width.M);
+        Set(0x97, "STA", AddrMode.DirectPageIndirectLongY,    Op.Sta, Access.Write, Width.M);
+        Set(0x8F, "STA", AddrMode.AbsoluteLong,               Op.Sta, Access.Write, Width.M);
+        Set(0x9F, "STA", AddrMode.AbsoluteLongX,              Op.Sta, Access.Write, Width.M);
+        Set(0x83, "STA", AddrMode.StackRelative,              Op.Sta, Access.Write, Width.M);
+        Set(0x93, "STA", AddrMode.StackRelativeIndirectY,     Op.Sta, Access.Write, Width.M);
 
         // Mode switch and status-bit instructions. REP/SEP take AddrMode.ImmediateByte, not
         // AddrMode.Immediate: their operand is always 8 bits and they are flat 3-cycle
