@@ -382,6 +382,18 @@ internal sealed class MicroOpTable
             return;
         }
 
+        // XBA is implied, but 3 cycles rather than the implied block's 2: research document
+        // §13.5, datasheet Table 5-7 row 19b, which XBA has to itself. Its cycles 2 and 3 are
+        // both row 19a's IO cycle at PBR,PC+1, so the sequence is that cycle twice over, with
+        // the operation on the last one. Ahead of the general implied branch below, which stays
+        // unconditional: making that branch test for XBA would put a run-time check on the path
+        // every other implied opcode takes to get the shape only this one needs.
+        if (info.Operation == Op.Xba)
+        {
+            ops.AddRange([MicroOp.ImpliedInternal816, MicroOp.ImpliedExec816]);
+            return;
+        }
+
         // Every 65816 implied and accumulator-mode instruction is two cycles: the opcode fetch,
         // then one internal cycle at PBR,PC+1 (research document §9 row 19a, the shape XCE
         // already uses). They fetch no operand, so they declare no Width and never reach a

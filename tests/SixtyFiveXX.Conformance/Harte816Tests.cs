@@ -15,7 +15,7 @@ namespace SixtyFiveXX.Conformance;
 /// eight-character per-cycle pin string the 8-bit sets have nothing like — see
 /// <see cref="Harte816Case"/> and <see cref="Harte816Bus"/>.
 /// <para>
-/// Unlike <see cref="HarteTests{TVariant}"/>, this does not loop over all 256 opcodes. Only 199
+/// Unlike <see cref="HarteTests{TVariant}"/>, this does not loop over all 256 opcodes. Only 200
 /// of the 65816's opcodes are defined at all yet (<c>Opcodes65C816.Table</c>) — every one of
 /// them has a real sequence: <c>XCE</c>, <c>REP</c>, <c>SEP</c>, all fifteen addressing forms
 /// of <c>LDA</c>, <c>ORA</c>, <c>AND</c>, <c>EOR</c>, <c>CMP</c>, <c>ADC</c> and <c>SBC</c> plus
@@ -23,9 +23,9 @@ namespace SixtyFiveXX.Conformance;
 /// of <c>LDX</c> and <c>LDY</c>, three each of <c>STX</c> and <c>STY</c>, <c>STZ</c>'s four,
 /// four each of <c>ASL</c>, <c>LSR</c>, <c>ROL</c>, <c>ROR</c>, <c>INC</c> and <c>DEC</c> on
 /// memory, two each of <c>TSB</c> and <c>TRB</c>, and one each of <c>ASL</c>, <c>LSR</c>,
-/// <c>ROL</c>, <c>ROR</c>, <c>INC</c> and <c>DEC</c> on the accumulator, and the twelve transfers.
+/// <c>ROL</c>, <c>ROR</c>, <c>INC</c> and <c>DEC</c> on the accumulator, the twelve transfers and <c>XBA</c>.
 /// Looping over the full opcode space the way the 8-bit harness does would still require
-/// declaring 57 "not yet covered" opcodes as a matter of routine, which is what the 8-bit harness's
+/// declaring 56 "not yet covered" opcodes as a matter of routine, which is what the 8-bit harness's
 /// <c>OpcodesWithoutVectors</c> mechanism exists to flag as an exception, not a norm.
 /// </para>
 /// </remarks>
@@ -69,10 +69,10 @@ public class Harte816Tests(ITestOutputHelper output)
     /// in <c>dp</c> and <c>abs</c> each — 169 + 12 = 181. Phase 7c′ task 4 adds <c>ASL</c>,
     /// <c>LSR</c>, <c>ROL</c>, <c>ROR</c>, <c>INC</c> and <c>DEC</c> on the accumulator, the
     /// first opcodes here with no operand at all — 181 + 6 = 187. Phase 7c′ task 5 adds the
-    /// twelve transfers — 187 + 12 = 199 — sized by the destination register
+    /// twelve transfers and <c>XBA</c> — 187 + 13 = 200 — sized by the destination register
     /// rather than the source (research document §13.4).
     /// </summary>
-    private static readonly int ExpectedImplementedOpcodes = 199;
+    private static readonly int ExpectedImplementedOpcodes = 200;
 
     /// <summary>
     /// Opcode bytes this phase has emitted a real <c>MicroOpTable.Emit816</c> sequence for —

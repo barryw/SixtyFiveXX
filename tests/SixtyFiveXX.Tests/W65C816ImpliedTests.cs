@@ -167,7 +167,46 @@ public class W65C816ImpliedTests
         Assert.True(cpu.State.N);
     }
 
-    // The XBA test that belongs here is held back with $EB's table entry: XBA is a 3-cycle
-    // implied opcode (research document §13.5) and MicroOpTable.Emit816's implied branch emits
-    // 2, so the opcode cannot be reached until that sequence exists. See Opcodes65C816.
+    /// <summary>
+    /// XBA swaps A's two halves and sets N and Z from the new low byte as an 8-bit result, even
+    /// with a 16-bit accumulator (research document §13.5).
+    /// </summary>
+    [Fact]
+    public void Xba_SwapsTheHalvesAndSetsFlagsFromTheNewLowByte()
+    {
+        var ram = new BankedBus();
+        ram[0xC000] = 0xEB;       // XBA
+
+        var cpu = Banked816TestMachine.Make(ram);
+        cpu.State.E = false;
+        cpu.State.M = false;      // 16-bit accumulator
+        cpu.State.A = 0x0080;
+
+        cpu.Step();
+
+        Assert.Equal(0x8000, cpu.State.A);
+        Assert.True(cpu.State.Z);    // new low byte is $00
+        Assert.False(cpu.State.N);
+    }
+
+    /// <summary>
+    /// XBA is 3 cycles, not the 2 every other implied opcode on this part takes — research
+    /// document §13.5, datasheet Table 5-7 row 19b, whose cycles 2 and 3 are both IO at
+    /// PBR,PC+1. This is the unit-level guard on the sequence; vector "eb e 1" is the
+    /// silicon-level one.
+    /// </summary>
+    [Fact]
+    public void Xba_TakesThreeCycles()
+    {
+        var ram = new BankedBus();
+        ram[0xC000] = 0xEB;       // XBA
+
+        var cpu = Banked816TestMachine.Make(ram);
+        cpu.State.E = false;
+
+        var before = cpu.Cycles;
+        cpu.Step();
+
+        Assert.Equal(3L, cpu.Cycles - before);
+    }
 }

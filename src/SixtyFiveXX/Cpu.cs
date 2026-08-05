@@ -990,6 +990,12 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 Exec();
                 break;
 
+            case MicroOp.ImpliedInternal816:
+                // The same internal cycle, without the Exec() — XBA's extra one. Research
+                // document §13.5, Table 5-7 row 19b: two IO cycles, both at PBR,PC+1.
+                InternalCycle((_s.PBR << 16) | _s.PC);
+                break;
+
             case MicroOp.RepSepOperand:
                 _data = ReadBus(PcAddress());
                 _s.PC++;

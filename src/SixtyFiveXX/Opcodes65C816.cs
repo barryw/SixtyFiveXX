@@ -4,7 +4,7 @@ namespace SixtyFiveXX;
 /// The WDC 65C816 opcode table.
 /// </summary>
 /// <remarks>
-/// A hundred and ninety-nine opcodes are defined: every addressing form of <c>LDA</c> and
+/// Two hundred opcodes are defined: every addressing form of <c>LDA</c> and
 /// <c>STA</c> (<c>STA</c> has no immediate form), plus <c>XCE</c>, <c>REP</c> and <c>SEP</c> —
 /// phase 7b's thirty-two, chosen so the variant, its table and its reset semantics could be
 /// exercised end to end before any 65816 micro-op sequence existed — phase 7c task 3's
@@ -32,21 +32,22 @@ namespace SixtyFiveXX;
 /// <c>m</c> like every other accumulator operation but declaring no <see cref="Width"/>, since
 /// they never reach a width-deciding micro-op (<c>MicroOpTable.Emit816</c>'s
 /// <see cref="AddrMode.Implied"/>/<see cref="AddrMode.Accumulator"/> branch routes them through
-/// <c>MicroOp.ImpliedExec816</c> instead); and task 5's twelve transfers —
+/// <c>MicroOp.ImpliedExec816</c> instead); and task 5's thirteen: the twelve transfers —
 /// <c>TAX</c>, <c>TAY</c>, <c>TXA</c>, <c>TYA</c>, <c>TXS</c>, <c>TSX</c>, <c>TXY</c>,
-/// <c>TYX</c>, <c>TCD</c>, <c>TDC</c>, <c>TCS</c> and <c>TSC</c>. Their width
-/// comes from the destination register, not from the source (research document §13.4): an index
-/// destination is sized by <c>x</c>, an accumulator destination by <c>m</c>, and the four
+/// <c>TYX</c>, <c>TCD</c>, <c>TDC</c>, <c>TCS</c> and <c>TSC</c> — plus <c>XBA</c>. The transfers'
+/// width comes from the destination register, not from the source (research document §13.4): an
+/// index destination is sized by <c>x</c>, an accumulator destination by <c>m</c>, and the four
 /// <c>TC*</c>/<c>T*C</c> forms plus <c>TXS</c> are always 16-bit because <c>D</c> and <c>S</c>
-/// have no narrow form. <c>XBA</c> was scoped with them but is held back — it is a 3-cycle
-/// implied opcode and this emitter has no 3-cycle implied sequence; see <c>BuildTable</c>.
-/// The remaining 57 entries are
+/// have no narrow form. <c>XBA</c> is the odd one out twice over: its <c>N</c>/<c>Z</c> come from
+/// the new low byte as an 8-bit result whatever <c>m</c> says (§13.5), and it is the only implied
+/// opcode on the part that takes three cycles rather than two, so it is the first here to need a
+/// sequence of its own rather than the shared implied one. The remaining 56 entries are
 /// <see cref="OpcodeInfo.Undefined"/> and throw <see cref="UndefinedOpcodeException"/> on
 /// fetch; the rest of phases 7c′ and 7d fill the instruction set in.
 /// </remarks>
 internal static class Opcodes65C816
 {
-    /// <summary>Opcode byte to descriptor. 199 entries defined, 57 undefined.</summary>
+    /// <summary>Opcode byte to descriptor. 200 entries defined, 56 undefined.</summary>
     public static readonly OpcodeInfo[] Table = BuildTable();
 
     private static OpcodeInfo[] BuildTable()
@@ -309,12 +310,9 @@ internal static class Opcodes65C816
         Set(0x1B, "TCS", AddrMode.Implied, Op.Tcs, Access.None);
         Set(0x3B, "TSC", AddrMode.Implied, Op.Tsc, Access.None);
 
-        // XBA ($EB) is deliberately NOT here yet. It is the one implied opcode in this phase that
-        // is 3 cycles, not 2 — research document §13.5, Table 5-7 row 19b: an opcode fetch then
-        // TWO internal cycles at PBR,PC+1, confirmed by vector "eb e 1" whose cycle list is
-        // [fetch, IO, IO]. MicroOpTable.Emit816's implied branch emits a single internal cycle,
-        // so wiring $EB up here without giving Emit816 a second one fails every $EB vector.
-        // Op.Xba and its Cpu.Exec arm are implemented and correct; only the sequence is missing.
+        // XBA is implied like the twelve above but 3 cycles rather than 2 — research document
+        // §13.5, Table 5-7 row 19b. MicroOpTable.Emit816 gives it its own branch for that.
+        Set(0xEB, "XBA", AddrMode.Implied, Op.Xba, Access.None);
 
         return t;
     }

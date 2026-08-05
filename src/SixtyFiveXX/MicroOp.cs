@@ -344,6 +344,27 @@ internal enum MicroOp : byte
     ImpliedExec816,
 
     /// <summary>
+    /// <see cref="ImpliedExec816"/>'s first half: the same internal cycle at <c>PBR,PC</c>, with
+    /// no <c>Exec()</c>. <c>XBA</c> is the only instruction that needs it, and the only implied
+    /// opcode on the part that is 3 cycles rather than 2 — research document §13.5, quoting
+    /// datasheet Table 5-7 row <b>19b</b>, which <c>XBA</c> has to itself rather than sharing row
+    /// 19a with the twelve transfers:
+    /// <code>
+    /// XBA                                               1 opcode, 1 byte, 3 cycles
+    ///   1              VDA=1 VPA=1 MLB=1   PBR,PC       OpCode      RWB=1
+    ///   2              VDA=0 VPA=0 MLB=1   PBR,PC+1     IO          RWB=1
+    ///   3              VDA=0 VPA=0 MLB=1   PBR,PC+1     IO          RWB=1
+    /// </code>
+    /// Two internal cycles at the same address, both <c>PBR,PC+1</c> — row 19a's single <c>IO</c>
+    /// cycle repeated, not a new shape, which is why this is <see cref="ImpliedExec816"/> split
+    /// rather than a new address calculation. Sequenced ahead of it so the operation still runs
+    /// on the last cycle. Deliberately <em>not</em> <see cref="DirectPagePenalty"/>, which drives
+    /// <c>PC - 1</c>; here <c>PC</c> already reflects the opcode fetch's increment and so is
+    /// §13.5's "PC+1" unadjusted, exactly as in <see cref="ImpliedExec816"/>.
+    /// </summary>
+    ImpliedInternal816,
+
+    /// <summary>
     /// <c>REP</c>/<c>SEP</c>'s cycle 2: reads the one-byte operand at <c>PBR,PC</c> into
     /// <c>_data</c>, then <c>PC++</c>. No <c>Exec()</c> here — datasheet Note 1 (research
     /// document §9) spends a whole extra cycle before the operation actually runs, unlike
@@ -1074,7 +1095,10 @@ internal static class MicroOps
     /// never gets that far), not a guess about what a future opcode in its slot will assert.
     /// <see cref="MicroOp.ImpliedExec816"/> is the first micro-op that is <c>None</c> because
     /// it genuinely drives neither pin — a real 65816 internal cycle, per research document §9.
-    /// <see cref="MicroOp.RepSepExec"/> is the second, for the same reason — see its own remarks
+    /// <see cref="MicroOp.ImpliedInternal816"/> is that same cycle without the <c>Exec()</c>,
+    /// <c>XBA</c>'s extra one, and is <c>None</c> for exactly the same reason — research document
+    /// §13.5's row 19b drives <c>VDA=0 VPA=0</c> on both of its <c>IO</c> cycles.
+    /// <see cref="MicroOp.RepSepExec"/> is the next, for the same reason — see its own remarks
     /// for why VDA is 0 there despite Note 1 stating only VPA outright.
     /// <see cref="MicroOp.DirectPagePenalty"/>, <see cref="MicroOp.DirectPageIndexX"/> and
     /// <see cref="MicroOp.IndexDirectPageIndirectY"/> are phase 7b task 5's three — every one of
@@ -1101,7 +1125,8 @@ internal static class MicroOps
 
         foreach (var op in new[]
                  {
-                     MicroOp.End, MicroOp.Unimplemented816, MicroOp.ImpliedExec816, MicroOp.RepSepExec,
+                     MicroOp.End, MicroOp.Unimplemented816, MicroOp.ImpliedExec816,
+                     MicroOp.ImpliedInternal816, MicroOp.RepSepExec,
                      MicroOp.DirectPagePenalty, MicroOp.DirectPageIndexX, MicroOp.DirectPageIndexY,
                      MicroOp.IndexDirectPageIndirectY,
                      MicroOp.AbsIndexFixup, MicroOp.StackRelativePenalty, MicroOp.IndexStackRelativeIndirectY,
