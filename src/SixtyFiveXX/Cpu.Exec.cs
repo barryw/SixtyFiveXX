@@ -205,9 +205,22 @@ public sealed partial class Cpu<TBus, TVariant>
                 else { _s.Z = (_s.A & _data16) == 0; _data16 = (ushort)(_data16 | _s.A); }
                 break;
 
-            // Register increment and decrement.
-            case Op.IncA: A8 = (byte)(A8 + 1); SetZN(A8); break;
-            case Op.DecA: A8 = (byte)(A8 - 1); SetZN(A8); break;
+            // Register increment and decrement. IncA/DecA are width-aware for the 65816 — the
+            // same shape as Op.AslA below, and see its comment for why the arm tests _s.M
+            // directly rather than _wide: these are implied-mode, declare no Width, and never
+            // reach a width-deciding micro-op (MicroOpTable.Emit816's Implied/Accumulator
+            // branch), so _wide is never resolved for them at all. Variant test first, so the
+            // five 8-bit cores fold to the code they had.
+            case Op.IncA:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.M) { A8 = (byte)(A8 + 1); SetZN(A8); }
+                else { _s.A = (ushort)(_s.A + 1); SetZN16(_s.A); }
+                break;
+
+            case Op.DecA:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.M) { A8 = (byte)(A8 - 1); SetZN(A8); }
+                else { _s.A = (ushort)(_s.A - 1); SetZN16(_s.A); }
+                break;
+
             case Op.Inx: X8 = (byte)(X8 + 1); SetZN(X8); break;
             case Op.Dex: X8 = (byte)(X8 - 1); SetZN(X8); break;
             case Op.Iny: Y8 = (byte)(Y8 + 1); SetZN(Y8); break;
@@ -313,11 +326,28 @@ public sealed partial class Cpu<TBus, TVariant>
                 else _data16 = Ror16(_data16);
                 break;
 
-            // The same four on the accumulator.
-            case Op.AslA: A8 = Asl(A8); break;
-            case Op.LsrA: A8 = Lsr(A8); break;
-            case Op.RolA: A8 = Rol(A8); break;
-            case Op.RorA: A8 = Ror(A8); break;
+            // The same four shifts on the accumulator. Width comes from m directly rather than
+            // from _wide: these fetch no operand, so they declare Width.None (see Width's own
+            // remarks). Variant test first, so the five 8-bit cores fold to the code they had.
+            case Op.AslA:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.M) A8 = Asl(A8);
+                else _s.A = Asl16(_s.A);
+                break;
+
+            case Op.LsrA:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.M) A8 = Lsr(A8);
+                else _s.A = Lsr16(_s.A);
+                break;
+
+            case Op.RolA:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.M) A8 = Rol(A8);
+                else _s.A = Rol16(_s.A);
+                break;
+
+            case Op.RorA:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.M) A8 = Ror(A8);
+                else _s.A = Ror16(_s.A);
+                break;
 
             // Arithmetic
             case Op.Adc: Adc(_data); break;

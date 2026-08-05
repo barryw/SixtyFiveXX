@@ -4,7 +4,7 @@ namespace SixtyFiveXX;
 /// The WDC 65C816 opcode table.
 /// </summary>
 /// <remarks>
-/// A hundred and eighty-one opcodes are defined: every addressing form of <c>LDA</c> and
+/// A hundred and eighty-seven opcodes are defined: every addressing form of <c>LDA</c> and
 /// <c>STA</c> (<c>STA</c> has no immediate form), plus <c>XCE</c>, <c>REP</c> and <c>SEP</c> —
 /// phase 7b's thirty-two, chosen so the variant, its table and its reset semantics could be
 /// exercised end to end before any 65816 micro-op sequence existed — phase 7c task 3's
@@ -22,17 +22,23 @@ namespace SixtyFiveXX;
 /// <c>ASL</c>, <c>LSR</c>, <c>ROL</c> and <c>ROR</c> in <c>dp</c>, <c>dp,X</c>, <c>abs</c> and
 /// <c>abs,X</c> each — the first <see cref="Access.ReadModifyWrite"/> entries on this part, and
 /// with them datasheet Note 17, the one behaviour here whose bus direction is decided at run
-/// time rather than at table-build time (research document §13.1); and task 3's twelve:
+/// time rather than at table-build time (research document §13.1); task 3's twelve:
 /// <c>INC</c> and <c>DEC</c> on memory in <c>dp</c>, <c>dp,X</c>, <c>abs</c> and <c>abs,X</c>
 /// each, plus <c>TSB</c> and <c>TRB</c> in <c>dp</c> and <c>abs</c> each — <c>TSB</c>/<c>TRB</c>
 /// set Z from the AND of A and memory over the operative width, like <c>BIT</c>, but leave N and
-/// V untouched, unlike <c>BIT</c>. The remaining 75 entries are
+/// V untouched, unlike <c>BIT</c>; and task 4's six: <c>ASL</c>, <c>LSR</c>, <c>ROL</c>,
+/// <c>ROR</c>, <c>INC</c> and <c>DEC</c> on the accumulator — the first opcodes here with no
+/// operand at all, <see cref="AddrMode.Accumulator"/> and <see cref="Access.None"/>, sized by
+/// <c>m</c> like every other accumulator operation but declaring no <see cref="Width"/>, since
+/// they never reach a width-deciding micro-op (<c>MicroOpTable.Emit816</c>'s
+/// <see cref="AddrMode.Implied"/>/<see cref="AddrMode.Accumulator"/> branch routes them through
+/// <c>MicroOp.ImpliedExec816</c> instead). The remaining 69 entries are
 /// <see cref="OpcodeInfo.Undefined"/> and throw <see cref="UndefinedOpcodeException"/> on
 /// fetch; the rest of phases 7c′ and 7d fill the instruction set in.
 /// </remarks>
 internal static class Opcodes65C816
 {
-    /// <summary>Opcode byte to descriptor. 181 entries defined, 75 undefined.</summary>
+    /// <summary>Opcode byte to descriptor. 187 entries defined, 69 undefined.</summary>
     public static readonly OpcodeInfo[] Table = BuildTable();
 
     private static OpcodeInfo[] BuildTable()
@@ -264,6 +270,14 @@ internal static class Opcodes65C816
 
         Set(0x14, "TRB", AddrMode.DirectPage,  Op.Trb, Access.ReadModifyWrite, Width.M);
         Set(0x1C, "TRB", AddrMode.Absolute,    Op.Trb, Access.ReadModifyWrite, Width.M);
+
+        // Accumulator forms. AddrMode.Accumulator, Access.None, and no Width: they fetch nothing.
+        Set(0x0A, "ASL", AddrMode.Accumulator, Op.AslA, Access.None);
+        Set(0x4A, "LSR", AddrMode.Accumulator, Op.LsrA, Access.None);
+        Set(0x2A, "ROL", AddrMode.Accumulator, Op.RolA, Access.None);
+        Set(0x6A, "ROR", AddrMode.Accumulator, Op.RorA, Access.None);
+        Set(0x1A, "INC", AddrMode.Accumulator, Op.IncA, Access.None);
+        Set(0x3A, "DEC", AddrMode.Accumulator, Op.DecA, Access.None);
 
         // Mode switch and status-bit instructions. REP/SEP take AddrMode.ImmediateByte, not
         // AddrMode.Immediate: their operand is always 8 bits and they are flat 3-cycle

@@ -82,12 +82,13 @@ all fifteen 65816 addressing modes, plus `XCE`, `REP` and `SEP` — 32 opcodes i
 certified per-cycle in both emulation and native mode against 640,000 SingleStepTests
 vectors, including the full eight-character bus-qualifier pin string asserted on every cycle.
 
-**This is not a complete core.** 181 of the 65816's 256 opcodes are implemented — phase 7b's 32,
+**This is not a complete core.** 187 of the 65816's 256 opcodes are implemented — phase 7b's 32,
 plus phase 7c's bulk work, which added `ORA`, `AND`, `EOR`, `CMP`, `ADC` and `SBC` in all fifteen
 addressing forms each, `CPX` and `CPY` in three each, `BIT` in five, `LDX` and `LDY` in five each,
 `STX` and `STY` in three each, and `STZ` in four, plus phase 7c′'s read-modify-writes: `ASL`,
 `LSR`, `ROL`, `ROR`, `INC` and `DEC` in `dp`, `dp,X`, `abs` and `abs,X` each, and `TSB` and `TRB`
-in `dp` and `abs` each.
+in `dp` and `abs` each, plus `ASL`, `LSR`, `ROL`, `ROR`, `INC` and `DEC` on the accumulator — the
+first opcodes with no operand at all.
 `ADC` and `SBC` are cycle- and result-correct in decimal mode at both operand widths, including
 16-bit BCD, which no source documents — the correction algorithm was measured from the vectors.
 `BIT`'s immediate opcode is a genuinely different operation from its other four forms, not just
@@ -95,8 +96,8 @@ a narrower addressing mode: it sets Z alone, leaving N and V untouched. `LDX` an
 `dp,Y`, the one addressing mode phase 7c adds and the only one no other instruction on the part
 uses. `TSB` and `TRB` set Z from the AND of `A` and memory, like `BIT`, but leave N and V
 untouched, unlike `BIT`. Every other opcode throws `UndefinedOpcodeException`. Phase 7c′ is still
-in progress — its remaining tasks add the accumulator forms, the transfers and `XBA` — and phase 7d
-adds control flow, the stack and interrupts after it.
+in progress — its remaining tasks add the transfers and `XBA` — and phase 7d adds control flow,
+the stack and interrupts after it.
 
 **The state widening is a breaking change**: `CpuState.A`, `X`, `Y` and `S` are now `ushort`
 rather than `byte`.

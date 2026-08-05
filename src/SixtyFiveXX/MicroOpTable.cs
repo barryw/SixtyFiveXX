@@ -382,6 +382,16 @@ internal sealed class MicroOpTable
             return;
         }
 
+        // Every 65816 implied and accumulator-mode instruction is two cycles: the opcode fetch,
+        // then one internal cycle at PBR,PC+1 (research document §9 row 19a, the shape XCE
+        // already uses). They fetch no operand, so they declare no Width and never reach a
+        // width-deciding micro-op; each arm in Cpu.Exec tests the flag its own result depends on.
+        if (info.Mode is AddrMode.Implied or AddrMode.Accumulator)
+        {
+            ops.Add(MicroOp.ImpliedExec816);
+            return;
+        }
+
         // Everything else on the 65816 forms an effective address and then reads or writes it.
         // Routed by mode and access rather than by an ever-growing list of operations: the
         // emitter's own `default:` throw is the tripwire for a mode with no sequence, and
