@@ -15,13 +15,14 @@ namespace SixtyFiveXX.Conformance;
 /// eight-character per-cycle pin string the 8-bit sets have nothing like — see
 /// <see cref="Harte816Case"/> and <see cref="Harte816Bus"/>.
 /// <para>
-/// Unlike <see cref="HarteTests{TVariant}"/>, this does not loop over all 256 opcodes. Only 77
+/// Unlike <see cref="HarteTests{TVariant}"/>, this does not loop over all 256 opcodes. Only 98
 /// of the 65816's opcodes are defined at all yet (<c>Opcodes65C816.Table</c>) — every one of
-/// them has a real sequence: <c>XCE</c>, <c>REP</c>, <c>SEP</c>, and all fifteen addressing
-/// forms of <c>LDA</c>, <c>ORA</c>, <c>AND</c> and <c>EOR</c> plus <c>STA</c>'s fourteen.
-/// Looping over the full opcode space the way the 8-bit harness does would still require
-/// declaring 179 "not yet covered" opcodes as a matter of routine, which is what the 8-bit
-/// harness's <c>OpcodesWithoutVectors</c> mechanism exists to flag as an exception, not a norm.
+/// them has a real sequence: <c>XCE</c>, <c>REP</c>, <c>SEP</c>, all fifteen addressing forms
+/// of <c>LDA</c>, <c>ORA</c>, <c>AND</c>, <c>EOR</c> and <c>CMP</c> plus <c>STA</c>'s fourteen,
+/// and three each of <c>CPX</c> and <c>CPY</c>. Looping over the full opcode space the way the
+/// 8-bit harness does would still require declaring 158 "not yet covered" opcodes as a matter of
+/// routine, which is what the 8-bit harness's <c>OpcodesWithoutVectors</c> mechanism exists to
+/// flag as an exception, not a norm.
 /// </para>
 /// </remarks>
 public class Harte816Tests(ITestOutputHelper output)
@@ -43,8 +44,10 @@ public class Harte816Tests(ITestOutputHelper output)
     /// REP/SEP"; STA has none) — 17 + 14 + 1 = 32, all 32 opcodes phase 7b is gated on. Phase 7c
     /// task 3 adds <c>ORA</c>, <c>AND</c> and <c>EOR</c> in all fifteen addressing forms each,
     /// every one of them reusing an addressing sequence phase 7b already certified — 32 + 45 = 77.
+    /// Task 4 adds <c>CMP</c> in all fifteen, and <c>CPX</c> and <c>CPY</c> in the three forms
+    /// each the 65816 gives them — immediate, direct page and absolute — 77 + 21 = 98.
     /// </summary>
-    private static readonly int ExpectedImplementedOpcodes = 77;
+    private static readonly int ExpectedImplementedOpcodes = 98;
 
     /// <summary>
     /// Opcode bytes this phase has emitted a real <c>MicroOpTable.Emit816</c> sequence for —

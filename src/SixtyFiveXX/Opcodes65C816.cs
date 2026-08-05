@@ -4,18 +4,20 @@ namespace SixtyFiveXX;
 /// The WDC 65C816 opcode table — phase 7b's slice of it.
 /// </summary>
 /// <remarks>
-/// Seventy-seven opcodes are defined: every addressing form of <c>LDA</c> and <c>STA</c>
+/// Ninety-eight opcodes are defined: every addressing form of <c>LDA</c> and <c>STA</c>
 /// (<c>STA</c> has no immediate form), plus <c>XCE</c>, <c>REP</c> and <c>SEP</c> — phase 7b's
 /// thirty-two, chosen so the variant, its table and its reset semantics could be exercised end
-/// to end before any 65816 micro-op sequence existed — and phase 7c task 3's forty-five:
-/// <c>ORA</c>, <c>AND</c> and <c>EOR</c> in all fifteen addressing forms each, every one of
-/// them reusing an addressing sequence phase 7b already certified. The remaining 179 entries
-/// are <see cref="OpcodeInfo.Undefined"/> and throw <see cref="UndefinedOpcodeException"/> on
+/// to end before any 65816 micro-op sequence existed — phase 7c task 3's forty-five:
+/// <c>ORA</c>, <c>AND</c> and <c>EOR</c> in all fifteen addressing forms each; and task 4's
+/// twenty-one: <c>CMP</c> in all fifteen, plus <c>CPX</c> and <c>CPY</c> in three each — the
+/// first opcodes here sized by <c>x</c> rather than <c>m</c>. Every one of them reuses an
+/// addressing sequence phase 7b already certified. The remaining 158 entries are
+/// <see cref="OpcodeInfo.Undefined"/> and throw <see cref="UndefinedOpcodeException"/> on
 /// fetch; later tasks in this phase fill the rest of the instruction set in.
 /// </remarks>
 internal static class Opcodes65C816
 {
-    /// <summary>Opcode byte to descriptor. 77 entries defined, 179 undefined.</summary>
+    /// <summary>Opcode byte to descriptor. 98 entries defined, 158 undefined.</summary>
     public static readonly OpcodeInfo[] Table = BuildTable();
 
     private static OpcodeInfo[] BuildTable()
@@ -110,6 +112,33 @@ internal static class Opcodes65C816
         Set(0x5F, "EOR", AddrMode.AbsoluteLongX,              Op.Eor, Access.Read, Width.M);
         Set(0x43, "EOR", AddrMode.StackRelative,              Op.Eor, Access.Read, Width.M);
         Set(0x53, "EOR", AddrMode.StackRelativeIndirectY,     Op.Eor, Access.Read, Width.M);
+
+        // Compare against the accumulator: fifteen forms, Width.M.
+        Set(0xC9, "CMP", AddrMode.Immediate,                  Op.Cmp, Access.Read, Width.M);
+        Set(0xC5, "CMP", AddrMode.DirectPage,                 Op.Cmp, Access.Read, Width.M);
+        Set(0xD5, "CMP", AddrMode.DirectPageX,                Op.Cmp, Access.Read, Width.M);
+        Set(0xCD, "CMP", AddrMode.Absolute,                   Op.Cmp, Access.Read, Width.M);
+        Set(0xDD, "CMP", AddrMode.AbsoluteX,                  Op.Cmp, Access.Read, Width.M);
+        Set(0xD9, "CMP", AddrMode.AbsoluteY,                  Op.Cmp, Access.Read, Width.M);
+        Set(0xC1, "CMP", AddrMode.DirectPageIndexedIndirectX, Op.Cmp, Access.Read, Width.M);
+        Set(0xD1, "CMP", AddrMode.DirectPageIndirectY,        Op.Cmp, Access.Read, Width.M);
+        Set(0xD2, "CMP", AddrMode.DirectPageIndirect,         Op.Cmp, Access.Read, Width.M);
+        Set(0xC7, "CMP", AddrMode.DirectPageIndirectLong,     Op.Cmp, Access.Read, Width.M);
+        Set(0xD7, "CMP", AddrMode.DirectPageIndirectLongY,    Op.Cmp, Access.Read, Width.M);
+        Set(0xCF, "CMP", AddrMode.AbsoluteLong,               Op.Cmp, Access.Read, Width.M);
+        Set(0xDF, "CMP", AddrMode.AbsoluteLongX,              Op.Cmp, Access.Read, Width.M);
+        Set(0xC3, "CMP", AddrMode.StackRelative,              Op.Cmp, Access.Read, Width.M);
+        Set(0xD3, "CMP", AddrMode.StackRelativeIndirectY,     Op.Cmp, Access.Read, Width.M);
+
+        // Compare against an index register: three forms each, and Width.X — the first opcodes
+        // on this core whose operand width comes from x rather than m.
+        Set(0xE0, "CPX", AddrMode.Immediate,  Op.Cpx, Access.Read, Width.X);
+        Set(0xE4, "CPX", AddrMode.DirectPage, Op.Cpx, Access.Read, Width.X);
+        Set(0xEC, "CPX", AddrMode.Absolute,   Op.Cpx, Access.Read, Width.X);
+
+        Set(0xC0, "CPY", AddrMode.Immediate,  Op.Cpy, Access.Read, Width.X);
+        Set(0xC4, "CPY", AddrMode.DirectPage, Op.Cpy, Access.Read, Width.X);
+        Set(0xCC, "CPY", AddrMode.Absolute,   Op.Cpy, Access.Read, Width.X);
 
         // Mode switch and status-bit instructions. REP/SEP take AddrMode.ImmediateByte, not
         // AddrMode.Immediate: their operand is always 8 bits and they are flat 3-cycle

@@ -211,10 +211,23 @@ public sealed partial class Cpu<TBus, TVariant>
             // BIT immediate sets Z alone — see Op.BitImm.
             case Op.BitImm: _s.Z = (A8 & _data) == 0; break;
 
-            // Compares
-            case Op.Cmp: Compare(A8); break;
-            case Op.Cpx: Compare(X8); break;
-            case Op.Cpy: Compare(Y8); break;
+            // Compares. CMP is sized by m; CPX and CPY by x. Which flag each one reads is not
+            // decided here — _wide already holds the answer, resolved once at fetch from the
+            // opcode's declared Width (Cpu.FetchOpcode). See the remarks on _wide.
+            case Op.Cmp:
+                if (TVariant.Variant != CpuVariant.W65C816 || !_wide) Compare(A8);
+                else Compare16(_s.A);
+                break;
+
+            case Op.Cpx:
+                if (TVariant.Variant != CpuVariant.W65C816 || !_wide) Compare(X8);
+                else Compare16(_s.X);
+                break;
+
+            case Op.Cpy:
+                if (TVariant.Variant != CpuVariant.W65C816 || !_wide) Compare(Y8);
+                else Compare16(_s.Y);
+                break;
 
             // Shifts and rotates on memory, operating on _data in place.
             case Op.Asl: _data = Asl(_data); break;
@@ -336,6 +349,18 @@ public sealed partial class Cpu<TBus, TVariant>
         var result = register - _data;
         _s.C = result >= 0;
         SetZN((byte)result);
+    }
+
+    /// <summary>
+    /// Compares a 16-bit register against <c>_data16</c>, setting C, Z and N — the 65816
+    /// native-mode counterpart of <see cref="Compare"/>. C is the absence of a borrow out of
+    /// bit 16, so the subtraction is performed in <c>int</c> and tested before narrowing.
+    /// </summary>
+    private void Compare16(ushort register)
+    {
+        var result = register - _data16;
+        _s.C = result >= 0;
+        SetZN16((ushort)result);
     }
 
     private byte Asl(byte value)
