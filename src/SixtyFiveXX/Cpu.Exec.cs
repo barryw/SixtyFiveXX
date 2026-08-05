@@ -201,15 +201,29 @@ public sealed partial class Cpu<TBus, TVariant>
                 break;
 
             // BIT takes N and V straight from the operand's top two bits, and Z from
-            // the AND. The accumulator is not modified.
+            // the AND. The accumulator is not modified. At sixteen bits those top two bits are
+            // 15 and 14, not 7 and 6.
             case Op.Bit:
-                _s.Z = (A8 & _data) == 0;
-                _s.N = (_data & 0x80) != 0;
-                _s.V = (_data & 0x40) != 0;
+                if (TVariant.Variant != CpuVariant.W65C816 || !_wide)
+                {
+                    _s.Z = (A8 & _data) == 0;
+                    _s.N = (_data & 0x80) != 0;
+                    _s.V = (_data & 0x40) != 0;
+                }
+                else
+                {
+                    _s.Z = (_s.A & _data16) == 0;
+                    _s.N = (_data16 & 0x8000) != 0;
+                    _s.V = (_data16 & 0x4000) != 0;
+                }
                 break;
 
             // BIT immediate sets Z alone — see Op.BitImm.
-            case Op.BitImm: _s.Z = (A8 & _data) == 0; break;
+            case Op.BitImm:
+                _s.Z = TVariant.Variant != CpuVariant.W65C816 || !_wide
+                    ? (A8 & _data) == 0
+                    : (_s.A & _data16) == 0;
+                break;
 
             // Compares. CMP is sized by m; CPX and CPY by x. Which flag each one reads is not
             // decided here — _wide already holds the answer, resolved once at fetch from the

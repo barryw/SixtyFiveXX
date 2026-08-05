@@ -277,4 +277,58 @@ public class W65C816AluTests
         Assert.True(cpu.State.C);
         Assert.False(cpu.State.N);
     }
+
+    /// <summary>
+    /// Every addressing mode of BIT but immediate copies the operand's top two bits into N and
+    /// V. At sixteen bits those are bits 15 and 14, not 7 and 6. Fails against an arm that reads
+    /// $80/$40 out of a 16-bit operand.
+    /// </summary>
+    [Fact]
+    public void Bit_SixteenBit_TakesNFromBitFifteenAndVFromBitFourteen()
+    {
+        var ram = new BankedBus();
+        ram[0xC000] = 0x2C;       // BIT abs
+        ram[0xC001] = 0x00;
+        ram[0xC002] = 0x20;       // AA = $2000
+        ram[0x002000] = 0x00;     // operand low
+        ram[0x002001] = 0x40;     // operand high -> $4000: bit 15 clear, bit 14 set
+
+        var cpu = Banked816TestMachine.Make(ram);
+        cpu.State.E = false;
+        cpu.State.M = false;      // 16-bit accumulator
+        cpu.State.A = 0xFFFF;
+
+        cpu.Step();
+
+        Assert.False(cpu.State.N);
+        Assert.True(cpu.State.V);
+        Assert.False(cpu.State.Z);
+    }
+
+    /// <summary>
+    /// The immediate form sets Z alone, at either width — the behaviour this codebase already
+    /// models as <c>Op.BitImm</c> for the 65C02. N and V are pre-set to values the operand would
+    /// overwrite if the wrong arm ran, so an <c>Op.Bit</c> mis-wiring fails here.
+    /// </summary>
+    [Fact]
+    public void BitImmediate_SixteenBit_SetsOnlyZ()
+    {
+        var ram = new BankedBus();
+        ram[0xC000] = 0x89;       // BIT #
+        ram[0xC001] = 0x00;
+        ram[0xC002] = 0x80;       // operand $8000 — would set N if Op.Bit ran
+
+        var cpu = Banked816TestMachine.Make(ram);
+        cpu.State.E = false;
+        cpu.State.M = false;      // 16-bit accumulator
+        cpu.State.A = 0x0000;
+        cpu.State.N = false;
+        cpu.State.V = false;
+
+        cpu.Step();
+
+        Assert.True(cpu.State.Z);
+        Assert.False(cpu.State.N);
+        Assert.False(cpu.State.V);
+    }
 }

@@ -10,16 +10,18 @@ namespace SixtyFiveXX;
 /// exercised end to end before any 65816 micro-op sequence existed — phase 7c task 3's
 /// forty-five: <c>ORA</c>, <c>AND</c> and <c>EOR</c> in all fifteen addressing forms each;
 /// task 4's twenty-one: <c>CMP</c> in all fifteen, plus <c>CPX</c> and <c>CPY</c> in three each
-/// — the first opcodes here sized by <c>x</c> rather than <c>m</c>; and task 5's thirty:
-/// <c>ADC</c> and <c>SBC</c> in all fifteen each, the first opcodes here with a decimal mode.
-/// Every one of them reuses an addressing sequence phase 7b already certified. The remaining
-/// 128 entries are <see cref="OpcodeInfo.Undefined"/> and throw
-/// <see cref="UndefinedOpcodeException"/> on fetch; later tasks in this phase fill the rest of
-/// the instruction set in.
+/// — the first opcodes here sized by <c>x</c> rather than <c>m</c>; task 5's thirty:
+/// <c>ADC</c> and <c>SBC</c> in all fifteen each, the first opcodes here with a decimal mode;
+/// and task 6's five: <c>BIT</c>, immediate plus its three read-only addressing forms, whose
+/// immediate opcode is a genuinely different operation — <c>Op.BitImm</c> sets Z alone — not
+/// just a narrower addressing mode of <c>Op.Bit</c>. Every one of them reuses an addressing
+/// sequence phase 7b already certified. The remaining 123 entries are
+/// <see cref="OpcodeInfo.Undefined"/> and throw <see cref="UndefinedOpcodeException"/> on
+/// fetch; later tasks in this phase fill the rest of the instruction set in.
 /// </remarks>
 internal static class Opcodes65C816
 {
-    /// <summary>Opcode byte to descriptor. 128 entries defined, 128 undefined.</summary>
+    /// <summary>Opcode byte to descriptor. 133 entries defined, 123 undefined.</summary>
     public static readonly OpcodeInfo[] Table = BuildTable();
 
     private static OpcodeInfo[] BuildTable()
@@ -177,6 +179,15 @@ internal static class Opcodes65C816
         Set(0xFF, "SBC", AddrMode.AbsoluteLongX,              Op.Sbc816, Access.Read, Width.M);
         Set(0xE3, "SBC", AddrMode.StackRelative,              Op.Sbc816, Access.Read, Width.M);
         Set(0xF3, "SBC", AddrMode.StackRelativeIndirectY,     Op.Sbc816, Access.Read, Width.M);
+
+        // BIT. The immediate form is a different operation, not a different mode of the same one:
+        // it sets Z alone and leaves N and V untouched. Op.BitImm already models that for the
+        // 65C02 and needs only widening here.
+        Set(0x89, "BIT", AddrMode.Immediate,   Op.BitImm, Access.Read, Width.M);
+        Set(0x24, "BIT", AddrMode.DirectPage,  Op.Bit,    Access.Read, Width.M);
+        Set(0x34, "BIT", AddrMode.DirectPageX, Op.Bit,    Access.Read, Width.M);
+        Set(0x2C, "BIT", AddrMode.Absolute,    Op.Bit,    Access.Read, Width.M);
+        Set(0x3C, "BIT", AddrMode.AbsoluteX,   Op.Bit,    Access.Read, Width.M);
 
         // Mode switch and status-bit instructions. REP/SEP take AddrMode.ImmediateByte, not
         // AddrMode.Immediate: their operand is always 8 bits and they are flat 3-cycle
