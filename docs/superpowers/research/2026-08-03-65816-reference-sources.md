@@ -775,8 +775,9 @@ and 0 otherwise, `p` is 1 on a page cross.
 
 ### 12.1 16-bit decimal `ADC` and `SBC` — mostly a recorded gap (the plan's §10.1)
 
-**Summary in one line: Clark states the flag *meanings* in decimal mode and gives one worked 16-bit
-example, and is silent on the correction algorithm at every width. The datasheet is silent too.**
+**Summary in one line: Clark states the flag *meanings* in decimal mode, gives one worked 16-bit example,
+and states that 8-bit decimal behaves like the 65C02 — but is silent on the correction algorithm at every
+width. The datasheet is silent too.**
 
 **What Clark does state.** §4, on the `d` flag:
 
@@ -819,17 +820,51 @@ the m flag is 1"); the decimal paragraph does not.
 
 This is the only place any source surveyed states a 16-bit decimal result. It pins down exactly one thing
 beyond the accumulator value: **`N` comes from the corrected result, not from the binary intermediate.**
-The binary intermediate here is `$0001 - $2003 - 0 = $DFFE`, whose bit 15 is 1; Clark states `n = 0`,
-which is bit 15 of the corrected `$7998`. `Z` and `C` are not discriminated by this example (both agree
-between the binary intermediate and the corrected result), and `V` is not listed at all.
+The binary intermediate is not inferred here — Clark's **Example 1** immediately above is the same
+operands with `d = 0` and states the accumulator will be `$DFFE`, whose bit 15 is 1. For `d = 1` Clark
+states `n = 0`, which is bit 15 of the corrected `$7998`. `Z` and `C` are not discriminated by this
+example (both agree between the binary intermediate and the corrected result), and `V` is not listed at
+all.
+
+**What Clark states about 8-bit decimal, in the §6 preamble rather than in §6.1.1.1.** This passage sits
+under the heading `6  INSTRUCTIONS`, after the column key and before §6.1.1.1, which is why a search
+confined to the `ADC SBC` section misses it. Verbatim:
+
+> In general, in emulation mode (and for 8-bit results in native mode), the 65C816 has the same behavior
+> as 65C02 but the same cycle counts as the NMOS 6502. For example, when the d flag is 1 and the m flag
+> is 1, ADC #$00 will have valid n, z, and c flag results (like the 65C02, but unlike the NMOS 6502), but
+> will take 2 cycles (like the NMOS 6502, but unlike the 65C02).
+
+Three things follow, and the limits on each matter as much as the claim:
+
+- **Emulation mode and 8-bit native mode are grouped together**, both described as behaving like the
+  65C02. So the question "does decimal behaviour differ between emulation mode and 8-bit native mode?"
+  is **not** a gap — Clark answers it, in the negative. The hedge "In general" is his, and is preserved
+  here rather than dropped; it is a general statement, not a per-flag guarantee.
+- **It is scoped to 8-bit results.** It says nothing whatever about `m = 0`, which is the case phase 7c
+  must newly implement. The 16-bit correction algorithm remains what Example 2 alone speaks to.
+- **It enumerates `n`, `z` and `c`, and omits `v`.** That omission is consistent with §6.1.1.1's "the v
+  flag is overwritten … can be considered invalid", and with this codebase's measured finding that the
+  65C02's decimal `V` is computed exactly as NMOS does. `V` is not covered by the identity claim.
+
+It also corroborates §12.5's cycle answer a third time, from a worked example rather than a rule:
+`ADC #$00` with `d = 1`, `m = 1` takes 2 cycles, which is `3-m` with no decimal term.
 
 **What Clark does not state — recorded as silence, in those words.** The document was searched in full
-for `decimal`, `BCD`, `nibble`, `digit`, `$06`, `$60`, `correct` and `adjust`. **The sources are silent
-on the decimal correction algorithm.** Clark nowhere describes a correction — not nibble-wise, not
+for `decimal`, `BCD`, `nibble`, `digit`, `$06`, `$60`, `correct`, `adjust`, `d flag`, `additional` and
+`cycle`. **The sources are silent on the decimal correction algorithm.**
+
+*(Search note, because it cost this section a revision: the §6 preamble passage above contains neither
+"decimal" nor "BCD" — it says "when the d flag is 1" — so the first pass over this section, searching only
+the obvious decimal vocabulary, missed it and wrongly recorded emulation-versus-native decimal behaviour
+as a gap. Clark names flags by letter far more often than by name. Search `d flag`, not `decimal`. A
+second trap in the same document: it is paginated with form feeds, so `takes no additional cycles` spans
+a blank line as `additional\n\ncycles` and does not match as a literal phrase.)* Clark nowhere describes a correction — not nibble-wise, not
 `$60`/`$06`-style as this codebase's `SbcCmos` uses, not anything, and not at 8 bits either. The brief's
 anticipated shape ("Clark describes 8-bit decimal mode but says nothing about 16-bit") does not apply:
-Clark describes the algorithm at *no* width. He states what the flags mean and what one 16-bit `SBC`
-produces, and stops.
+Clark describes the algorithm at *no* width. He states what the flags mean, what one 16-bit `SBC`
+produces, and that 8-bit decimal behaves like the 65C02 — and stops short of ever saying how the
+correction is performed, on any part, at any width.
 
 Specifically, the following are **not** established by any source and must be treated as open by task 5:
 
@@ -842,9 +877,13 @@ Specifically, the following are **not** established by any source and must be tr
    he never uses the words "binary result" or "intermediate" in a decimal-mode sentence. `N` alone is
    pinned, by Example 2.
 4. **Behaviour on invalid BCD input digits** (nibbles `$A`–`$F`). Not mentioned anywhere.
-5. **Whether decimal behaviour differs between emulation mode and 8-bit native mode.** Clark's
-   ten-mode enumeration in §2 lists "decimal mode, emulation mode" and the four native decimal
-   combinations as distinct modes, but §6.1.1.1 never distinguishes them behaviourally.
+
+Note what is **not** on that list any more: whether decimal behaviour differs between emulation mode and
+8-bit native mode. The §6 preamble quoted above groups the two, so that question is answered by a source
+and is not a gap. Note also that the preamble constrains gaps 1 and 3 **at 8 bits only** — it asserts
+65C02-like behaviour there without giving the algorithm, so task 5 may use the 65C02 path as a *hypothesis*
+for `m = 1` and must still measure it, and must not carry that hypothesis to `m = 0`, which no source
+covers.
 
 **What the datasheet adds, and why it is not a specification of the above.** Table 7-1 "Caveats" (p. 49),
 `(Flag Reg)` row, `W65C816S` column, verbatim:
@@ -881,10 +920,23 @@ behaviour is identical; any divergence, or any silence, gets its own members."*
 That is an explicit statement of *difference* from the 65C02 in decimal mode, from the higher-precedence
 of the two prose sources, and the datasheet states the same difference independently in Table 7-1's
 Timing sub-row `D. Decimal Mode` (§12.5). So this verdict does not rest on silence alone — there is a
-stated divergence. Silence then applies on top of it: no source states that the 65816's decimal
-*arithmetic* or its `V` computation matches the 65C02's, and per §12.1 no source states what either one
-is. Divergence and silence both point the same way, and the rule admits reuse only on a positive
-statement of identity, which does not exist.
+stated divergence.
+
+**The one statement of identity that does exist, and why it does not reach far enough.** Clark's §6
+preamble (quoted in full in §12.1) says the 65816 "has the same behavior as 65C02" — but only "in
+general", only **in emulation mode and for 8-bit results in native mode**, and its worked example
+enumerates `n`, `z` and `c` while omitting `v`. Three reasons that does not license reuse under the rule:
+
+1. **It does not cover `m = 0`.** Sixteen-bit decimal arithmetic is exactly what phase 7c adds, and no
+   source states it matches anything — the 65C02 has no 16-bit decimal mode to match.
+2. **It does not cover `V`.** The one flag `Op.AdcCmos`'s doc comment records as the 65C02's surprise
+   (*"C and V are computed exactly as NMOS does"*) is the one flag the sentence leaves out.
+3. **An `Op` member is selected once, not per width.** A member that was right for `m = 1` and unstated
+   for `m = 0` would still need a 16-bit path behind it, so the reuse it would buy is nil.
+
+The rule admits reuse only on a positive statement that *the* decimal behaviour is identical. What exists
+is a hedged, width-limited, `V`-omitting statement of partial identity sitting alongside a flat statement
+of divergence on timing. Divergence, partial identity and silence all point the same way.
 
 Two supporting facts, neither of them the reason but both worth recording:
 
@@ -1104,9 +1156,14 @@ in phase 7c depends on the rest.
 | 2 | How `V` is computed in decimal mode | **The sources are silent.** Clark: "overwritten … can be considered invalid". Table 7-1's "N,V and Z flags valid" is the same wording already measured to overstate for the 65C02 | Task 5, from vectors |
 | 3 | Whether `Z` and `C` come from the corrected result or the binary intermediate | **The sources are silent.** Clark's wording implies the corrected result but Example 2 does not discriminate | Task 5, from vectors |
 | 4 | Decimal behaviour on invalid BCD digits (`$A`–`$F` nibbles) | **The sources are silent.** Not mentioned anywhere surveyed | Task 5, from vectors |
-| 5 | Whether decimal behaviour differs between emulation mode and 8-bit native mode | **The sources are silent** on any behavioural difference; Clark's §2 lists them as distinct modes without distinguishing them | Task 5, from vectors (`.e` versus `.n` files) |
+
+All four are about the *arithmetic*. Gaps 1 and 3 are constrained at `m = 1` by Clark's §6 preamble
+("the same behavior as 65C02", 8-bit results) — a hypothesis for task 5 to measure, not a citation to
+implement against, and one that says nothing about `m = 0`. Gaps 2 and 4 are unconstrained at every width.
 
 What is **not** a gap, so nobody re-opens it: `N`'s decimal source at 16 bits (Clark's Example 2, §12.1);
-the decimal cycle count (§12.5, two sources agreeing); the `Op` member verdict (§12.2, decided by a
-pre-committed rule on a stated divergence); row 17 (§12.3, transcribed); the x-width immediates (§12.4,
-transcribed); and all 121 cycle formulas (§12.5, transcribed).
+whether emulation mode and 8-bit native mode differ in decimal behaviour (Clark's §6 preamble groups
+them — §12.1); the decimal cycle count (§12.5, two sources agreeing, plus the §6 preamble's worked
+example a third time); the `Op` member verdict (§12.2, decided by a pre-committed rule on a stated
+divergence); row 17 (§12.3, transcribed); the x-width immediates (§12.4, transcribed); and all 121 cycle
+formulas (§12.5, transcribed).
