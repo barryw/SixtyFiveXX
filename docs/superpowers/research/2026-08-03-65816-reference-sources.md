@@ -395,7 +395,7 @@ Clark's sentence is presumably describing the *bus-cycle count* loosely — "rea
 by the program counter" — but taken literally it produces a bus access the vectors do not have, which is
 exactly the failure mode §9's implied-row note warns about.
 
-### 3.5 `STP`'s opcode in the datasheet's Table 6-2 — printed as `D8`, which is `CLD`
+### 3.5 `STP`'s opcode in the datasheet's Table 5-5 — printed as `D8`, which is `CLD`
 
 Added 2026-08-05, phase 7d task 1. In the datasheet's instruction-summary table (p. 33), the `STP` row's
 implied-addressing column reads **`D8`**. `$D8` is `CLD`. `STP` is `$DB`.
@@ -406,7 +406,7 @@ row. The datasheet contradicts itself two pages earlier: its own opcode matrix p
 `… CLD CMP PHX STP JML …`, putting `STP` at `$DB` correctly, and Clark §6.9 gives `DB 1 3 imp`.
 
 **Resolution: `$DB`.** Harmless if the opcode table is built from the matrix or from Clark; a silent
-clobbering of `CLD` if it is built from Table 6-2. Recorded because Table 6-2 is the table one naturally
+clobbering of `CLD` if it is built from Table 5-5. Recorded because Table 5-5 is the table one naturally
 reaches for — it is the one that carries the flag-effect columns.
 
 ## 4. Source precedence
@@ -2078,10 +2078,10 @@ Transcribed from Table 5-7 rows 22a and 22j (pp. 41–42). These are the only tw
 ABORT, IRQ, NMI, RES                              4 hardware interrupts, 0 bytes, 7 and 8 cycles
   1   (3)        VPB=1 VDA=1 VPA=1   PBR,PC       IO             RWB=1
   2   (7)?       VPB=1 VDA=0 VPA=0   PBR,PC       IO             RWB=1
-  3   (10)       VPB=1 VDA=1 VPA=0   0,S          PBR            RWB=0    <- omitted when e = 1
-  4   (10)       VPB=1 VDA=1 VPA=0   0,S-1        PCH            RWB=0
-  5   (10)       VPB=1 VDA=1 VPA=0   0,S-2        PCL            RWB=0
-  6   (11)       VPB=1 VDA=1 VPA=0   0,S-3        P              RWB=0
+  3   (10)       VPB=1 VDA=1 VPA=0   0,S          PBR            RWB=0    <- omitted when e = 1; RWB stays 1 for RES (Note 10)
+  4   (10)       VPB=1 VDA=1 VPA=0   0,S-1        PCH            RWB=0    <- RWB stays 1 for RES (Note 10)
+  5   (10)       VPB=1 VDA=1 VPA=0   0,S-2        PCL            RWB=0    <- RWB stays 1 for RES (Note 10)
+  6   (11)       VPB=1 VDA=1 VPA=0   0,S-3        P              RWB=0    <- RWB stays 1 for RES (Note 10)
   7              VPB=0 VDA=1 VPA=0   0,VA         AAVL           RWB=1
   8              VPB=0 VDA=1 VPA=0   0,VA+1       AAVH           RWB=1
   1              VPB=1 VDA=1 VPA=1   0,AAV        Next OpCode    RWB=1
@@ -2241,8 +2241,9 @@ labelled as confirmation, not as the source — or closes a stated silence.
 > `P | $10`" are observationally identical here. The verbatim rule is the one both measurements support.
 >
 > **The pushed address is the instruction's address plus 2, for both `BRK` and `COP`, in both modes.**
-> Pushed 16-bit address minus initial `PC` is exactly 2 in 39,998 of 40,000 vectors; the two exceptions are
-> `PC = $FFFE`, where the sum wraps to `$0000` within the bank. That is Clark §6.3.1 (*"push the 16-bit
+> Under 16-bit wrap, pushed 16-bit address minus initial `PC` is exactly 2 in 40,000 of 40,000 vectors. The
+> wrap is exercised by exactly two of them: `00 e 2917` (`PC = $FFFE`, pushed address wraps to `$0000`) and
+> `02 e 3935` (`PC = $FFFF`, pushed address wraps to `$0001`). That is Clark §6.3.1 (*"push the 16-bit
 > address … of the BRK or COP instruction plus 2"*) plus the bank wrap of §4, measured. **`BRK` is a
 > two-byte instruction** — datasheet §7.22, *"The BRK instruction for the NMOS 6502, 65C02 and 65C816 is
 > actually a 2 byte instruction"* — even though Clark's own table prints `LEN` 1 for it and 2 for `COP`.
@@ -2402,7 +2403,7 @@ WAI                                               1 opcode, 1 byte, 3 cycles
 ```
 
 Clark §6.9 agrees on both: `DB 1 3 imp STP` and `CB 1 3 imp WAI`. (Clark's `DB` is right; the datasheet's
-Table 6-2 prints `D8` for `STP`, which is `CLD` — see §3.5.) Clark's prose on what happens *after* the three
+Table 5-5 prints `D8` for `STP`, which is `CLD` — see §3.5.) Clark's prose on what happens *after* the three
 cycles is the fullest statement in any source:
 
 > STP stops the clock input of the 65C816, effectively shutting down the 65C816 until a hardware reset
@@ -2843,7 +2844,7 @@ as §12.6 and §13.6.
 | 2 | **The `NMI`-hijack anomaly.** Whether an `NMI` asserted during a `BRK` sequence causes the `BRK` to fetch the `NMI` vector, as it does on the NMOS parts this repository has certified. **The sources are silent**: neither Clark nor the datasheet mentions the case. Clark §6.3.1.1's *"the instruction is completed before pushing anything"* is about a different case and does not cover it | **Open, and not measurable.** Follows from gap 1. Do **not** carry the NMOS behaviour over by inference; if phase 7d implements interrupt delivery at all, the hijack must be either left out or written down explicitly as an unsourced choice |
 | 3 | **Note 9's two-cycle wait** — *"Wait at cycle 2 for 2 cycles after NMIB or IRQB active input."* §8 deferred this note to phase 7d. It is transcribed in §14.2, but what it specifies is a hardware recognition handshake, not a cycle any vector records | **Recorded, not actionable.** Discharges §8's deferral. Follows from gap 1: nothing can check it |
 | 4 | **Note 16, "COP Latches."** §8 deferred this note to phase 7d too. That five-character sentence is the entire note, and it is attached to an address-bus cell, not to a behaviour | **Recorded, not actionable.** Discharges §8's deferral. The note carries no content; the `COP` sequence is fully specified by row 22j without it |
-| 5 | **What `PHP` pushes into bits 4 and 5.** Clark §6.8.3 describes `PHP` as pushing "the P register" and says nothing about the two mode bits; the datasheet's Table 6-2 gives `P → Ms` with no qualification | **CLOSED 2026-08-05, measured.** `P` verbatim, all eight bits, both modes, 20,000 of 20,000. See §14.1's measured block — including the caveat that in emulation mode this is observationally identical to forcing `$30` |
+| 5 | **What `PHP` pushes into bits 4 and 5.** Clark §6.8.3 describes `PHP` as pushing "the P register" and says nothing about the two mode bits; the datasheet's Table 5-5 gives `P → Ms` with no qualification | **CLOSED 2026-08-05, measured.** `P` verbatim, all eight bits, both modes, 20,000 of 20,000. See §14.1's measured block — including the caveat that in emulation mode this is observationally identical to forcing `$30` |
 | 6 | **Whether `PLP` setting `x = 1` forces `XH = YH = $00`.** Clark §4 states the rule as a property of the *flag* and illustrates it with `SEP` only; no source names `PLP` | **CLOSED 2026-08-05, measured.** It does, immediately. 2,494 non-vacuous `28 n` vectors, all with final `XH = YH = $00`. See §14.1's measured block |
 | 7 | **What emulation-mode `COP` pushes in bit 4.** Note 11 and Table 8-1 enumerate `IRQ`, `NMI` and `ABORT`; Clark §6.3.1's "the b flag will be set" is scoped to `BRK`. **The sources are silent on `COP`** | **CLOSED 2026-08-05, measured.** `1`, the same as emulation `BRK` — because the push is `P` verbatim and emulation `P` always has bit 4 set. Same observational caveat as gap 5 |
 | 8 | **`JSR (abs,X)`'s push-before-`AAH` ordering has one source, not two.** Table 5-7 row 2b states it; **Clark is silent on the ordering**, giving only the cycle count | **Recorded, single-sourced.** Not a disagreement — no source contradicts the row. Noted so that if a vector disagrees, the row is known to be the only thing behind it |
