@@ -16,6 +16,11 @@ public class W65C816WidthTests
     /// that declares one but never reaches a deciding micro-op is dead data that will mislead
     /// the next reader. Asserted as set equality rather than one direction, so both mistakes
     /// fail here — in a sub-second unit run — instead of inside a 20,000-vector file.
+    /// <para>
+    /// Limitation: the three-member list of deciding micro-ops below is hard-coded. If a later
+    /// task adds a fourth one, this test's coverage shrinks silently until the list is updated
+    /// to match — nothing here detects that a new deciding micro-op exists.
+    /// </para>
     /// </summary>
     [Fact]
     public void WidthIsDeclaredExactlyForOpcodesThatDecideAnOperandWidth()
@@ -36,6 +41,36 @@ public class W65C816WidthTests
             Assert.True(decides == declared,
                 $"${opcode:X2} {table.Info[opcode].Mnemonic}: reaches a width-deciding micro-op = " +
                 $"{decides}, declares a Width = {declared}. These must agree.");
+        }
+    }
+
+    /// <summary>
+    /// The previous test only checks that an opcode declares <i>a</i> <see cref="Width"/>, not
+    /// <i>which</i> one — so a single wrong <c>Set(...)</c> line inside a run of near-identical
+    /// calls, e.g. an <c>LDX</c> form mis-declared <see cref="Width.M"/>, would pass it and be
+    /// caught only by a 20,000-vector conformance file. Every opcode that shares an <see cref="Op"/>
+    /// must declare the same <see cref="Width"/> as every other opcode for that operation — all
+    /// fifteen <c>LDA</c> forms agree with each other, all five <c>LDX</c> forms agree with each
+    /// other, and so on — so this closes the realistic version of that gap without merely
+    /// restating the table.
+    /// </summary>
+    [Fact]
+    public void OpcodesSharingAnOperationAgreeOnWidth()
+    {
+        var table = MicroOpTable.For<W65C816Variant>();
+
+        var groups = Enumerable.Range(0, 256)
+            .Select(opcode => (Opcode: opcode, Info: table.Info[opcode]))
+            .Where(x => x.Info.Operation != Op.Undefined)
+            .GroupBy(x => x.Info.Operation);
+
+        foreach (var group in groups)
+        {
+            var widths = group.Select(x => x.Info.Width).Distinct().ToList();
+            if (widths.Count <= 1) continue;
+
+            var detail = string.Join(", ", group.Select(x => $"${x.Opcode:X2}={x.Info.Width}"));
+            Assert.Fail($"{group.Key}: opcodes disagree on Width — {detail}");
         }
     }
 }

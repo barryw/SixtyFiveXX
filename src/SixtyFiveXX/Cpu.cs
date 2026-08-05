@@ -75,9 +75,19 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// <c>UnusedFlagBitRegressionTests</c> — which is the only place in the repository that ever
     /// put anything in an 8-bit core's A high byte, and did so as a probe, not a requirement.
     /// <see cref="X8"/> and <see cref="Y8"/> deliberately do NOT get this treatment: there is no
-    /// hidden high byte for the index registers, and whenever <c>x</c> is set their high bytes
-    /// are $00 by a continuously held invariant this core enforces in <c>FetchOpcode</c>,
-    /// <see cref="Op.Xce"/>, <see cref="Op.Rep"/> and <see cref="Op.Sep"/>.
+    /// hidden high byte for the index registers to preserve, and their setters already zero the
+    /// high byte on every 8-bit write by assigning only the low byte. Hardware does force
+    /// <c>XH</c>/<c>YH</c> to <c>$00</c> whenever <c>x</c> is set, so that zeroing setter is
+    /// correct — but, unlike <see cref="S8"/>'s <c>SH</c>, this is not a continuously-held
+    /// invariant of the core. <see cref="Op.Xce"/>, <see cref="Op.Rep"/> and <see cref="Op.Sep"/>
+    /// force it at their own mode-transition points, and <see cref="FetchOpcode"/>'s own forcing
+    /// block re-applies it once per instruction, but only while <see cref="CpuState.E"/> is set —
+    /// its guard is <c>&amp;&amp; _s.E</c> — so in native mode with <c>x = 1</c> it does nothing.
+    /// A state set directly, such as a conformance vector's <c>initial</c> loaded straight into
+    /// <see cref="CpuState"/>, can therefore carry a nonzero high byte alongside <c>x = 1</c>
+    /// without passing through any of those paths. That gap is exactly why <see cref="IndexX"/>
+    /// and <see cref="IndexY"/> narrow at read time instead of trusting the field to already be
+    /// zero.
     /// </para>
     /// </remarks>
     private byte A8
@@ -177,9 +187,15 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// <para>
     /// Assigned only under a compile-time variant guard, so for the five 8-bit cores the
     /// assignment is never emitted and this stays <see langword="false"/> for the lifetime of the
-    /// core. Every read of it in variant-shared code must still sit behind
-    /// <c>TVariant.Variant != CpuVariant.W65C816 ||</c> — see <see cref="Op.Lda"/>'s arm — so the
-    /// field is never loaded on an 8-bit core's hot path.
+    /// core — but that guard is defence-in-depth and a JIT-folding win, not what actually keeps an
+    /// 8-bit core off the 16-bit path. An 8-bit core's opcode table never sets <see cref="Width"/>
+    /// either, so <c>info.Width</c> is always <see cref="Width.None"/> there and this field would
+    /// resolve to <see langword="false"/> even without the variant guard — measured by mutation,
+    /// down to a bare <c>_wide = !_s.M</c>, in <c>UnusedFlagBitRegressionTests</c>. What actually
+    /// holds the line is the read guard on each width-deciding arm —
+    /// <c>TVariant.Variant != CpuVariant.W65C816 ||</c>, see <see cref="Op.Lda"/>'s arm — which is
+    /// why every read of this field in variant-shared code must still sit behind it, and which is
+    /// also what keeps the field off an 8-bit core's hot path.
     /// </para>
     /// </remarks>
     private bool _wide;
@@ -884,9 +900,13 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
 
         // Resolve this instruction's operand width once, here, rather than per access cycle.
         // The guard is a compile-time constant per closed generic type, so the five 8-bit cores
-        // emit nothing at all and _wide stays false for them — which matters because Flag.M and
-        // Flag.X alias Flag.U and Flag.B, so reading _s.M on a 6502 reads its always-set unused
-        // bit. See the remarks on _wide.
+        // emit nothing at all and _wide stays false for them regardless of what P holds — but that
+        // guard is defence-in-depth and a JIT-folding win, not what actually keeps an 8-bit core
+        // off the 16-bit path: their opcode tables never set Width either (Flag.M and Flag.X alias
+        // Flag.U and Flag.B, so reading _s.M on a 6502 reads its always-set unused bit, and _wide
+        // would still resolve to false even without this guard). What actually holds the line is
+        // the read guard on Op.Lda/Op.Sta (Cpu.Exec.cs). See the remarks on _wide and
+        // UnusedFlagBitRegressionTests for the mutation testing that pins this.
         if (TVariant.Variant == CpuVariant.W65C816)
             _wide = info.Width switch
             {
