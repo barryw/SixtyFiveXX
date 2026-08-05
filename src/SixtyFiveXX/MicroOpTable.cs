@@ -392,8 +392,8 @@ internal sealed class MicroOpTable
 
     /// <summary>
     /// Every 65816 addressing form, built directly against research document §9's per-mode
-    /// blocks. Named <c>EmitDirectPage816</c> through task 5, when it covered only the
-    /// seven direct-page modes; task 6 folded the remaining eight forms (absolute, long,
+    /// blocks. Named <c>EmitDirectPage816</c> through phase 7b task 5, when it covered only the
+    /// seven direct-page modes; phase 7b task 6 folded the remaining eight forms (absolute, long,
     /// stack-relative, immediate) into the same switch rather than a second method, since every
     /// one of them ends the same way — <c>info.Mode</c> drives the addressing prefix and, for
     /// every mode but immediate, which "+1" high-byte micro-op closes the sequence, while
@@ -544,14 +544,15 @@ internal sealed class MicroOpTable
                     $"{info.Mnemonic}: {info.Mode} has no 65816 addressing sequence.");
         }
 
-        // Code-review fix (task 5), extended by task 6 and again by task 7: only the three plain
-        // direct-page forms — dp, dp,X and dp,Y — and plain stack-relative are bank-0-confined
-        // (their data access is 0,D+DO[+X|+Y] or 0,S+SO); dp,Y joined the set with the mode
-        // itself in task 7, since it is direct-page addressing and confined exactly as dp,X is.
-        // Every other mode's final access goes through DBR or the operand's own bank
-        // byte, and its "+1" must carry into the next bank rather than wrap — Clark §5.2
-        // Example 2, cited at Cpu.HighByteAddressCarry. (sr,S),Y is NOT in the bank-0-confined
-        // set despite sharing sr,S's bank-0 pointer fetch: task 6 review found this mode's
+        // Code-review fix (phase 7b task 5), extended by phase 7b task 6 and again by phase 7c
+        // task 7: only the three plain direct-page forms — dp, dp,X and dp,Y — and plain
+        // stack-relative are bank-0-confined (their data access is 0,D+DO[+X|+Y] or 0,S+SO);
+        // dp,Y joined the set with the mode itself in phase 7c task 7, since it is direct-page
+        // addressing and confined exactly as dp,X is. Every other mode's final access goes
+        // through DBR or the operand's own bank byte, and its "+1" must carry into the next bank
+        // rather than wrap — Clark §5.2 Example 2, cited at Cpu.HighByteAddressCarry. (sr,S),Y is
+        // NOT in the bank-0-confined set despite sharing sr,S's bank-0 pointer fetch: phase 7b
+        // task 6 review found this mode's
         // *final* access, DBR,AA+Y (§9 row 24, cycles 7/7a), goes through DBR exactly like
         // (dp),Y's does — indistinguishable from (dp),Y's bank-carry requirement, and wrongly
         // grouped with plain sr,S here originally. Zero vector coverage: catching it needs

@@ -147,9 +147,6 @@ public sealed partial class Cpu<TBus, TVariant>
                 if (TVariant.Variant != CpuVariant.W65C816 || !_wide) _data = A8;
                 else _data16 = _s.A;
                 break;
-            // Same variant guard as Op.Sta. STZ takes its width from m, not x: it stores an
-            // accumulator-width zero despite naming no register, so _wide is already resolved
-            // from Width.M for it and this arm needs no distinguishing test of its own.
             case Op.Stx:
                 if (TVariant.Variant != CpuVariant.W65C816 || !_wide) _data = X8;
                 else _data16 = _s.X;
@@ -160,6 +157,9 @@ public sealed partial class Cpu<TBus, TVariant>
                 else _data16 = _s.Y;
                 break;
 
+            // Same variant guard as Op.Sta. STZ takes its width from m, not x: it stores an
+            // accumulator-width zero despite naming no register, so _wide is already resolved
+            // from Width.M for it and this arm needs no distinguishing test of its own.
             case Op.Stz:
                 if (TVariant.Variant != CpuVariant.W65C816 || !_wide) _data = 0;
                 else _data16 = 0;

@@ -65,7 +65,7 @@ existing `IBus` reference in `RefBus` and pay one virtual call per access.
 | 65C02 Rockwell | Complete | Harte SingleStepTests + Klaus 65C02 extended |
 | 65C02 WDC | Complete | Harte SingleStepTests + Klaus 65C02 extended |
 | 6510 | Complete | The 6502 suites for the inherited opcodes + VICE `cpuport/test1` for the `$00`/`$01` port |
-| 65816 | Phase 7b: 32 of 256 opcodes | Harte SingleStepTests/65816, per-cycle, including bus-qualifier pins |
+| 65816 | Phases 7b–7c: partial (see below) | Harte SingleStepTests/65816, per-cycle, including bus-qualifier pins |
 
 IRQ and NMI (hardware-correct sampling, edge latching, and BRK/NMI hijacking), the RDY
 halt line, and the SO pin are complete, alongside `Reset()` and `BRK`.

@@ -947,17 +947,17 @@ internal static class MicroOps
     /// <see cref="MicroOp.RepSepExec"/> is the second, for the same reason — see its own remarks
     /// for why VDA is 0 there despite Note 1 stating only VPA outright.
     /// <see cref="MicroOp.DirectPagePenalty"/>, <see cref="MicroOp.DirectPageIndexX"/> and
-    /// <see cref="MicroOp.IndexDirectPageIndirectY"/> are task 5's three — every one of them is
-    /// an <c>IO</c> row in research document §9's direct-page blocks, driving an address with no
-    /// memory access at all, the same shape as the first two.
+    /// <see cref="MicroOp.IndexDirectPageIndirectY"/> are phase 7b task 5's three — every one of
+    /// them is an <c>IO</c> row in research document §9's direct-page blocks, driving an address
+    /// with no memory access at all, the same shape as the first two.
     /// <see cref="MicroOp.AbsIndexFixup"/>, <see cref="MicroOp.StackRelativePenalty"/> and
-    /// <see cref="MicroOp.IndexStackRelativeIndirectY"/> are task 6's three — the conditional
-    /// indexing cycle of <c>abs,X</c>/<c>abs,Y</c> (§9 row 6a/7's "3a"), <c>sr,S</c>'s
+    /// <see cref="MicroOp.IndexStackRelativeIndirectY"/> are phase 7b task 6's three — the
+    /// conditional indexing cycle of <c>abs,X</c>/<c>abs,Y</c> (§9 row 6a/7's "3a"), <c>sr,S</c>'s
     /// unconditional penalty cycle (§9 row 23's "3"), and <c>(sr,S),Y</c>'s second unconditional
     /// internal cycle (§9 row 24's "6") — each an <c>IO</c> row with no memory access, the same
-    /// shape as task 5's three.
-    /// <see cref="MicroOp.DirectPageIndexY"/> is task 7's one — <c>dp,Y</c>'s indexing cycle,
-    /// the same <c>IO</c> row of §9's direct-page block that
+    /// shape as phase 7b task 5's three.
+    /// <see cref="MicroOp.DirectPageIndexY"/> is phase 7c task 7's one — <c>dp,Y</c>'s indexing
+    /// cycle, the same <c>IO</c> row of §9's direct-page block that
     /// <see cref="MicroOp.DirectPageIndexX"/> already occupies, with Y substituted.
     /// </summary>
     private static bool[] BuildInternalCycleTable()

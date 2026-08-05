@@ -1,7 +1,7 @@
 namespace SixtyFiveXX;
 
 /// <summary>
-/// The WDC 65C816 opcode table — phase 7b's slice of it.
+/// The WDC 65C816 opcode table.
 /// </summary>
 /// <remarks>
 /// A hundred and fifty-three opcodes are defined: every addressing form of <c>LDA</c> and

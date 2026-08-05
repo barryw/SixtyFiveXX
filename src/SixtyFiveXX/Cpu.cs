@@ -916,8 +916,8 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
         // off the 16-bit path: their opcode tables never set Width either (Flag.M and Flag.X alias
         // Flag.U and Flag.B, so reading _s.M on a 6502 reads its always-set unused bit, and _wide
         // would still resolve to false even without this guard). What actually holds the line is
-        // the read guard on Op.Lda/Op.Sta (Cpu.Exec.cs). See the remarks on _wide and
-        // UnusedFlagBitRegressionTests for the mutation testing that pins this.
+        // the read guard on every width-aware Exec arm (Cpu.Exec.cs). See the remarks on _wide
+        // and UnusedFlagBitRegressionTests for the mutation testing that pins this.
         if (TVariant.Variant == CpuVariant.W65C816)
             _wide = info.Width switch
             {
