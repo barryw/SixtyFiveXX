@@ -56,13 +56,66 @@ public sealed partial class Cpu<TBus, TVariant>
                 else { _s.Y = _data16; SetZN16(_s.Y); }
                 break;
 
-            // Transfers. TXS is the only one that leaves flags alone.
-            case Op.Tax: X8 = A8; SetZN(X8); break;
-            case Op.Tay: Y8 = A8; SetZN(Y8); break;
-            case Op.Tsx: X8 = S8; SetZN(X8); break;
-            case Op.Txa: A8 = X8; SetZN(A8); break;
-            case Op.Tya: A8 = Y8; SetZN(A8); break;
-            case Op.Txs: S8 = X8; break;
+            // Transfers. Width comes from the DESTINATION register's flag: an index destination
+            // is sized by x, an accumulator destination by m. The four TC*/T*C forms move all
+            // sixteen bits regardless, and TXS/TCS set no flags. Research document §13.4.
+            case Op.Tax:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.XFlag) { X8 = A8; SetZN(X8); }
+                else { _s.X = _s.A; SetZN16(_s.X); }
+                break;
+
+            case Op.Tay:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.XFlag) { Y8 = A8; SetZN(Y8); }
+                else { _s.Y = _s.A; SetZN16(_s.Y); }
+                break;
+
+            case Op.Tsx:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.XFlag) { X8 = S8; SetZN(X8); }
+                else { _s.X = _s.S; SetZN16(_s.X); }
+                break;
+
+            case Op.Txa:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.M) { A8 = X8; SetZN(A8); }
+                else { _s.A = _s.X; SetZN16(_s.A); }
+                break;
+
+            case Op.Tya:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.M) { A8 = Y8; SetZN(A8); }
+                else { _s.A = _s.Y; SetZN16(_s.A); }
+                break;
+
+            // TXS takes no flags. On the 65816 it moves all sixteen bits in native mode; S8's
+            // setter forces SH to $01 in emulation mode, which is exactly the required behaviour.
+            case Op.Txs:
+                if (TVariant.Variant != CpuVariant.W65C816) S8 = X8;
+                else if (_s.E) S8 = X8;
+                else _s.S = _s.X;
+                break;
+
+            case Op.Txy:
+                if (_s.XFlag) { Y8 = X8; SetZN(Y8); }
+                else { _s.Y = _s.X; SetZN16(_s.Y); }
+                break;
+
+            case Op.Tyx:
+                if (_s.XFlag) { X8 = Y8; SetZN(X8); }
+                else { _s.X = _s.Y; SetZN16(_s.X); }
+                break;
+
+            // Always sixteen bits. Tcs sets no flags, as Txs does not.
+            case Op.Tcd: _s.DP = _s.A; SetZN16(_s.DP); break;
+            case Op.Tdc: _s.A = _s.DP; SetZN16(_s.A); break;
+            case Op.Tsc: _s.A = _s.S; SetZN16(_s.A); break;
+
+            case Op.Tcs:
+                if (_s.E) S8 = A8;
+                else _s.S = _s.A;
+                break;
+
+            case Op.Xba:
+                _s.A = (ushort)((_s.A >> 8) | (_s.A << 8));
+                SetZN((byte)_s.A);
+                break;
 
             // Flags
             case Op.Clc: _s.C = false; break;
