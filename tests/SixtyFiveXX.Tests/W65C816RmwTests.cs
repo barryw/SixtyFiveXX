@@ -144,4 +144,86 @@ public class W65C816RmwTests
         Assert.Equal(0x24, ram[0x000000]);
         Assert.Equal(0x99, ram[0x010000]);
     }
+
+    /// <summary>
+    /// A 16-bit INC carries across the byte boundary rather than wrapping the low byte, which is
+    /// the whole difference from two independent 8-bit increments.
+    /// </summary>
+    [Fact]
+    public void IncAbsolute_SixteenBit_CarriesAcrossTheByteBoundary()
+    {
+        var ram = new BankedBus();
+        ram[0xC000] = 0xEE;       // INC abs
+        ram[0xC001] = 0x00;
+        ram[0xC002] = 0x20;
+        ram[0x002000] = 0xFF;     // low
+        ram[0x002001] = 0x00;     // high -> $00FF
+
+        var cpu = Banked816TestMachine.Make(ram);
+        cpu.State.E = false;
+        cpu.State.M = false;      // 16-bit
+        cpu.State.DBR = 0x00;
+
+        cpu.Step();
+
+        Assert.Equal(0x00, ram[0x002000]);
+        Assert.Equal(0x01, ram[0x002001]);   // $0100
+        Assert.False(cpu.State.Z);
+    }
+
+    /// <summary>
+    /// TSB sets Z from the AND of A and memory over the full operative width, then ORs A into
+    /// memory. N and V are left alone — unlike BIT, which takes them from the operand.
+    /// </summary>
+    [Fact]
+    public void TsbAbsolute_SixteenBit_SetsZFromTheFullAndAndLeavesNAndVAlone()
+    {
+        var ram = new BankedBus();
+        ram[0xC000] = 0x0C;       // TSB abs
+        ram[0xC001] = 0x00;
+        ram[0xC002] = 0x20;
+        ram[0x002000] = 0x00;
+        ram[0x002001] = 0x00;     // memory $0000
+
+        var cpu = Banked816TestMachine.Make(ram);
+        cpu.State.E = false;
+        cpu.State.M = false;      // 16-bit
+        cpu.State.DBR = 0x00;
+        cpu.State.A = 0x8001;
+        cpu.State.N = false;
+        cpu.State.V = false;
+
+        cpu.Step();
+
+        Assert.True(cpu.State.Z);            // $8001 & $0000 == 0
+        Assert.Equal(0x01, ram[0x002000]);   // memory |= A
+        Assert.Equal(0x80, ram[0x002001]);
+        Assert.False(cpu.State.N);           // untouched
+        Assert.False(cpu.State.V);
+    }
+
+    /// <summary>
+    /// TRB clears the bits A has set. Z again comes from the AND, computed before the clear.
+    /// </summary>
+    [Fact]
+    public void TrbDirectPage_SixteenBit_ClearsTheBitsSetInA()
+    {
+        var ram = new BankedBus();
+        ram[0xC000] = 0x14;       // TRB dp
+        ram[0xC001] = 0x10;
+        ram[0x000010] = 0xFF;
+        ram[0x000011] = 0xFF;     // memory $FFFF
+
+        var cpu = Banked816TestMachine.Make(ram);
+        cpu.State.E = false;
+        cpu.State.M = false;
+        cpu.State.DP = 0x0000;
+        cpu.State.A = 0x0F0F;
+
+        cpu.Step();
+
+        Assert.False(cpu.State.Z);           // $0F0F & $FFFF != 0
+        Assert.Equal(0xF0, ram[0x000010]);
+        Assert.Equal(0xF0, ram[0x000011]);
+    }
 }

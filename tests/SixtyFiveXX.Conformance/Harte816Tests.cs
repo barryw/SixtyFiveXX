@@ -15,14 +15,16 @@ namespace SixtyFiveXX.Conformance;
 /// eight-character per-cycle pin string the 8-bit sets have nothing like — see
 /// <see cref="Harte816Case"/> and <see cref="Harte816Bus"/>.
 /// <para>
-/// Unlike <see cref="HarteTests{TVariant}"/>, this does not loop over all 256 opcodes. Only 153
+/// Unlike <see cref="HarteTests{TVariant}"/>, this does not loop over all 256 opcodes. Only 181
 /// of the 65816's opcodes are defined at all yet (<c>Opcodes65C816.Table</c>) — every one of
 /// them has a real sequence: <c>XCE</c>, <c>REP</c>, <c>SEP</c>, all fifteen addressing forms
 /// of <c>LDA</c>, <c>ORA</c>, <c>AND</c>, <c>EOR</c>, <c>CMP</c>, <c>ADC</c> and <c>SBC</c> plus
 /// <c>STA</c>'s fourteen, three each of <c>CPX</c> and <c>CPY</c>, <c>BIT</c>'s five, five each
-/// of <c>LDX</c> and <c>LDY</c>, three each of <c>STX</c> and <c>STY</c>, and <c>STZ</c>'s four.
+/// of <c>LDX</c> and <c>LDY</c>, three each of <c>STX</c> and <c>STY</c>, <c>STZ</c>'s four,
+/// four each of <c>ASL</c>, <c>LSR</c>, <c>ROL</c>, <c>ROR</c>, <c>INC</c> and <c>DEC</c>, and
+/// two each of <c>TSB</c> and <c>TRB</c>.
 /// Looping over the full opcode space the way the 8-bit harness does would still require
-/// declaring 103 "not yet covered" opcodes as a matter of routine, which is what the 8-bit harness's
+/// declaring 75 "not yet covered" opcodes as a matter of routine, which is what the 8-bit harness's
 /// <c>OpcodesWithoutVectors</c> mechanism exists to flag as an exception, not a norm.
 /// </para>
 /// </remarks>
@@ -61,9 +63,11 @@ public class Harte816Tests(ITestOutputHelper output)
     /// task 2 adds <c>ASL</c>, <c>LSR</c>, <c>ROL</c> and <c>ROR</c> in <c>dp</c>, <c>dp,X</c>,
     /// <c>abs</c> and <c>abs,X</c> each — 153 + 16 = 169 — the first read-modify-writes this
     /// emitter has produced, and with them the run-time <c>E</c> branch of datasheet Note 17
-    /// (research document §13.1).
+    /// (research document §13.1). Phase 7c′ task 3 adds <c>INC</c> and <c>DEC</c> on memory in
+    /// <c>dp</c>, <c>dp,X</c>, <c>abs</c> and <c>abs,X</c> each, plus <c>TSB</c> and <c>TRB</c>
+    /// in <c>dp</c> and <c>abs</c> each — 169 + 12 = 181.
     /// </summary>
-    private static readonly int ExpectedImplementedOpcodes = 169;
+    private static readonly int ExpectedImplementedOpcodes = 181;
 
     /// <summary>
     /// Opcode bytes this phase has emitted a real <c>MicroOpTable.Emit816</c> sequence for —

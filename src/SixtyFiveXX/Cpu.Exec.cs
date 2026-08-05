@@ -175,14 +175,35 @@ public sealed partial class Cpu<TBus, TVariant>
             case Op.Bbs:
                 break;
 
-            // Test-and-modify. Z comes from the AND, as for BIT, but N and V are left
-            // alone — unlike BIT, which takes them from the operand's top two bits.
-            case Op.Trb: _s.Z = (A8 & _data) == 0; _data = (byte)(_data & ~A8); break;
-            case Op.Tsb: _s.Z = (A8 & _data) == 0; _data = (byte)(_data | A8); break;
+            // Memory increment and decrement, operating in place. Same variant guard as
+            // Op.Lda, variant test first: 16-bit INC/DEC carries across the byte boundary
+            // ($00FF + 1 = $0100), the whole difference from two independent 8-bit increments.
+            case Op.Inc:
+                if (TVariant.Variant != CpuVariant.W65C816 || !_wide)
+                { _data = (byte)(_data + 1); SetZN(_data); }
+                else { _data16 = (ushort)(_data16 + 1); SetZN16(_data16); }
+                break;
 
-            // Memory increment and decrement, operating on _data in place.
-            case Op.Inc: _data = (byte)(_data + 1); SetZN(_data); break;
-            case Op.Dec: _data = (byte)(_data - 1); SetZN(_data); break;
+            case Op.Dec:
+                if (TVariant.Variant != CpuVariant.W65C816 || !_wide)
+                { _data = (byte)(_data - 1); SetZN(_data); }
+                else { _data16 = (ushort)(_data16 - 1); SetZN16(_data16); }
+                break;
+
+            // Test-and-modify. Z comes from the AND, as for BIT, but N and V are left
+            // alone — unlike BIT, which takes them from the operand's top two bits. Same
+            // variant guard as Op.Lda, variant test first.
+            case Op.Trb:
+                if (TVariant.Variant != CpuVariant.W65C816 || !_wide)
+                { _s.Z = (A8 & _data) == 0; _data = (byte)(_data & ~A8); }
+                else { _s.Z = (_s.A & _data16) == 0; _data16 = (ushort)(_data16 & ~_s.A); }
+                break;
+
+            case Op.Tsb:
+                if (TVariant.Variant != CpuVariant.W65C816 || !_wide)
+                { _s.Z = (A8 & _data) == 0; _data = (byte)(_data | A8); }
+                else { _s.Z = (_s.A & _data16) == 0; _data16 = (ushort)(_data16 | _s.A); }
+                break;
 
             // Register increment and decrement.
             case Op.IncA: A8 = (byte)(A8 + 1); SetZN(A8); break;
