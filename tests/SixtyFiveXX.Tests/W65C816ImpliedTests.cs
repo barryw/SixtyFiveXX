@@ -235,4 +235,46 @@ public class W65C816ImpliedTests
 
         Assert.Equal(3L, cpu.Cycles - before);
     }
+
+    /// <summary>
+    /// A 16-bit INX wraps at sixteen bits. Flags opposed, so a width read from m would be visible.
+    /// </summary>
+    [Fact]
+    public void Inx_SixteenBitIndex_WrapsAtSixteenBits()
+    {
+        var ram = new BankedBus();
+        ram[0xC000] = 0xE8;       // INX
+
+        var cpu = Banked816TestMachine.Make(ram);
+        cpu.State.E = false;
+        cpu.State.M = true;       // opposed
+        cpu.State.XFlag = false;  // 16-bit index
+        cpu.State.X = 0xFFFF;
+
+        cpu.Step();
+
+        Assert.Equal(0x0000, cpu.State.X);
+        Assert.True(cpu.State.Z);
+    }
+
+    /// <summary>
+    /// With an 8-bit index it wraps at eight, and X's high byte stays $00.
+    /// </summary>
+    [Fact]
+    public void Inx_EightBitIndex_WrapsAtEightBits()
+    {
+        var ram = new BankedBus();
+        ram[0xC000] = 0xE8;       // INX
+
+        var cpu = Banked816TestMachine.Make(ram);
+        cpu.State.E = false;
+        cpu.State.M = false;      // opposed
+        cpu.State.XFlag = true;   // 8-bit index
+        cpu.State.X = 0x00FF;
+
+        cpu.Step();
+
+        Assert.Equal(0x0000, cpu.State.X);
+        Assert.True(cpu.State.Z);
+    }
 }

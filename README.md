@@ -82,16 +82,18 @@ all fifteen 65816 addressing modes, plus `XCE`, `REP` and `SEP` — 32 opcodes i
 certified per-cycle in both emulation and native mode against 640,000 SingleStepTests
 vectors, including the full eight-character bus-qualifier pin string asserted on every cycle.
 
-**This is not a complete core.** 200 of the 65816's 256 opcodes are implemented — phase 7b's 32,
+**This is not a complete core.** 212 of the 65816's 256 opcodes are implemented — phase 7b's 32,
 plus phase 7c's bulk work, which added `ORA`, `AND`, `EOR`, `CMP`, `ADC` and `SBC` in all fifteen
 addressing forms each, `CPX` and `CPY` in three each, `BIT` in five, `LDX` and `LDY` in five each,
 `STX` and `STY` in three each, and `STZ` in four, plus phase 7c′'s read-modify-writes: `ASL`,
 `LSR`, `ROL`, `ROR`, `INC` and `DEC` in `dp`, `dp,X`, `abs` and `abs,X` each, and `TSB` and `TRB`
 in `dp` and `abs` each, plus `ASL`, `LSR`, `ROL`, `ROR`, `INC` and `DEC` on the accumulator — the
-first opcodes with no operand at all — and the twelve transfers plus `XBA`. A transfer's width
-comes from the destination register rather than the source, so `TXS` and the four `TC*`/`T*C` forms
-are always 16-bit whatever `m` and `x` say. `XBA` is the only implied opcode on the part that takes
-three cycles rather than two.
+first opcodes with no operand at all — the twelve transfers plus `XBA`, the seven flag
+instructions, `INX`/`INY`/`DEX`/`DEY` and `NOP`. A transfer's width comes from the destination
+register rather than the source, so `TXS` and the four `TC*`/`T*C` forms are always 16-bit
+whatever `m` and `x` say. `XBA` is the only implied opcode on the part that takes three cycles
+rather than two. The index increments are sized by `x`; the flag instructions and `NOP` touch no
+width-dependent register at all.
 `ADC` and `SBC` are cycle- and result-correct in decimal mode at both operand widths, including
 16-bit BCD, which no source documents — the correction algorithm was measured from the vectors.
 `BIT`'s immediate opcode is a genuinely different operation from its other four forms, not just

@@ -273,10 +273,29 @@ public sealed partial class Cpu<TBus, TVariant>
                 else { _s.A = (ushort)(_s.A - 1); SetZN16(_s.A); }
                 break;
 
-            case Op.Inx: X8 = (byte)(X8 + 1); SetZN(X8); break;
-            case Op.Dex: X8 = (byte)(X8 - 1); SetZN(X8); break;
-            case Op.Iny: Y8 = (byte)(Y8 + 1); SetZN(Y8); break;
-            case Op.Dey: Y8 = (byte)(Y8 - 1); SetZN(Y8); break;
+            // Sized by x on the 65816, not m — the same implied-mode shape as IncA/DecA above,
+            // and see that comment for why the guard reads _s.XFlag directly rather than _wide:
+            // these are implied, declare no Width, and never reach a width-deciding micro-op.
+            // Variant test first, so the five 8-bit cores fold to the code they had.
+            case Op.Inx:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.XFlag) { X8 = (byte)(X8 + 1); SetZN(X8); }
+                else { _s.X = (ushort)(_s.X + 1); SetZN16(_s.X); }
+                break;
+
+            case Op.Dex:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.XFlag) { X8 = (byte)(X8 - 1); SetZN(X8); }
+                else { _s.X = (ushort)(_s.X - 1); SetZN16(_s.X); }
+                break;
+
+            case Op.Iny:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.XFlag) { Y8 = (byte)(Y8 + 1); SetZN(Y8); }
+                else { _s.Y = (ushort)(_s.Y + 1); SetZN16(_s.Y); }
+                break;
+
+            case Op.Dey:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.XFlag) { Y8 = (byte)(Y8 - 1); SetZN(Y8); }
+                else { _s.Y = (ushort)(_s.Y - 1); SetZN16(_s.Y); }
+                break;
 
             // Stack. PHP and BRK are the only ways the B flag reaches memory.
             case Op.Pha: _data = A8; break;

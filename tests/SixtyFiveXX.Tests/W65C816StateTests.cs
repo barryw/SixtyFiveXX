@@ -93,7 +93,7 @@ public class W65C816StateTests
     public void UnimplementedOpcode_Throws()
     {
         var ram = new byte[0x10000];
-        ram[0xC000] = 0xEA;                      // NOP — not in phase 7b's slice
+        ram[0xC000] = 0x4C;                      // JMP absolute — control flow is phase 7d's
 
         var cpu = new Cpu<FlatBus, W65C816Variant>(new FlatBus(ram));
         cpu.State.PC = 0xC000;

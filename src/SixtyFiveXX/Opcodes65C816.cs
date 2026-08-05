@@ -41,13 +41,18 @@ namespace SixtyFiveXX;
 /// have no narrow form. <c>XBA</c> is the odd one out twice over: its <c>N</c>/<c>Z</c> come from
 /// the new low byte as an 8-bit result whatever <c>m</c> says (§13.5), and it is the only implied
 /// opcode on the part that takes three cycles rather than two, so it is the first here to need a
-/// sequence of its own rather than the shared implied one. The remaining 56 entries are
-/// <see cref="OpcodeInfo.Undefined"/> and throw <see cref="UndefinedOpcodeException"/> on
-/// fetch; the rest of phases 7c′ and 7d fill the instruction set in.
+/// sequence of its own rather than the shared implied one; and task 6's twelve: the seven flag
+/// instructions (<c>CLC</c>, <c>SEC</c>, <c>CLI</c>, <c>SEI</c>, <c>CLV</c>, <c>CLD</c>,
+/// <c>SED</c>), <c>INX</c>/<c>INY</c>/<c>DEX</c>/<c>DEY</c> and <c>NOP</c> — 200 + 12 = 212. The
+/// flag instructions and <c>NOP</c> touch no width-dependent register; the index increments are
+/// sized by <c>x</c>, the same implied-mode shape task 5's accumulator forms use. The remaining
+/// 44 entries are <see cref="OpcodeInfo.Undefined"/> and throw
+/// <see cref="UndefinedOpcodeException"/> on fetch; phase 7d fills in the rest — control flow,
+/// the stack, interrupts, <c>MVN</c>/<c>MVP</c>, <c>COP</c>/<c>WDM</c> and <c>WAI</c>/<c>STP</c>.
 /// </remarks>
 internal static class Opcodes65C816
 {
-    /// <summary>Opcode byte to descriptor. 200 entries defined, 56 undefined.</summary>
+    /// <summary>Opcode byte to descriptor. 212 entries defined, 44 undefined.</summary>
     public static readonly OpcodeInfo[] Table = BuildTable();
 
     private static OpcodeInfo[] BuildTable()
@@ -313,6 +318,25 @@ internal static class Opcodes65C816
         // XBA is implied like the twelve above but 3 cycles rather than 2 — research document
         // §13.5, Table 5-7 row 19b. MicroOpTable.Emit816 gives it its own branch for that.
         Set(0xEB, "XBA", AddrMode.Implied, Op.Xba, Access.None);
+
+        // Flag instructions, the index increments and NOP. All implied, all two cycles. The
+        // seven flag opcodes and NOP touch no width-dependent register and need no widening;
+        // INX/INY/DEX/DEY are sized by x, the same implied-mode shape as the accumulator forms
+        // above.
+        Set(0x18, "CLC", AddrMode.Implied, Op.Clc, Access.None);
+        Set(0x38, "SEC", AddrMode.Implied, Op.Sec, Access.None);
+        Set(0x58, "CLI", AddrMode.Implied, Op.Cli, Access.None);
+        Set(0x78, "SEI", AddrMode.Implied, Op.Sei, Access.None);
+        Set(0xB8, "CLV", AddrMode.Implied, Op.Clv, Access.None);
+        Set(0xD8, "CLD", AddrMode.Implied, Op.Cld, Access.None);
+        Set(0xF8, "SED", AddrMode.Implied, Op.Sed, Access.None);
+
+        Set(0xE8, "INX", AddrMode.Implied, Op.Inx, Access.None);
+        Set(0xC8, "INY", AddrMode.Implied, Op.Iny, Access.None);
+        Set(0xCA, "DEX", AddrMode.Implied, Op.Dex, Access.None);
+        Set(0x88, "DEY", AddrMode.Implied, Op.Dey, Access.None);
+
+        Set(0xEA, "NOP", AddrMode.Implied, Op.Nop, Access.None);
 
         return t;
     }
