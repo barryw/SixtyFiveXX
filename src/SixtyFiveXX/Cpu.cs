@@ -583,6 +583,15 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// arithmetic, and <see cref="StackSettle816"/> puts <c>SH</c> back to <c>$01</c> once the
     /// last access is done — reproduces the access addresses and the final <c>S</c> of all
     /// 260,000 vectors across the thirteen opcodes, in both modes, with no exceptions.
+    /// <para>
+    /// <b>Written as a list of operations, not as a general old/new predicate, deliberately.</b>
+    /// The old/new split holds exhaustively for these thirteen and is contradicted outside them:
+    /// <c>COP</c> is new to the 65816 and nonetheless wraps — <c>02 e 1</c> and <c>02 e 230</c>
+    /// both start at <c>S = $0100</c> after forcing and write <c>$000100</c>, <c>$0001FF</c>,
+    /// <c>$0001FE</c>, where a non-wrapping push would put the second byte at <c>$0000FF</c> the
+    /// way <c>PHD</c> does in <c>0b e 435</c>. A later task adding <c>JSL</c>, <c>RTL</c> or
+    /// <c>PER</c> should measure rather than infer.
+    /// </para>
     /// </remarks>
     private bool StackWrapsInPageOne() => _op is Op.Pha or Op.Php or Op.Phx or Op.Phy
                                                 or Op.Pla or Op.Plp or Op.Plx or Op.Ply;
