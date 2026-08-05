@@ -1404,8 +1404,8 @@ git diff main...HEAD > .superpowers/sdd/p7cprime-review.diff
 Each item is a failure this project has actually had:
 
 - **`Sequences.RmwMiddle`'s `Unimplemented816` is now dead for the 65816** — the 816 never reads it, since `Emit816` routes away before `Sequences` is consulted. Decide whether to leave it (it still guards the `IrqEntry` section 7d will need) or retire it, and record the reasoning either way.
-- **Every new micro-op is classified**, and classified *correctly* — `BusPinsTests` proves presence, not correctness. The eight RMW micro-ops should carry `MLB`; check against research §13.1's table rows.
-- **`IsWriteCycle` is right for all eight.** RDY must never halt `RmwModifyWrite816`, `RmwWriteHigh816`, `RmwWriteHigh816Carry` or `RmwWrite816`.
+- **Every new micro-op is classified**, and classified *correctly* — `BusPinsTests` proves presence, not correctness. All nine RMW micro-ops carry `MLB`; the seven that touch the bus also carry `Vda`, and the two internal middle-cycle forms carry `Mlb` alone. Check against research §13.1's table rows.
+- **`IsWriteCycle` is right for all nine.** RDY must never halt `RmwModifyWrite816`, `RmwWriteHigh816`, `RmwWriteHigh816Carry` or `RmwWrite816`.
 - **The bank-carry exclusion set still covers the RMW path.** `dp` and `dp,X` confined, `abs` and `abs,X` carrying.
 - **No opcode in tasks 4–6 declares a `Width`**, and `W65C816WidthTests` still asserts set equality.
 - **Every new test that discriminates a width sets both flags to opposed values.**
