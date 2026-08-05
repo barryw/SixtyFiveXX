@@ -4,7 +4,7 @@ namespace SixtyFiveXX;
 /// The WDC 65C816 opcode table.
 /// </summary>
 /// <remarks>
-/// A hundred and fifty-three opcodes are defined: every addressing form of <c>LDA</c> and
+/// A hundred and sixty-nine opcodes are defined: every addressing form of <c>LDA</c> and
 /// <c>STA</c> (<c>STA</c> has no immediate form), plus <c>XCE</c>, <c>REP</c> and <c>SEP</c> —
 /// phase 7b's thirty-two, chosen so the variant, its table and its reset semantics could be
 /// exercised end to end before any 65816 micro-op sequence existed — phase 7c task 3's
@@ -18,13 +18,17 @@ namespace SixtyFiveXX;
 /// <c>LDY</c> in five forms each, <c>STX</c> and <c>STY</c> in three each, and <c>STZ</c> in
 /// four — the only ones here that do not reuse an addressing sequence phase 7b certified, since
 /// <c>LDX</c>/<c>STX</c>'s <c>dp,Y</c> (<see cref="AddrMode.DirectPageY"/>) is used by no other
-/// instruction on the part and so had to be added with them. The remaining 103 entries are
+/// instruction on the part and so had to be added with them; and phase 7c′ task 2's sixteen:
+/// <c>ASL</c>, <c>LSR</c>, <c>ROL</c> and <c>ROR</c> in <c>dp</c>, <c>dp,X</c>, <c>abs</c> and
+/// <c>abs,X</c> each — the first <see cref="Access.ReadModifyWrite"/> entries on this part, and
+/// with them datasheet Note 17, the one behaviour here whose bus direction is decided at run
+/// time rather than at table-build time (research document §13.1). The remaining 87 entries are
 /// <see cref="OpcodeInfo.Undefined"/> and throw <see cref="UndefinedOpcodeException"/> on
-/// fetch; phases 7c′ and 7d fill the rest of the instruction set in.
+/// fetch; the rest of phases 7c′ and 7d fill the instruction set in.
 /// </remarks>
 internal static class Opcodes65C816
 {
-    /// <summary>Opcode byte to descriptor. 153 entries defined, 103 undefined.</summary>
+    /// <summary>Opcode byte to descriptor. 169 entries defined, 87 undefined.</summary>
     public static readonly OpcodeInfo[] Table = BuildTable();
 
     private static OpcodeInfo[] BuildTable()
@@ -219,6 +223,27 @@ internal static class Opcodes65C816
         Set(0x74, "STZ", AddrMode.DirectPageX,  Op.Stz, Access.Write, Width.M);
         Set(0x9C, "STZ", AddrMode.Absolute,     Op.Stz, Access.Write, Width.M);
         Set(0x9E, "STZ", AddrMode.AbsoluteX,    Op.Stz, Access.Write, Width.M);
+
+        // Read-modify-write shifts. Width.M — the operand comes from memory and is sized by m.
+        Set(0x06, "ASL", AddrMode.DirectPage,  Op.Asl, Access.ReadModifyWrite, Width.M);
+        Set(0x16, "ASL", AddrMode.DirectPageX, Op.Asl, Access.ReadModifyWrite, Width.M);
+        Set(0x0E, "ASL", AddrMode.Absolute,    Op.Asl, Access.ReadModifyWrite, Width.M);
+        Set(0x1E, "ASL", AddrMode.AbsoluteX,   Op.Asl, Access.ReadModifyWrite, Width.M);
+
+        Set(0x46, "LSR", AddrMode.DirectPage,  Op.Lsr, Access.ReadModifyWrite, Width.M);
+        Set(0x56, "LSR", AddrMode.DirectPageX, Op.Lsr, Access.ReadModifyWrite, Width.M);
+        Set(0x4E, "LSR", AddrMode.Absolute,    Op.Lsr, Access.ReadModifyWrite, Width.M);
+        Set(0x5E, "LSR", AddrMode.AbsoluteX,   Op.Lsr, Access.ReadModifyWrite, Width.M);
+
+        Set(0x26, "ROL", AddrMode.DirectPage,  Op.Rol, Access.ReadModifyWrite, Width.M);
+        Set(0x36, "ROL", AddrMode.DirectPageX, Op.Rol, Access.ReadModifyWrite, Width.M);
+        Set(0x2E, "ROL", AddrMode.Absolute,    Op.Rol, Access.ReadModifyWrite, Width.M);
+        Set(0x3E, "ROL", AddrMode.AbsoluteX,   Op.Rol, Access.ReadModifyWrite, Width.M);
+
+        Set(0x66, "ROR", AddrMode.DirectPage,  Op.Ror, Access.ReadModifyWrite, Width.M);
+        Set(0x76, "ROR", AddrMode.DirectPageX, Op.Ror, Access.ReadModifyWrite, Width.M);
+        Set(0x6E, "ROR", AddrMode.Absolute,    Op.Ror, Access.ReadModifyWrite, Width.M);
+        Set(0x7E, "ROR", AddrMode.AbsoluteX,   Op.Ror, Access.ReadModifyWrite, Width.M);
 
         // Mode switch and status-bit instructions. REP/SEP take AddrMode.ImmediateByte, not
         // AddrMode.Immediate: their operand is always 8 bits and they are flat 3-cycle

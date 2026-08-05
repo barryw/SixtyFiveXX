@@ -22,8 +22,25 @@ internal sealed class BankedBus : IBus
         set => _ram[address & 0xFFFFFF] = value;
     }
 
-    public byte Read(int address) => this[address];
-    public void Write(int address, byte value) => this[address] = value;
+    /// <summary>
+    /// Every access in order, for tests that must assert on bus <em>direction</em> rather than on
+    /// the value left in memory — which is the whole of what datasheet Note 17 is about. Opt-in:
+    /// nothing clears it, so a test that does not read it pays only the list allocation.
+    /// </summary>
+    public readonly List<(int Address, byte Value, bool Write)> Log = [];
+
+    public byte Read(int address)
+    {
+        var value = this[address];
+        Log.Add((address & 0xFFFFFF, value, false));
+        return value;
+    }
+
+    public void Write(int address, byte value)
+    {
+        this[address] = value;
+        Log.Add((address & 0xFFFFFF, value, true));
+    }
 }
 
 /// <summary>Builds a 65816 core over a <see cref="BankedBus"/>, for tests that need real banks.</summary>

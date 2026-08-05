@@ -269,11 +269,28 @@ public sealed partial class Cpu<TBus, TVariant>
                 else Compare16(_s.Y);
                 break;
 
-            // Shifts and rotates on memory, operating on _data in place.
-            case Op.Asl: _data = Asl(_data); break;
-            case Op.Lsr: _data = Lsr(_data); break;
-            case Op.Rol: _data = Rol(_data); break;
-            case Op.Ror: _data = Ror(_data); break;
+            // Shifts and rotates on memory. Width-aware for the 65816: _data carries the operand
+            // at 8 bits, _data16 at 16. The variant guard comes first so the five 8-bit cores
+            // never load _wide — see the remarks on _wide and Op.Lda's own comment.
+            case Op.Asl:
+                if (TVariant.Variant != CpuVariant.W65C816 || !_wide) _data = Asl(_data);
+                else _data16 = Asl16(_data16);
+                break;
+
+            case Op.Lsr:
+                if (TVariant.Variant != CpuVariant.W65C816 || !_wide) _data = Lsr(_data);
+                else _data16 = Lsr16(_data16);
+                break;
+
+            case Op.Rol:
+                if (TVariant.Variant != CpuVariant.W65C816 || !_wide) _data = Rol(_data);
+                else _data16 = Rol16(_data16);
+                break;
+
+            case Op.Ror:
+                if (TVariant.Variant != CpuVariant.W65C816 || !_wide) _data = Ror(_data);
+                else _data16 = Ror16(_data16);
+                break;
 
             // The same four on the accumulator.
             case Op.AslA: A8 = Asl(A8); break;
@@ -441,6 +458,53 @@ public sealed partial class Cpu<TBus, TVariant>
         _s.C = (value & 0x01) != 0;
         var result = (byte)((value >> 1) | carryIn);
         SetZN(result);
+        return result;
+    }
+
+    /// <summary>
+    /// 16-bit <c>ASL</c>. The 65816 native-mode counterpart of <see cref="Asl"/>.
+    /// </summary>
+    /// <remarks>
+    /// Carry comes from bit 15, which is what <c>m = 0</c> means. Clark §6.1.3's prose says the
+    /// opposite — "the high bit (bit 15 when the m flag is one, bit 7 when the m flag is 0)" —
+    /// and that sentence has its m-flag polarity inverted; he has it the right way round in
+    /// §6.1.1.1 and §6.1.2.2, and his own cycle formula <c>8-2*m</c> reads correctly. Recorded in
+    /// research document §13.3. Do not "correct" this toward that sentence.
+    /// </remarks>
+    private ushort Asl16(ushort value)
+    {
+        _s.C = (value & 0x8000) != 0;
+        var result = (ushort)(value << 1);
+        SetZN16(result);
+        return result;
+    }
+
+    /// <summary>16-bit <c>LSR</c>. See <see cref="Asl16"/>.</summary>
+    private ushort Lsr16(ushort value)
+    {
+        _s.C = (value & 0x0001) != 0;
+        var result = (ushort)(value >> 1);
+        SetZN16(result);
+        return result;
+    }
+
+    /// <summary>16-bit <c>ROL</c>. See <see cref="Asl16"/>.</summary>
+    private ushort Rol16(ushort value)
+    {
+        var carryIn = _s.C ? 1 : 0;
+        _s.C = (value & 0x8000) != 0;
+        var result = (ushort)((value << 1) | carryIn);
+        SetZN16(result);
+        return result;
+    }
+
+    /// <summary>16-bit <c>ROR</c>. See <see cref="Asl16"/>.</summary>
+    private ushort Ror16(ushort value)
+    {
+        var carryIn = _s.C ? 0x8000 : 0x0000;
+        _s.C = (value & 0x0001) != 0;
+        var result = (ushort)((value >> 1) | carryIn);
+        SetZN16(result);
         return result;
     }
 

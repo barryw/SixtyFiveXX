@@ -17,9 +17,13 @@ public class W65C816WidthTests
     /// the next reader. Asserted as set equality rather than one direction, so both mistakes
     /// fail here — in a sub-second unit run — instead of inside a 20,000-vector file.
     /// <para>
-    /// Limitation: the three-member list of deciding micro-ops below is hard-coded. If a later
-    /// task adds a fourth one, this test's coverage shrinks silently until the list is updated
-    /// to match — nothing here detects that a new deciding micro-op exists.
+    /// Limitation: the list of deciding micro-ops below is hard-coded. If a later task adds
+    /// another one, this test's coverage shrinks silently until the list is updated to match —
+    /// nothing here detects that a new deciding micro-op exists. It did catch the addition
+    /// itself, though: phase 7c′ task 2's <see cref="MicroOp.RmwRead816"/> was the fourth, and
+    /// this test failed on <c>$06 ASL</c> — "declares a Width = True" with no deciding micro-op
+    /// reached — the moment the read-modify-write opcodes landed, because the list did not yet
+    /// name it.
     /// </para>
     /// </summary>
     [Fact]
@@ -32,7 +36,11 @@ public class W65C816WidthTests
             var decides = false;
             for (var i = table.Entry[opcode]; table.Ops[i] != MicroOp.End; i++)
             {
-                if (table.Ops[i] is MicroOp.ReadExec816 or MicroOp.ExecWrite816 or MicroOp.ImmExec816)
+                // RmwRead816 is the read-modify-write tail's entry point and the only one of its
+                // six slots that every execution reaches, so it is the RMW family's deciding
+                // micro-op; the other five are downstream of the branch it takes on _wide.
+                if (table.Ops[i] is MicroOp.ReadExec816 or MicroOp.ExecWrite816 or MicroOp.ImmExec816
+                    or MicroOp.RmwRead816)
                     decides = true;
             }
 

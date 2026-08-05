@@ -57,9 +57,13 @@ public class Harte816Tests(ITestOutputHelper output)
     /// takes N and V from the operand's top two bits. Phase 7c task 7 adds <c>LDX</c> and
     /// <c>LDY</c> in five forms each, <c>STX</c> and <c>STY</c> in three each, and <c>STZ</c> in
     /// four — 133 + 20 = 153 — along with the one addressing mode this phase adds, <c>dp,Y</c>,
-    /// which <c>LDX</c> and <c>STX</c> use and no other instruction on the part does.
+    /// which <c>LDX</c> and <c>STX</c> use and no other instruction on the part does. Phase 7c′
+    /// task 2 adds <c>ASL</c>, <c>LSR</c>, <c>ROL</c> and <c>ROR</c> in <c>dp</c>, <c>dp,X</c>,
+    /// <c>abs</c> and <c>abs,X</c> each — 153 + 16 = 169 — the first read-modify-writes this
+    /// emitter has produced, and with them the run-time <c>E</c> branch of datasheet Note 17
+    /// (research document §13.1).
     /// </summary>
-    private static readonly int ExpectedImplementedOpcodes = 153;
+    private static readonly int ExpectedImplementedOpcodes = 169;
 
     /// <summary>
     /// Opcode bytes this phase has emitted a real <c>MicroOpTable.Emit816</c> sequence for —
