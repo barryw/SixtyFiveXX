@@ -41,8 +41,20 @@ public sealed partial class Cpu<TBus, TVariant>
                 { A8 = _data; SetZN(_data); }
                 else { _s.A = _data16; SetZN16(_data16); }
                 break;
-            case Op.Ldx: X8 = _data; SetZN(X8); break;
-            case Op.Ldy: Y8 = _data; SetZN(Y8); break;
+            // Same variant guard as Op.Lda, variant test first for the same JIT-folding reason.
+            // Unlike Lda, the 8-bit arm needs no hidden-high-byte care: there is no B register
+            // behind X or Y, and whenever x is set hardware holds XH/YH at $00 — so X8's plain
+            // whole-field setter, which zeroes the high byte, agrees with the part rather than
+            // losing anything. See A8's remarks in Cpu.cs for why the two accessors differ.
+            case Op.Ldx:
+                if (TVariant.Variant != CpuVariant.W65C816 || !_wide) { X8 = _data; SetZN(X8); }
+                else { _s.X = _data16; SetZN16(_s.X); }
+                break;
+
+            case Op.Ldy:
+                if (TVariant.Variant != CpuVariant.W65C816 || !_wide) { Y8 = _data; SetZN(Y8); }
+                else { _s.Y = _data16; SetZN16(_s.Y); }
+                break;
 
             // Transfers. TXS is the only one that leaves flags alone.
             case Op.Tax: X8 = A8; SetZN(X8); break;
@@ -135,9 +147,23 @@ public sealed partial class Cpu<TBus, TVariant>
                 if (TVariant.Variant != CpuVariant.W65C816 || !_wide) _data = A8;
                 else _data16 = _s.A;
                 break;
-            case Op.Stx: _data = X8; break;
-            case Op.Sty: _data = Y8; break;
-            case Op.Stz: _data = 0; break;
+            // Same variant guard as Op.Sta. STZ takes its width from m, not x: it stores an
+            // accumulator-width zero despite naming no register, so _wide is already resolved
+            // from Width.M for it and this arm needs no distinguishing test of its own.
+            case Op.Stx:
+                if (TVariant.Variant != CpuVariant.W65C816 || !_wide) _data = X8;
+                else _data16 = _s.X;
+                break;
+
+            case Op.Sty:
+                if (TVariant.Variant != CpuVariant.W65C816 || !_wide) _data = Y8;
+                else _data16 = _s.Y;
+                break;
+
+            case Op.Stz:
+                if (TVariant.Variant != CpuVariant.W65C816 || !_wide) _data = 0;
+                else _data16 = 0;
+                break;
 
             // Rockwell's bit set and reset, read-modify-writes over data. The bit index
             // comes from the opcode, as it does in hardware. Neither touches any flag.

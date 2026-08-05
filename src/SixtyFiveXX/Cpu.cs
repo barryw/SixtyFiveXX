@@ -1017,6 +1017,13 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                     : (_addr + IndexX()) & 0xFFFF;
                 break;
 
+            case MicroOp.DirectPageIndexY:
+                InternalCycle((_s.PBR << 16) | ((_s.PC - 1) & 0xFFFF));
+                _addr = _s.E && (_s.DP & 0xFF) == 0
+                    ? (_addr & 0xFF00) | ((_addr + IndexY()) & 0xFF)
+                    : (_addr + IndexY()) & 0xFFFF;
+                break;
+
             case MicroOp.PtrReadLo816:
                 _ptr = _addr;
                 _tmp = ReadBus(_ptr);

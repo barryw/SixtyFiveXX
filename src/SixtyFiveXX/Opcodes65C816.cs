@@ -4,7 +4,7 @@ namespace SixtyFiveXX;
 /// The WDC 65C816 opcode table — phase 7b's slice of it.
 /// </summary>
 /// <remarks>
-/// A hundred and twenty-eight opcodes are defined: every addressing form of <c>LDA</c> and
+/// A hundred and fifty-three opcodes are defined: every addressing form of <c>LDA</c> and
 /// <c>STA</c> (<c>STA</c> has no immediate form), plus <c>XCE</c>, <c>REP</c> and <c>SEP</c> —
 /// phase 7b's thirty-two, chosen so the variant, its table and its reset semantics could be
 /// exercised end to end before any 65816 micro-op sequence existed — phase 7c task 3's
@@ -14,14 +14,17 @@ namespace SixtyFiveXX;
 /// <c>ADC</c> and <c>SBC</c> in all fifteen each, the first opcodes here with a decimal mode;
 /// and task 6's five: <c>BIT</c>, immediate plus its three read-only addressing forms, whose
 /// immediate opcode is a genuinely different operation — <c>Op.BitImm</c> sets Z alone — not
-/// just a narrower addressing mode of <c>Op.Bit</c>. Every one of them reuses an addressing
-/// sequence phase 7b already certified. The remaining 123 entries are
+/// just a narrower addressing mode of <c>Op.Bit</c>; and task 7's twenty: <c>LDX</c> and
+/// <c>LDY</c> in five forms each, <c>STX</c> and <c>STY</c> in three each, and <c>STZ</c> in
+/// four — the only ones here that do not reuse an addressing sequence phase 7b certified, since
+/// <c>LDX</c>/<c>STX</c>'s <c>dp,Y</c> (<see cref="AddrMode.DirectPageY"/>) is used by no other
+/// instruction on the part and so had to be added with them. The remaining 103 entries are
 /// <see cref="OpcodeInfo.Undefined"/> and throw <see cref="UndefinedOpcodeException"/> on
-/// fetch; later tasks in this phase fill the rest of the instruction set in.
+/// fetch; phases 7c′ and 7d fill the rest of the instruction set in.
 /// </remarks>
 internal static class Opcodes65C816
 {
-    /// <summary>Opcode byte to descriptor. 133 entries defined, 123 undefined.</summary>
+    /// <summary>Opcode byte to descriptor. 153 entries defined, 103 undefined.</summary>
     public static readonly OpcodeInfo[] Table = BuildTable();
 
     private static OpcodeInfo[] BuildTable()
@@ -188,6 +191,34 @@ internal static class Opcodes65C816
         Set(0x34, "BIT", AddrMode.DirectPageX, Op.Bit,    Access.Read, Width.M);
         Set(0x2C, "BIT", AddrMode.Absolute,    Op.Bit,    Access.Read, Width.M);
         Set(0x3C, "BIT", AddrMode.AbsoluteX,   Op.Bit,    Access.Read, Width.M);
+
+        // Index loads and stores, and STZ. LDX/LDY/STX/STY are Width.X — they move through an
+        // index register. STZ is Width.M: it stores an accumulator-width zero, despite naming no
+        // register at all.
+        Set(0xA2, "LDX", AddrMode.Immediate,    Op.Ldx, Access.Read,  Width.X);
+        Set(0xA6, "LDX", AddrMode.DirectPage,   Op.Ldx, Access.Read,  Width.X);
+        Set(0xB6, "LDX", AddrMode.DirectPageY,  Op.Ldx, Access.Read,  Width.X);
+        Set(0xAE, "LDX", AddrMode.Absolute,     Op.Ldx, Access.Read,  Width.X);
+        Set(0xBE, "LDX", AddrMode.AbsoluteY,    Op.Ldx, Access.Read,  Width.X);
+
+        Set(0xA0, "LDY", AddrMode.Immediate,    Op.Ldy, Access.Read,  Width.X);
+        Set(0xA4, "LDY", AddrMode.DirectPage,   Op.Ldy, Access.Read,  Width.X);
+        Set(0xB4, "LDY", AddrMode.DirectPageX,  Op.Ldy, Access.Read,  Width.X);
+        Set(0xAC, "LDY", AddrMode.Absolute,     Op.Ldy, Access.Read,  Width.X);
+        Set(0xBC, "LDY", AddrMode.AbsoluteX,    Op.Ldy, Access.Read,  Width.X);
+
+        Set(0x86, "STX", AddrMode.DirectPage,   Op.Stx, Access.Write, Width.X);
+        Set(0x96, "STX", AddrMode.DirectPageY,  Op.Stx, Access.Write, Width.X);
+        Set(0x8E, "STX", AddrMode.Absolute,     Op.Stx, Access.Write, Width.X);
+
+        Set(0x84, "STY", AddrMode.DirectPage,   Op.Sty, Access.Write, Width.X);
+        Set(0x94, "STY", AddrMode.DirectPageX,  Op.Sty, Access.Write, Width.X);
+        Set(0x8C, "STY", AddrMode.Absolute,     Op.Sty, Access.Write, Width.X);
+
+        Set(0x64, "STZ", AddrMode.DirectPage,   Op.Stz, Access.Write, Width.M);
+        Set(0x74, "STZ", AddrMode.DirectPageX,  Op.Stz, Access.Write, Width.M);
+        Set(0x9C, "STZ", AddrMode.Absolute,     Op.Stz, Access.Write, Width.M);
+        Set(0x9E, "STZ", AddrMode.AbsoluteX,    Op.Stz, Access.Write, Width.M);
 
         // Mode switch and status-bit instructions. REP/SEP take AddrMode.ImmediateByte, not
         // AddrMode.Immediate: their operand is always 8 bits and they are flat 3-cycle

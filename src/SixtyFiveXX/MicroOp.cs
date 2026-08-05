@@ -408,6 +408,16 @@ internal enum MicroOp : byte
     DirectPageIndexX,
 
     /// <summary>
+    /// <c>dp,Y</c>'s indexing cycle: <see cref="DirectPageIndexX"/> with <c>Y</c> substituted for
+    /// <c>X</c> — an internal cycle at the offset byte's own address, then <c>Y</c> folded into
+    /// <c>_addr</c>, wrapping within the page in emulation mode when <c>DL == $00</c> and taking a
+    /// plain 16-bit add otherwise. Research document §12.3. Unlike <see cref="DirectPageIndexX"/>,
+    /// no indirect mode shares it: <c>dp,Y</c> is used by <c>LDX</c> and <c>STX</c> and by nothing
+    /// else on the part, so this micro-op has exactly two callers.
+    /// </summary>
+    DirectPageIndexY,
+
+    /// <summary>
     /// The low byte of an indirect direct-page pointer: <c>ptr = _addr</c> (the direct-page
     /// address <see cref="FetchDpOffset"/>, and for the indexed form
     /// <see cref="DirectPageIndexX"/>, already formed); <c>tmp = Read(ptr)</c>. Shared by every
@@ -946,6 +956,9 @@ internal static class MicroOps
     /// unconditional penalty cycle (§9 row 23's "3"), and <c>(sr,S),Y</c>'s second unconditional
     /// internal cycle (§9 row 24's "6") — each an <c>IO</c> row with no memory access, the same
     /// shape as task 5's three.
+    /// <see cref="MicroOp.DirectPageIndexY"/> is task 7's one — <c>dp,Y</c>'s indexing cycle,
+    /// the same <c>IO</c> row of §9's direct-page block that
+    /// <see cref="MicroOp.DirectPageIndexX"/> already occupies, with Y substituted.
     /// </summary>
     private static bool[] BuildInternalCycleTable()
     {
@@ -954,7 +967,8 @@ internal static class MicroOps
         foreach (var op in new[]
                  {
                      MicroOp.End, MicroOp.Unimplemented816, MicroOp.ImpliedExec816, MicroOp.RepSepExec,
-                     MicroOp.DirectPagePenalty, MicroOp.DirectPageIndexX, MicroOp.IndexDirectPageIndirectY,
+                     MicroOp.DirectPagePenalty, MicroOp.DirectPageIndexX, MicroOp.DirectPageIndexY,
+                     MicroOp.IndexDirectPageIndirectY,
                      MicroOp.AbsIndexFixup, MicroOp.StackRelativePenalty, MicroOp.IndexStackRelativeIndirectY,
                  })
         {

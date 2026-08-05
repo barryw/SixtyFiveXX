@@ -434,6 +434,12 @@ internal sealed class MicroOpTable
                 ops.AddRange([MicroOp.FetchDpOffset, MicroOp.DirectPagePenalty, MicroOp.DirectPageIndexX]);
                 break;
 
+            // Research document §12.3. Identical in shape to DirectPageX with Y substituted —
+            // LDX and STX are the only instructions that use it.
+            case AddrMode.DirectPageY:
+                ops.AddRange([MicroOp.FetchDpOffset, MicroOp.DirectPagePenalty, MicroOp.DirectPageIndexY]);
+                break;
+
             case AddrMode.DirectPageIndirect:
                 ops.AddRange([
                     MicroOp.FetchDpOffset, MicroOp.DirectPagePenalty,
@@ -538,9 +544,11 @@ internal sealed class MicroOpTable
                     $"{info.Mnemonic}: {info.Mode} has no 65816 addressing sequence.");
         }
 
-        // Code-review fix (task 5), extended by task 6: only the two plain direct-page forms
-        // and plain stack-relative are bank-0-confined (their data access is 0,D+DO[+X] or
-        // 0,S+SO); every other mode's final access goes through DBR or the operand's own bank
+        // Code-review fix (task 5), extended by task 6 and again by task 7: only the three plain
+        // direct-page forms — dp, dp,X and dp,Y — and plain stack-relative are bank-0-confined
+        // (their data access is 0,D+DO[+X|+Y] or 0,S+SO); dp,Y joined the set with the mode
+        // itself in task 7, since it is direct-page addressing and confined exactly as dp,X is.
+        // Every other mode's final access goes through DBR or the operand's own bank
         // byte, and its "+1" must carry into the next bank rather than wrap — Clark §5.2
         // Example 2, cited at Cpu.HighByteAddressCarry. (sr,S),Y is NOT in the bank-0-confined
         // set despite sharing sr,S's bank-0 pointer fetch: task 6 review found this mode's
@@ -549,7 +557,8 @@ internal sealed class MicroOpTable
         // grouped with plain sr,S here originally. Zero vector coverage: catching it needs
         // M=0 with the indexed pointer landing exactly on $xxFFFF, which no SingleStepTests
         // vector for $B3/$93 happens to hit across 10,000 tries each.
-        var carry = info.Mode is not (AddrMode.DirectPage or AddrMode.DirectPageX or AddrMode.StackRelative);
+        var carry = info.Mode is not (AddrMode.DirectPage or AddrMode.DirectPageX
+            or AddrMode.DirectPageY or AddrMode.StackRelative);
 
         if (info.Access == Access.Write)
         {
