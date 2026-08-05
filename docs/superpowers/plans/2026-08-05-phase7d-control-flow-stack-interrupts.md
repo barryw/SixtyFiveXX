@@ -870,6 +870,8 @@ git commit -m "feat: 65816 stack plumbing, the thirteen pushes and pulls, and th
 
 Before writing code, write out the four sequences — `BRK`, `COP`, `IRQ`, `NMI` — in both modes, cycle by cycle, from §14.2. If §14.2 leaves any of them silent, **stop and say so**; do not infer a 65816 interrupt sequence from the 6502's.
 
+**Know before you start what the vectors can and cannot check.** §14.2 measured it: the SingleStepTests set is one file per opcode per mode and contains **no interrupt-line stimulus at all**, so `IRQ` and `NMI` have no vectors. `BRK` and `COP` share cycles 3–8 with Table 5-7's row 22a and those cycles *are* arbitrated by `$00` and `$02`'s files — but the two leading `IO` cycles at `PBR,PC`, the recognition timing, and the `NMI`/`IRQ` vector selection are certified by **unit tests only**. Budget for that in step 2 rather than discovering it at step 8. §14.2 also records that the sources are silent on whether the NMOS NMI-hijack anomaly exists on this part: **it must not be carried over from the 8-bit cores on the strength of their behaviour.** If you implement a hijack, cite something; if you do not, say why in the report.
+
 - [ ] **Step 2: Write the failing tests**
 
 Create `tests/SixtyFiveXX.Tests/W65C816InterruptTests.cs`. Cover, at minimum:
@@ -1110,7 +1112,45 @@ The rewind belongs in the last micro-op of the sequence, which must **not** call
 
 `Emit816` needs a `BlockMove` branch alongside the `Stack` one.
 
-- [ ] **Step 6: Run everything, raise `ExpectedImplementedOpcodes` to 230, both TFMs, commit**
+- [ ] **Step 6: Relax the harness's instruction-boundary assertion for these two opcodes**
+
+**Research §14.3 measured this and it changes the gate:** `$54.n`'s cycle arrays are 9,999 × 100 entries and one × 98; `$44.n` is 9,997 × 100 plus one each of 63, 28 and 14. **The 100-cycle vectors stop mid-instruction** — `54 n 1` starts with `A = $EF9B`, 61,340 bytes to move, and its recorded final state is fourteen bytes in. `Harte816Tests` line 180 asserts `cpu.AtInstructionBoundary` after ticking, and that assertion fails on 9,999 of 10,000 `$54` vectors **however correct the core is**.
+
+Everything else the harness does is already right for these files: the tick loop already runs exactly `test.Cycles.Length` cycles, and `AssertRegisters`/`AssertMemory`/`AssertCycles` compare against the vector's own recorded final state, which is the mid-instruction state. So the change is to that one assertion and nothing else.
+
+Add a named set and skip only that assertion for it:
+
+```csharp
+    /// <summary>
+    /// The block moves, whose vectors are truncated at 100 cycles with a final state part-way
+    /// through the move — research document §14.3, measured from the files rather than inferred.
+    /// A block move runs seven cycles per byte and moves up to 65,536 bytes, so no fixed-length
+    /// vector could contain a whole one.
+    /// </summary>
+    /// <remarks>
+    /// ONLY the instruction-boundary assertion is skipped. Every cycle's address, value and
+    /// eight-character pin string is still compared, and so are the final registers and memory —
+    /// against the mid-instruction state the vector actually records. For $54 that is a hundred
+    /// arbitrated cycles of a real block move per vector, rewind included, across 10,000 vectors:
+    /// stronger coverage than most opcodes in this core get, not weaker.
+    /// </remarks>
+    private static readonly HashSet<int> VectorsTruncatedMidInstruction = [0x54, 0x44];
+```
+
+and at the assertion:
+
+```csharp
+            if (!VectorsTruncatedMidInstruction.Contains(opcode))
+            {
+                Assert.True(cpu.AtInstructionBoundary,
+                    $"{test.Name}: instruction did not finish within the vector's " +
+                    $"{test.Cycles.Length} cycles.");
+            }
+```
+
+**No vector file is excluded and no vector is skipped.** Say exactly that in the task report, because the phase gate is worded "all 512 files, no exclusions".
+
+- [ ] **Step 7: Run everything, raise `ExpectedImplementedOpcodes` to 230, both TFMs, commit**
 
 Expected: conformance **1770**. Bump the README to 230.
 
@@ -1118,7 +1158,7 @@ Expected: conformance **1770**. Bump the README to 230.
 git commit -m "feat: 65816 MVN and MVP"
 ```
 
-**Gate:** conformance **1770**, both TFMs, 40,000 new vectors green.
+**Gate:** conformance **1770**, both TFMs, 40,000 new vectors green — every cycle, register and memory assertion, with the instruction-boundary assertion alone relaxed for `$54` and `$44` and the reason cited to research §14.3.
 
 ---
 
@@ -1153,7 +1193,20 @@ Add the `Op.Wai`/`Op.Stp` arm to `Emit816`, ahead of the implied branch, mirrori
         Set(0xDB, "STP", AddrMode.Implied, Op.Stp, Access.None);
 ```
 
-- [ ] **Step 4: Run everything, raise `ExpectedImplementedOpcodes` to 232, both TFMs, commit**
+- [ ] **Step 4: Teach the harness a null-address cycle**
+
+**Research §14.4 measured this and it changes the gate:** all 40,000 `$CB`/`$DB` vectors are four entries, and the fourth is `[null, null, "--------"]` — no address, no value, and not even a read/write character in the pin string. The harness cannot read that cycle today: `AssertCycles` calls `raw[0].GetInt32()`, which throws on a JSON null. It also asserts `cpu.AtInstructionBoundary`, and a core that is correctly holding is not at a boundary.
+
+Two changes, both narrow:
+
+1. **`AssertCycles` handles a null address and a null pin string.** When `raw[0]` is null, the expected cycle is "the core drove no address and performed no access". Match it against whatever the core records for a held cycle; if the core cannot express that today, that is the finding — report it before inventing an encoding.
+2. **Add `$CB` and `$DB` to `VectorsTruncatedMidInstruction`**, which task 4 introduced, and widen its doc comment: it now means "vectors whose final entry is not an instruction boundary", covering both the block moves' truncation and the halts' hold.
+
+Everything else stays asserted: the three executed cycles' addresses, values and pin strings, and the recorded final state.
+
+**What the vectors cannot check, and what must therefore be unit-tested:** §14.4 records that the hold itself, the wake on `IRQB`/`NMIB`, `WAI`'s `i`-flag special case and `STP`'s reset-only exit are absent from the vector set entirely. Those four rules are the whole difference between these opcodes and a three-cycle `NOP`, so step 2's unit tests are the only certification they get. Say so in the task report.
+
+- [ ] **Step 5: Run everything, raise `ExpectedImplementedOpcodes` to 232, both TFMs, commit**
 
 Expected: conformance **1774**. Bump the README to 232.
 
@@ -1161,7 +1214,7 @@ Expected: conformance **1774**. Bump the README to 232.
 git commit -m "feat: 65816 WAI and STP"
 ```
 
-**Gate:** conformance **1774**, both TFMs, 40,000 new vectors green.
+**Gate:** conformance **1774**, both TFMs, 40,000 new vectors green, and unit tests covering the four rules the vectors do not model.
 
 ---
 
