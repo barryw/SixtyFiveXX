@@ -403,8 +403,8 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             // widen that gap rather than change it: ReadExecHigh816*, RmwReadHigh816* and the
             // 16-bit form of RmwModifyRead816* all drive HighByteAddress*() when live but get
             // _addr here, so a halted cycle re-drives the LOW address of a 16-bit access. The
-            // four RMW write-forms are immune, since RDY cannot halt a write at all.
-            // Upgrade path: derive the
+            // four RMW write-forms are immune, since RDY cannot halt a write at all. Upgrade
+            // path: derive the
             // pending micro-op's true read address (a switch mirroring Execute) instead of
             // hard-coding _addr. WAI and STP are already handled below, because their holds
             // are unbounded — see MicroOps.HoldsAtPc. LastPins inherits the same hazard: it

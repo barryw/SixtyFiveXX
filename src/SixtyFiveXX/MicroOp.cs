@@ -1066,7 +1066,7 @@ internal static class MicroOps
         }
 
         // The 65816's RMW middle cycle: MLB asserted with NEITHER address-valid pin. Research
-        // document §13.1 — all four RMW rows print VDA=0 VPA=0, MLB=0 on it, and §13.1's
+        // document §13.1 — all four RMW rows print VDA=0 VPA=0, MLB=1 on it, and §13.1's
         // "Measured" note records that this holds in emulation mode too, where the cycle is a
         // real write. So all three forms carry the same pins and datasheet Note 17 changes RWB
         // and only RWB, exactly as its wording says.
