@@ -752,9 +752,10 @@ second.
 **Numbering note, read this before hunting for a missing section.** The phase 7c plan
 (`docs/superpowers/plans/2026-08-05-phase7c-bulk-alu.md`) names this section **§10** and its parts
 **§10.1**–**§10.5**, because it was written when this document ended at §9. Phase 7b then added §10
-(reset initialisation) and §11 (`XCE` and `SH`), and both are cited by section number from doc comments
-in `src/SixtyFiveXX/Cpu.cs`. Renumbering them would silently falsify those comments, so this material
-lands at §12 instead. The mapping is exact and one-to-one:
+(reset initialisation) and §11 (`XCE` and `SH`), and both are cited by section number from doc comments —
+§10 from `src/SixtyFiveXX/Cpu.cs` (lines 617 and 642) and `tests/SixtyFiveXX.Tests/W65C816StateTests.cs`
+(line 105), §11 from `src/SixtyFiveXX/Cpu.Exec.cs` (line 96). Renumbering them would silently falsify
+those comments, so this material lands at §12 instead. The mapping is exact and one-to-one:
 
 | The plan says | Read as | Subject |
 | --- | --- | --- |
@@ -818,9 +819,11 @@ the m flag is 1"); the decimal paragraph does not.
 > the z flag will be 0
 > the c flag will be 0
 
-This is the only place any source surveyed states a 16-bit decimal result. It pins down exactly one thing
-beyond the accumulator value: **`N` comes from the corrected result, not from the binary intermediate.**
-The binary intermediate is not inferred here — Clark's **Example 1** immediately above is the same
+This is the only place any source surveyed states a 16-bit decimal result, and it is an `SBC` example —
+Clark gives no decimal `ADC` example at any width. It pins down exactly one thing beyond the accumulator
+value, for `SBC`: **`N` comes from the corrected result, not from the binary intermediate.** Whether
+`ADC`'s decimal `N` at 16 bits comes from the same place is a separate, unestablished question; see gap 5
+below. The binary intermediate is not inferred here — Clark's **Example 1** immediately above is the same
 operands with `d = 0` and states the accumulator will be `$DFFE`, whose bit 15 is 1. For `d = 1` Clark
 states `n = 0`, which is bit 15 of the corrected `$7998`. `Z` and `C` are not discriminated by this
 example (both agree between the binary intermediate and the corrected result), and `V` is not listed at
@@ -875,8 +878,16 @@ Specifically, the following are **not** established by any source and must be tr
    wording ("the z flag indicates when the result is zero", "the carry indicates when the result is
    outside the range 0 to 9999") reads as the corrected result, but Example 2 does not discriminate, and
    he never uses the words "binary result" or "intermediate" in a decimal-mode sentence. `N` alone is
-   pinned, by Example 2.
+   pinned for `SBC`, by Example 2.
 4. **Behaviour on invalid BCD input digits** (nibbles `$A`–`$F`). Not mentioned anywhere.
+5. **Whether `ADC`'s decimal `N` at 16 bits comes from the corrected result or the binary intermediate.**
+   Example 2 pins this for `SBC` only; Clark gives no decimal `ADC` example at any width, so nothing
+   licenses carrying the `SBC` answer over to `ADC`. This is not academic: this codebase's own NMOS pair
+   already diverges on the general question of where decimal `N` comes from. In
+   `src/SixtyFiveXX/Cpu.Exec.cs`, `Adc`'s decimal path takes `N` from the partially corrected high nibble
+   (`_s.N = (hi & 0x08) != 0;`, line 380), while `Sbc`'s takes it from the binary difference computed
+   before any decimal correction runs (`_s.N = (binary & 0x80) != 0;`, line 444). `ADC` and `SBC` are not
+   guaranteed to agree here, and the 65816 must be measured rather than assumed.
 
 Note what is **not** on that list any more: whether decimal behaviour differs between emulation mode and
 8-bit native mode. The §6 preamble quoted above groups the two, so that question is answered by a source
@@ -890,7 +901,7 @@ covers.
 
 > N,V and Z flags valid in decimal mode. D=0 after reset/interrupt
 
-Three reasons that sentence does not close gaps 1–4. It says nothing about the algorithm. It says nothing
+Three reasons that sentence does not close gaps 1–5. It says nothing about the algorithm. It says nothing
 about `C`. And it is **word-for-word the same claim the same table's row makes for the W65C02 and
 W65C02S columns** ("N,V and Z flags valid in decimal mode. D=0 after reset/interrupt") — a claim this
 project has already measured to overstate the real part. `Op.AdcCmos`'s doc comment, from a core
@@ -947,10 +958,14 @@ Two supporting facts, neither of them the reason but both worth recording:
 - **The precedent is this codebase's own.** `Op.AdcCmos`/`Op.SbcCmos` already exist as members separate
   from `Op.Adc`/`Op.Sbc`, and their shared doc comment states why: *"Decimal mode differs from NMOS in
   the accumulator correction as well as the flags, so these are separate members rather than a variant
-  test inside `Adc`."* Phase 2a's ledger records that separation as necessary rather than tidy; §1 of
-  this document quotes the same comment as one of the three findings where the documentation was wrong
-  or silent and the vectors were right. Adding a third pair for the 65816 is the same decision taken
-  again for the same reason, not a new pattern.
+  test inside `Adc`."* Phase 4's ledger — the 65C02 family, where this separation was introduced — records
+  evidence for it rather than assertion: a reviewer deliberately broke `AdcCmos`'s `V` formula in a
+  worktree (dropped a `<<4`) and re-ran the Synertek Harte suite, and 9 of 256 opcodes failed, including
+  `$69` — direct evidence the vectors discriminate on this exact formula
+  (`.superpowers/sdd/progress.md`, "PHASE 4 FINAL REVIEW"). §1 of this document quotes the same doc
+  comment as one of the three findings where the documentation was wrong or silent and the vectors were
+  right. Adding a third pair for the 65816 is the same decision taken again for the same reason, not a
+  new pattern.
 
 ### 12.3 Table 5-7's `Direct,Y` row — row 17 (the plan's §10.3)
 
@@ -960,7 +975,7 @@ Transcribed in §9's format, same conventions — `(1)` is the 16-bit high half,
 penalty, `DO` the direct-page offset operand byte, `IO` an internal cycle with `VDA = VPA = 0` and no
 memory access:
 
-### Direct,Y — row 17
+#### Direct,Y — row 17
 
 ```
 LDX dp,Y / STX dp,Y   2 opcodes, 2 bytes, 4 / 5 / 6 cycles
@@ -1156,14 +1171,17 @@ in phase 7c depends on the rest.
 | 2 | How `V` is computed in decimal mode | **The sources are silent.** Clark: "overwritten … can be considered invalid". Table 7-1's "N,V and Z flags valid" is the same wording already measured to overstate for the 65C02 | Task 5, from vectors |
 | 3 | Whether `Z` and `C` come from the corrected result or the binary intermediate | **The sources are silent.** Clark's wording implies the corrected result but Example 2 does not discriminate | Task 5, from vectors |
 | 4 | Decimal behaviour on invalid BCD digits (`$A`–`$F` nibbles) | **The sources are silent.** Not mentioned anywhere surveyed | Task 5, from vectors |
+| 5 | Whether `ADC`'s decimal `N` at 16 bits comes from the corrected result or the binary intermediate | **The sources are silent for `ADC`.** Example 2 pins `N` for `SBC` only; Clark gives no decimal `ADC` example at any width. This codebase's own NMOS `Adc`/`Sbc` already diverge on the general question (`src/SixtyFiveXX/Cpu.Exec.cs:380` vs `:444`), so the `SBC` answer must not be assumed for `ADC` | Task 5, from vectors |
 
-All four are about the *arithmetic*. Gaps 1 and 3 are constrained at `m = 1` by Clark's §6 preamble
+All five are about the *arithmetic*. Gaps 1 and 3 are constrained at `m = 1` by Clark's §6 preamble
 ("the same behavior as 65C02", 8-bit results) — a hypothesis for task 5 to measure, not a citation to
 implement against, and one that says nothing about `m = 0`. Gaps 2 and 4 are unconstrained at every width.
+Gap 5 is scoped to `m = 0` by definition — at `m = 1` the §6 preamble's `n`/`z`/`c` claim covers `ADC`
+same as `SBC` — and within that scope no source speaks to it at all.
 
-What is **not** a gap, so nobody re-opens it: `N`'s decimal source at 16 bits (Clark's Example 2, §12.1);
-whether emulation mode and 8-bit native mode differ in decimal behaviour (Clark's §6 preamble groups
-them — §12.1); the decimal cycle count (§12.5, two sources agreeing, plus the §6 preamble's worked
-example a third time); the `Op` member verdict (§12.2, decided by a pre-committed rule on a stated
-divergence); row 17 (§12.3, transcribed); the x-width immediates (§12.4, transcribed); and all 121 cycle
-formulas (§12.5, transcribed).
+What is **not** a gap, so nobody re-opens it: `SBC`'s decimal `N` source at 16 bits (Clark's Example 2,
+§12.1) — but not `ADC`'s, which is gap 5 above; whether emulation mode and 8-bit native mode differ in
+decimal behaviour (Clark's §6 preamble groups them — §12.1); the decimal cycle count (§12.5, two sources
+agreeing, plus the §6 preamble's worked example a third time); the `Op` member verdict (§12.2, decided by
+a pre-committed rule on a stated divergence); row 17 (§12.3, transcribed); the x-width immediates (§12.4,
+transcribed); and all 121 cycle formulas (§12.5, transcribed).
