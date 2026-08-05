@@ -118,4 +118,18 @@ internal enum Op : byte
 
     /// <summary>Undocumented. Halts the processor until reset.</summary>
     Jam,
+
+    // 65816 mode control and status bits.
+
+    /// <summary>
+    /// Exchange carry and emulation flags. The only instruction that changes
+    /// <see cref="CpuState.E"/>. 65816 only.
+    /// </summary>
+    Xce,
+
+    /// <summary>Reset status bits: clears each flag whose bit is set in the operand. 65816 only.</summary>
+    Rep,
+
+    /// <summary>Set status bits: sets each flag whose bit is set in the operand. 65816 only.</summary>
+    Sep,
 }

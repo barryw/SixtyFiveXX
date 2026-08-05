@@ -8,8 +8,11 @@ namespace SixtyFiveXX;
 /// <para>
 /// Text and behaviour cannot drift because there is nothing to drift from: the mnemonic
 /// and the addressing mode come out of the row <c>MicroOpTable</c> turned into a micro-op
-/// sequence. Adding an opcode to a variant makes it decodable in the same commit that
-/// makes it executable.
+/// sequence. For the five 8-bit cores, adding an opcode makes it decodable in the same
+/// commit that makes it executable, without exception. The 65816 does not have that
+/// property yet: 12 of its 15 addressing modes have no case in the <c>switch</c> below and
+/// throw <see cref="NotSupportedException"/>, and <see cref="AddrMode.Immediate"/> decodes
+/// at a fixed length that ignores the <c>m</c> flag. Phase 7e closes the gap.
 /// </para>
 /// <para>
 /// <strong>Decoding reads the bus.</strong> On a flat memory map that is free; on a bus

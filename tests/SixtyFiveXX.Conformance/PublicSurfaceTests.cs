@@ -67,6 +67,7 @@ public class PublicSurfaceTests
         "SixtyFiveXX.Variants.Mos6510Variant",
         "SixtyFiveXX.Variants.Rockwell65C02Variant",
         "SixtyFiveXX.Variants.Synertek65C02Variant",
+        "SixtyFiveXX.Variants.W65C816Variant",
         "SixtyFiveXX.Variants.Wdc65C02Variant",
     ];
 

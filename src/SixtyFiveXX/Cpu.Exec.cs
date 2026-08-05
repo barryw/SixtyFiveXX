@@ -16,8 +16,31 @@ public sealed partial class Cpu<TBus, TVariant>
             case Op.Nop: break;
             case Op.NopRead: break;   // the read already happened; the value is discarded
 
-            // Loads
-            case Op.Lda: A8 = _data; SetZN(A8); break;
+            // Loads. Lda is width-aware for the 65816: in 8-bit mode (M=1, true for every
+            // 8-bit core as well as a native-mode 65816 with an 8-bit accumulator) it must
+            // touch only the low byte, preserving whatever sits in the high byte — the
+            // "hidden B accumulator" research document §2.4 describes, which a plain
+            // A8-assignment would clobber to $00. Harmless for the 8-bit cores: their high
+            // byte is always already $00 (no 8-bit-core opcode or test ever sets it), so
+            // `_s.A & 0xFF00` is always 0 and this is byte-for-byte the old `A8 = _data`.
+            //
+            // The `TVariant.Variant != CpuVariant.W65C816 ||` guard is load-bearing, not
+            // defensive dead code: Flag.M (0x20) is the same bit as Flag.U, the NMOS/CMOS
+            // "unused" flag, which CpuState.P exposes publicly and which every core's own
+            // opcodes normally leave set. Without the guard, clearing bit 5 of P on a 6502
+            // (or any 65C02) makes this branch on `_s.M` alone and take the 16-bit path —
+            // reading `_data16`, a field no 8-bit-core micro-op ever writes — even though
+            // that core has no 16-bit mode at all. The guard is `TVariant.Variant` first, a
+            // compile-time constant per closed generic type, so for the five 8-bit cores it
+            // folds to `if (true)` and the whole test costs nothing; only the 65816 ever
+            // evaluates `_s.M`. Code-review finding, task 5: 0 of 10,000 6502/a5 vectors and
+            // 0 of 10,000 wdc65c02/a5 vectors have bit 5 clear, so conformance could not see
+            // this. See UnusedFlagBitRegressionTests.
+            case Op.Lda:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.M)
+                { _s.A = (ushort)((_s.A & 0xFF00) | _data); SetZN(_data); }
+                else { _s.A = _data16; SetZN16(_data16); }
+                break;
             case Op.Ldx: X8 = _data; SetZN(X8); break;
             case Op.Ldy: Y8 = _data; SetZN(Y8); break;
 
@@ -38,8 +61,80 @@ public sealed partial class Cpu<TBus, TVariant>
             case Op.Sei: _s.I = true;  break;
             case Op.Clv: _s.V = false; break;
 
-            // Stores. The value lands in _data, which the writing micro-op then commits.
-            case Op.Sta: _data = A8; break;
+            // 65816 mode control. XCE is the only instruction that changes E (research
+            // document §2.2, §6.10.4). When the swap results in emulation mode, force the
+            // invariants that mode holds continuously: m=1, x=1, XH/YH cleared (research
+            // document §7). S8's setter (Cpu.cs) only re-forces SH on an actual write to S
+            // — XCE writes E, not S, so that shim never fires here, and SH is forced
+            // directly instead, the same way Reset() already does it.
+            //
+            // SH's own condition is not "new E == 1" the way M/X/XH/YH's is: research §7
+            // states only that SH is forced "when the e flag is 1", without saying whether
+            // that means before or after XCE's own swap, and no other source resolves it.
+            // Measured exhaustively against all 20,000 SingleStepTests/65816 $FB vectors
+            // (both .e and .n): SH is forced to $01 whenever EITHER the old or the new E is
+            // 1, and passes through unforced only when both are 0 — 0 violations across
+            // every (oldE, newE) combination and every SH value each one produces. Because C
+            // and E are swapped, "old C or old E" and "new C or new E" are the same set, so
+            // testing (post-swap) C || E is equivalent to testing either side and is what is
+            // used below. SL is unaffected either way — confirmed unchanged across all
+            // 20,000 vectors.
+            case Op.Xce:
+                (_s.C, _s.E) = (_s.E, _s.C);
+                if (_s.C || _s.E) _s.S = (ushort)((_s.S & 0x00FF) | 0x0100);
+                if (_s.E)
+                {
+                    _s.M = true;
+                    _s.XFlag = true;
+                    _s.X &= 0x00FF;
+                    _s.Y &= 0x00FF;
+                }
+                break;
+
+            // REP clears the P bits set in the operand (_data); SEP sets them. Neither can
+            // touch E — only XCE does that — so only the m/x/XH/YH half of the asymmetry
+            // research document §11 draws applies here; SH has no rule to inherit at all.
+            //
+            // In emulation mode m and x cannot be cleared: Clark §6.4.2, verbatim, "when the e
+            // flag is 1, the m and x flag are forced to 1, so after the REP or SEP, both flags
+            // will still be 1 no matter what the operand is." Applied unconditionally after the
+            // operand's own effect, for both instructions — REP is the one that can actually
+            // violate it (its operand can ask to clear either bit); SEP can only set bits it
+            // would already be setting, so the force is a no-op there and kept only so the two
+            // cases read the same way rather than trusting an invariant this method does not
+            // itself maintain.
+            //
+            // Whenever x ends up set, XH and YH are forced to $00 — the same continuously-held
+            // invariant CpuState.X's own doc comment states and XCE already enforces on an E
+            // transition. Unconditional on "x is set" rather than "x just became set": harmless
+            // when it was already set and already zero, and it is what catches SEP #$10 setting
+            // x from a 16-bit-index start, which is the only case that actually loses data.
+            case Op.Rep:
+                _s.P &= (byte)~_data;
+                if (_s.E) _s.P |= Flag.M | Flag.X;
+                if (_s.XFlag) { _s.X &= 0x00FF; _s.Y &= 0x00FF; }
+                break;
+
+            case Op.Sep:
+                _s.P |= _data;
+                if (_s.E) _s.P |= Flag.M | Flag.X;
+                if (_s.XFlag) { _s.X &= 0x00FF; _s.Y &= 0x00FF; }
+                break;
+
+            // Stores. The value lands in _data (or, 65816 16-bit mode, _data16), which the
+            // writing micro-op then commits. Reading A8 for the 8-bit case needs no hidden-B
+            // guard the way Lda's write does: A8 already reads only the low byte, regardless
+            // of what the high byte holds.
+            //
+            // Same variant guard as Op.Lda, and for the same reason: without it, clearing
+            // Flag.U (== Flag.M, bit 5) on an 8-bit core sends this into the else branch,
+            // which sets _data16 and leaves _data untouched — so the write micro-op (ExecWrite,
+            // not the 65816's ExecWrite816) commits whatever _data last held instead of A's
+            // low byte. See UnusedFlagBitRegressionTests.
+            case Op.Sta:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.M) _data = A8;
+                else _data16 = _s.A;
+                break;
             case Op.Stx: _data = X8; break;
             case Op.Sty: _data = Y8; break;
             case Op.Stz: _data = 0; break;
@@ -203,6 +298,17 @@ public sealed partial class Cpu<TBus, TVariant>
     {
         _s.Z = value == 0;
         _s.N = (value & 0x80) != 0;
+    }
+
+    /// <summary>
+    /// Sets Z and N from a 16-bit result — the 65816 native-mode counterpart of
+    /// <see cref="SetZN"/>, used only when <c>M</c> selects a 16-bit accumulator.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void SetZN16(ushort value)
+    {
+        _s.Z = value == 0;
+        _s.N = (value & 0x8000) != 0;
     }
 
     /// <summary>Compares a register against <c>_data</c>, setting C, Z and N.</summary>

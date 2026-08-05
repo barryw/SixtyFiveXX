@@ -41,6 +41,7 @@ internal sealed class MicroOpTable
         CpuVariant.Synertek65C02 => Opcodes65C02.Table,
         CpuVariant.Rockwell65C02 => Opcodes65C02.RockwellTable,
         CpuVariant.Wdc65C02 => Opcodes65C02.WdcTable,
+        CpuVariant.W65C816 => Opcodes65C816.Table,
         _ => throw new NotSupportedException($"No opcode table for {variant} yet."),
     };
 
@@ -71,6 +72,24 @@ internal sealed class MicroOpTable
         MicroOp.RmwModifyRead, MicroOp.IndexFixupCmos,
         MicroOp.ReadPageCrossCmos, MicroOp.RmwPageCrossCmos);
 
+    /// <summary>
+    /// Placeholder sequences for the 65816. Six copies of <see cref="MicroOp.Unimplemented816"/>
+    /// rather than <see cref="Nmos"/>, because NMOS is not a harmless placeholder here — it is
+    /// wrong: the 65816 has its own native-mode BRK and IRQ vectors, and its read-modify-write
+    /// direction depends on <c>E</c> at run time (datasheet Note 17, research document §7),
+    /// neither of which a <see cref="Nmos"/> substitution would produce. This exists only so
+    /// the shared <c>IrqEntry</c> section built in the constructor below — which reads
+    /// <c>seq.IntPushP</c> unconditionally, for every variant, at table-build time — has
+    /// something to read for the 65816 too. Nothing in phase 7b reaches it: no BRK, IRQ or NMI
+    /// test runs against the 65816 yet, and <c>Reset()</c> drives its own path. The first cycle
+    /// that does reach it, once phase 7d wires up 65816 interrupts, throws
+    /// <see cref="NotImplementedException"/> naming <see cref="MicroOp.Unimplemented816"/>
+    /// instead of quietly running NMOS.
+    /// </summary>
+    private static readonly Sequences NotYet816 = new(
+        MicroOp.Unimplemented816, MicroOp.Unimplemented816, MicroOp.Unimplemented816,
+        MicroOp.Unimplemented816, MicroOp.Unimplemented816, MicroOp.Unimplemented816);
+
     /// <remarks>
     /// Every variant is listed rather than defaulting to <see cref="Nmos"/>, so this fails
     /// as loudly as <see cref="OpcodeTableFor"/> does. A silent default is the worse
@@ -82,6 +101,13 @@ internal sealed class MicroOpTable
     {
         CpuVariant.Wdc65C02 or CpuVariant.Rockwell65C02 or CpuVariant.Synertek65C02 => Cmos,
         CpuVariant.Mos6502 or CpuVariant.Mos6510 => Nmos,
+
+        // The 65816 has its own emission path — Emit816, below — which never reads these
+        // fields; Emit() dispatches to it before any of the six are consulted. See
+        // NotYet816's own remarks for why this arm returns that rather than Nmos, and why
+        // it cannot simply be omitted.
+        CpuVariant.W65C816 => NotYet816,
+
         _ => throw new NotSupportedException($"No micro-op sequences for {variant} yet."),
     };
 
@@ -141,7 +167,7 @@ internal sealed class MicroOpTable
         for (var opcode = 0; opcode < 256; opcode++)
         {
             Entry[opcode] = (ushort)ops.Count;
-            Emit(ops, info[opcode], seq);
+            Emit(ops, info[opcode], seq, variant);
             ops.Add(MicroOp.End);
         }
 
@@ -185,9 +211,18 @@ internal sealed class MicroOpTable
         return count;
     }
 
-    private static void Emit(List<MicroOp> ops, OpcodeInfo info, Sequences seq)
+    private static void Emit(List<MicroOp> ops, OpcodeInfo info, Sequences seq, CpuVariant variant)
     {
         if (info.Operation == Op.Undefined) return;
+
+        // The 65816 does not stretch the NMOS/CMOS mechanism below at all — see Emit816 and
+        // the Sequences record's own remarks — so it is routed away before any of that logic
+        // runs, not folded into it.
+        if (variant == CpuVariant.W65C816)
+        {
+            Emit816(ops, info);
+            return;
+        }
 
         // Hand-written sequences: control flow and stack instructions do not decompose
         // into an addressing phase plus an access phase.
@@ -308,6 +343,202 @@ internal sealed class MicroOpTable
 
         EmitAddressing(ops, info, seq);
         EmitAccess(ops, info, seq);
+    }
+
+    /// <summary>
+    /// The 65816's emission path. Entirely separate from the NMOS/CMOS mechanism above: its
+    /// addressing modes have no NMOS or CMOS counterpart for <see cref="Sequences"/> to
+    /// substitute into, and the read-modify-write direction depends on <c>E</c> at run time
+    /// rather than at table-build time (datasheet Note 17, research document §7), which no
+    /// <see cref="Sequences"/> substitution can express. Bending the existing mechanism to fit
+    /// a third family was tried and rejected; this is the separate path that decision calls
+    /// for.
+    /// </summary>
+    /// <remarks>
+    /// Task 3 landed the harness and the first opcode: <c>XCE</c>'s real two-cycle sequence —
+    /// a fetch (implicit) plus <see cref="MicroOp.ImpliedExec816"/>'s internal cycle, research
+    /// document §9 row 19a. Task 4 added <c>REP</c>/<c>SEP</c>'s real three-cycle sequence — a
+    /// fetch, <see cref="MicroOp.RepSepOperand"/>, then <see cref="MicroOp.RepSepExec"/>'s
+    /// internal cycle, §9's "Immediate, and REP/SEP". Tasks 5 and 6 add every remaining LDA/STA
+    /// form via <see cref="EmitLdaSta816"/> — the first place emission genuinely depends on
+    /// <c>info.Mode</c> rather than <c>info.Operation</c> alone, which is why that method takes
+    /// the whole descriptor and switches on the mode instead of being folded into the <c>if</c>
+    /// chain here.
+    /// </remarks>
+    private static void Emit816(List<MicroOp> ops, OpcodeInfo info)
+    {
+        if (info.Operation == Op.Xce) ops.Add(MicroOp.ImpliedExec816);
+
+        if (info.Operation is Op.Rep or Op.Sep)
+            ops.AddRange([MicroOp.RepSepOperand, MicroOp.RepSepExec]);
+
+        if (info.Operation is Op.Lda or Op.Sta)
+            EmitLdaSta816(ops, info);
+    }
+
+    /// <summary>
+    /// Every LDA/STA addressing form, built directly against research document §9's per-mode
+    /// blocks. Named <c>EmitDirectPage816</c> through task 5, when it covered only the
+    /// seven direct-page modes; task 6 folded the remaining eight forms (absolute, long,
+    /// stack-relative, immediate) into the same switch rather than a second method, since every
+    /// one of them ends the same way — <c>info.Mode</c> drives the addressing prefix and, for
+    /// every mode but immediate, which "+1" high-byte micro-op closes the sequence, while
+    /// <c>info.Access</c> (<c>LDA</c> reads, <c>STA</c> writes) drives which pair of low/high
+    /// access micro-ops does: <see cref="MicroOp.ReadExec816"/> and a read-high micro-op, or
+    /// <see cref="MicroOp.ExecWrite816"/> and a write-high one. Immediate is the one mode that
+    /// does not share that tail — it has no effective address for <see cref="MicroOp.ReadExec816"/>
+    /// to read — so it returns before the <c>switch</c> rather than adding a case to it.
+    /// </summary>
+    private static void EmitLdaSta816(List<MicroOp> ops, OpcodeInfo info)
+    {
+        if (info.Mode == AddrMode.Immediate)
+        {
+            // LDA # ($A9) only — STA has no immediate form. ImmExec816 ends the instruction
+            // after the low byte when M selects 8 bits; ImmExecHigh816 supplies the second
+            // operand byte otherwise. Distinct from AddrMode.ImmediateByte (REP/SEP's fixed
+            // 8-bit operand, MicroOp.RepSepOperand/RepSepExec): this operand's width and the
+            // instruction's byte count both depend on M at run time. Research document §9,
+            // "Immediate, and REP/SEP".
+            ops.AddRange([MicroOp.ImmExec816, MicroOp.ImmExecHigh816]);
+            return;
+        }
+
+        switch (info.Mode)
+        {
+            case AddrMode.DirectPage:
+                ops.AddRange([MicroOp.FetchDpOffset, MicroOp.DirectPagePenalty]);
+                break;
+
+            case AddrMode.DirectPageX:
+                ops.AddRange([MicroOp.FetchDpOffset, MicroOp.DirectPagePenalty, MicroOp.DirectPageIndexX]);
+                break;
+
+            case AddrMode.DirectPageIndirect:
+                ops.AddRange([
+                    MicroOp.FetchDpOffset, MicroOp.DirectPagePenalty,
+                    MicroOp.PtrReadLo816, MicroOp.DpPtrReadHi,
+                ]);
+                break;
+
+            case AddrMode.DirectPageIndexedIndirectX:
+                ops.AddRange([
+                    MicroOp.FetchDpOffset, MicroOp.DirectPagePenalty, MicroOp.DirectPageIndexX,
+                    MicroOp.PtrReadLo816, MicroOp.DpPtrReadHi,
+                ]);
+                break;
+
+            case AddrMode.DirectPageIndirectY:
+                // Code-review fix (task 5): which of DpPtrReadHiY (read, can skip the indexing
+                // cycle) or DpPtrReadHiYWrite (write, never skips) is selected here, at
+                // table-build time, from info.Access — not at run time from info.Operation. See
+                // MicroOp.DpPtrReadHiY. Task 6's abs,X/abs,Y reuse the same mechanism below.
+                ops.AddRange([
+                    MicroOp.FetchDpOffset, MicroOp.DirectPagePenalty,
+                    MicroOp.PtrReadLo816,
+                    info.Access == Access.Write ? MicroOp.DpPtrReadHiYWrite : MicroOp.DpPtrReadHiY,
+                    MicroOp.IndexDirectPageIndirectY,
+                ]);
+                break;
+
+            case AddrMode.DirectPageIndirectLong:
+                ops.AddRange([
+                    MicroOp.FetchDpOffset, MicroOp.DirectPagePenalty,
+                    MicroOp.PtrReadLo816, MicroOp.LongPtrReadMid, MicroOp.LongPtrReadHi,
+                ]);
+                break;
+
+            case AddrMode.DirectPageIndirectLongY:
+                ops.AddRange([
+                    MicroOp.FetchDpOffset, MicroOp.DirectPagePenalty,
+                    MicroOp.PtrReadLo816, MicroOp.LongPtrReadMid, MicroOp.LongPtrReadHiY,
+                ]);
+                break;
+
+            // Task 6. Research document §9's "Absolute" block: no indexing at all, so the AAH
+            // fetch folds DBR straight into _addr — see MicroOp.AbsHi.
+            case AddrMode.Absolute:
+                ops.AddRange([MicroOp.FetchAddrLo, MicroOp.AbsHi]);
+                break;
+
+            // §9's "Absolute,X — row 6a": AbsHiIndexedX(Write) fetches AAH and precomputes both
+            // the mis-indexed and real addresses; AbsIndexFixup is the conditional cycle 3a that
+            // drives the former and installs the latter — selected read-vs-write at table-build
+            // time from info.Access, the same mechanism (dp),Y above uses.
+            case AddrMode.AbsoluteX:
+                ops.AddRange([
+                    MicroOp.FetchAddrLo,
+                    info.Access == Access.Write ? MicroOp.AbsHiIndexedXWrite : MicroOp.AbsHiIndexedX,
+                    MicroOp.AbsIndexFixup,
+                ]);
+                break;
+
+            // §9's "Absolute,Y — row 7": identical in shape to AbsoluteX, Y substituted for X.
+            case AddrMode.AbsoluteY:
+                ops.AddRange([
+                    MicroOp.FetchAddrLo,
+                    info.Access == Access.Write ? MicroOp.AbsHiIndexedYWrite : MicroOp.AbsHiIndexedY,
+                    MicroOp.AbsIndexFixup,
+                ]);
+                break;
+
+            // §9's "Absolute Long — row 4a": a 24-bit operand, no DBR involved at all — the
+            // third byte fetched here is the data bank outright. No indexing cycle exists for
+            // this mode.
+            case AddrMode.AbsoluteLong:
+                ops.AddRange([MicroOp.FetchAddrLo, MicroOp.FetchAddrHi, MicroOp.FetchAddrBank]);
+                break;
+
+            // §9's "Absolute Long,X — row 5": as AbsoluteLong, but FetchAddrBankX folds X into
+            // the 24-bit address in the same cycle — no separate indexing cycle for this mode
+            // either, which is why long,X's formula carries no page-cross term at all.
+            case AddrMode.AbsoluteLongX:
+                ops.AddRange([MicroOp.FetchAddrLo, MicroOp.FetchAddrHi, MicroOp.FetchAddrBankX]);
+                break;
+
+            // §9's "Stack Relative — row 23": bank 0, and StackRelativePenalty is unconditional
+            // — no DL-style skip the way DirectPagePenalty has, since sr,S is a "new" mode with
+            // no direct-page penalty at all (research document §5).
+            case AddrMode.StackRelative:
+                ops.AddRange([MicroOp.FetchSrOffset, MicroOp.StackRelativePenalty]);
+                break;
+
+            // §9's "(Stack Relative),Y — row 24": as StackRelative, then a two-byte bank-0
+            // pointer and an unconditional second internal cycle that indexes by Y through DBR.
+            // Flat 8-m in Clark (§5) — no w, no p — so nothing here is ever skipped.
+            case AddrMode.StackRelativeIndirectY:
+                ops.AddRange([
+                    MicroOp.FetchSrOffset, MicroOp.StackRelativePenalty,
+                    MicroOp.PtrReadLo816, MicroOp.SrPtrReadHi, MicroOp.IndexStackRelativeIndirectY,
+                ]);
+                break;
+
+            default:
+                throw new InvalidOperationException($"{info.Mnemonic}: {info.Mode} has no LDA/STA sequence.");
+        }
+
+        // Code-review fix (task 5), extended by task 6: only the two plain direct-page forms
+        // and plain stack-relative are bank-0-confined (their data access is 0,D+DO[+X] or
+        // 0,S+SO); every other mode's final access goes through DBR or the operand's own bank
+        // byte, and its "+1" must carry into the next bank rather than wrap — Clark §5.2
+        // Example 2, cited at Cpu.HighByteAddressCarry. (sr,S),Y is NOT in the bank-0-confined
+        // set despite sharing sr,S's bank-0 pointer fetch: task 6 review found this mode's
+        // *final* access, DBR,AA+Y (§9 row 24, cycles 7/7a), goes through DBR exactly like
+        // (dp),Y's does — indistinguishable from (dp),Y's bank-carry requirement, and wrongly
+        // grouped with plain sr,S here originally. Zero vector coverage: catching it needs
+        // M=0 with the indexed pointer landing exactly on $xxFFFF, which no SingleStepTests
+        // vector for $B3/$93 happens to hit across 10,000 tries each.
+        var carry = info.Mode is not (AddrMode.DirectPage or AddrMode.DirectPageX or AddrMode.StackRelative);
+
+        if (info.Access == Access.Write)
+        {
+            ops.Add(MicroOp.ExecWrite816);
+            ops.Add(carry ? MicroOp.ExecWriteHigh816Carry : MicroOp.ExecWriteHigh816);
+        }
+        else
+        {
+            ops.Add(MicroOp.ReadExec816);
+            ops.Add(carry ? MicroOp.ReadExecHigh816Carry : MicroOp.ReadExecHigh816);
+        }
     }
 
     /// <summary>Emits the cycles that form the effective address, up to but excluding the access.</summary>

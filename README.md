@@ -41,11 +41,15 @@ instruction.Length;      // 3
 instruction.ToString();  // "LDA $1234,X"
 ```
 
-Driven by the same opcode table the engine runs from, so the two cannot drift: adding an
-opcode to a variant makes it decodable in the commit that makes it executable. Walk memory
-by `Length`. Branches show the address they land on rather than the displacement they
-encode, and `BRK` is two bytes because its second byte is fetched and discarded rather
-than executed.
+Driven by the same opcode table the engine runs from, so mnemonic and operand text cannot
+drift from what the engine executes. For the five 8-bit cores, adding an opcode makes it
+decodable in the same commit that makes it executable, without exception. That does not yet
+hold for the 65816: 12 of its 15 addressing modes have no operand-format case here, so 20 of
+phase 7b's 32 implemented opcodes throw `NotSupportedException` on decode, and `LDA #`
+decodes at a fixed 2 bytes regardless of `m`, which is wrong once the accumulator is 16
+bits. Disassembler support for the 65816 is phase 7e's job. Walk memory by `Length`.
+Branches show the address they land on rather than the displacement they encode, and `BRK`
+is two bytes because its second byte is fetched and discarded rather than executed.
 
 `TBus` is a `struct` type parameter so the JIT specializes the core and inlines every
 memory access. Implement your own `struct` bus for address decoding, or wrap an
@@ -61,19 +65,27 @@ existing `IBus` reference in `RefBus` and pay one virtual call per access.
 | 65C02 Rockwell | Complete | Harte SingleStepTests + Klaus 65C02 extended |
 | 65C02 WDC | Complete | Harte SingleStepTests + Klaus 65C02 extended |
 | 6510 | Complete | The 6502 suites for the inherited opcodes + VICE `cpuport/test1` for the `$00`/`$01` port |
-| 65816 | Phase 7, in progress | — |
+| 65816 | Phase 7b: 32 of 256 opcodes | Harte SingleStepTests/65816, per-cycle, including bus-qualifier pins |
 
 IRQ and NMI (hardware-correct sampling, edge latching, and BRK/NMI hijacking), the RDY
 halt line, and the SO pin are complete, alongside `Reset()` and `BRK`.
 
-The 65816 is being built in five phases. The first has landed: `CpuState` now carries the
-65816's register file on **every** variant — 16-bit `A`, `X`, `Y` and `S`, plus `DP`,
-`DBR`, `PBR` and `E` — and `IBus` has an `Internal(int)` method for the cycles that drive
-an address without accessing memory, which no 8-bit core has. The 8-bit cores use the low
-bytes and are unchanged: the full conformance suite passes identically either side of the
-widening, and throughput is unaffected. No 65816 instruction is decodable yet.
+The 65816 is being built in five phases; two are done. Phase 7a widened `CpuState` to carry
+the 65816's register file on **every** variant — 16-bit `A`, `X`, `Y` and `S`, plus `DP`,
+`DBR`, `PBR` and `E` — and added `IBus.Internal(int)` for the cycles that drive an address
+without accessing memory, which no 8-bit core has. The 8-bit cores use the low bytes and are
+unchanged: the full conformance suite passes identically either side of the widening, and
+throughput is unaffected.
 
-**This widening is a breaking change**: `CpuState.A`, `X`, `Y` and `S` are now `ushort`
+Phase 7b landed the addressing engine: `LDA` and `STA` are decodable and cycle-correct across
+all fifteen 65816 addressing modes, plus `XCE`, `REP` and `SEP` — 32 opcodes in total,
+certified per-cycle in both emulation and native mode against 640,000 SingleStepTests
+vectors, including the full eight-character bus-qualifier pin string asserted on every cycle.
+
+**This is not a complete core.** 32 of the 65816's 256 opcodes are implemented; every other
+opcode throws `UndefinedOpcodeException`. Phases 7c and 7d add the rest.
+
+**The state widening is a breaking change**: `CpuState.A`, `X`, `Y` and `S` are now `ushort`
 rather than `byte`.
 
 See [`docs/superpowers/specs/`](https://github.com/barryw/SixtyFiveXX/tree/main/docs/superpowers/specs)
@@ -88,6 +100,15 @@ downloaded on first use and cached under `tests/SixtyFiveXX.Conformance/.harte-c
 They are never committed. One set per core, so a full run needs roughly **3.8 GB**. To
 run offline — or to avoid the download entirely — clone that repository and set
 `SIXTYFIVEXX_HARTE_DIR` to point at it.
+
+The 65816 draws from a **different repository**,
+[SingleStepTests/65816](https://github.com/SingleStepTests/65816) (MIT), also downloaded on
+first use and never committed. Files are named `{opcode:x2}.e.json` (emulation mode) and
+`{opcode:x2}.n.json` (native mode), 10,000 vectors each; the full set adds roughly **2.9 GB**
+on top of the 3.8 GB above. `SIXTYFIVEXX_HARTE_DIR` works for this set too, but the layout it
+expects is a level deeper: the variable must point at the *parent* of a `65816` checkout, not
+at the checkout itself, because vectors are read from
+`$SIXTYFIVEXX_HARTE_DIR/65816/v1/{opcode:x2}.{e,n}.json`.
 
 `WAI` and `STP` are the only two opcodes with no vectors: SingleStepTests ships empty
 files for them, because an instruction that halts cannot be expressed as a

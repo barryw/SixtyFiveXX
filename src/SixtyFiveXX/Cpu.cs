@@ -35,17 +35,17 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     private CpuState _s;
 
     /// <summary>
-    /// The 8-bit view of the register file, used by every core before the 65816.
+    /// The 8-bit view of the register file.
     /// </summary>
     /// <remarks>
     /// <see cref="CpuState"/> is sized for the 65816, so its registers are 16 bits wide on
-    /// every variant. The cores that are 8-bit read and write only the low byte, and these
+    /// every variant. The five 8-bit cores read and write only the low byte, and these
     /// shims say so once rather than scattering casts across two hundred use sites.
     /// <para>
     /// The setters assign the whole 16-bit field, which is correct here because these cores
-    /// never put anything in the high byte. The getters are what matter: <c>S8--</c> through
-    /// this property wraps at 8 bits, as a 6502 stack pointer must, whereas <c>_s.S--</c> on
-    /// the raw field takes $00 to $FFFF and pushes to the wrong address.
+    /// never put anything in the high byte. The getters are what matter: <c>X8--</c> through
+    /// this property wraps at 8 bits, as an 8-bit register must, whereas <c>_s.X--</c> on
+    /// the raw field takes $00 to $FFFF instead.
     /// </para>
     /// <para>
     /// Named with an explicit <c>8</c> suffix, rather than the bare register letter, so that
@@ -53,6 +53,13 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// accident: <c>A = someUshortValue</c> would silently truncate to 8 bits with no
     /// compile error if this property were named <c>A</c>. The suffix makes that a
     /// deliberate, visible choice instead of a typo.
+    /// </para>
+    /// <para>
+    /// <see cref="S8"/> shares this shape but is documented on its own rather than through
+    /// <c>&lt;inheritdoc cref="A8"/&gt;</c>: its setter also enforces a 65816-only invariant,
+    /// and a sibling <c>remarks</c> tag on an inheriting member replaces the inherited one
+    /// instead of adding to it, which would otherwise silently drop this paragraph from
+    /// <see cref="S8"/>'s documentation.
     /// </para>
     /// </remarks>
     private byte A8 { get => (byte)_s.A; set => _s.A = value; }
@@ -63,8 +70,29 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// <inheritdoc cref="A8"/>
     private byte Y8 { get => (byte)_s.Y; set => _s.Y = value; }
 
-    /// <inheritdoc cref="A8"/>
-    private byte S8 { get => (byte)_s.S; set => _s.S = value; }
+    /// <summary>
+    /// The 8-bit view of the stack pointer, used by every core.
+    /// </summary>
+    /// <remarks>
+    /// As <see cref="A8"/>: <see cref="CpuState.S"/> is 16 bits wide on every variant, and
+    /// the 8-bit cores read and write only the low byte. <c>S8--</c> through this property
+    /// wraps at 8 bits, as a 6502 stack pointer must, whereas <c>_s.S--</c> on the raw field
+    /// takes $00 to $FFFF and pushes to the wrong address.
+    /// <para>
+    /// On the 65816 in emulation mode, <c>SH</c> is not merely initialised to $01 at reset —
+    /// it is a continuously held invariant; hardware forces it on every write to S for as
+    /// long as <c>E</c> is set (research document §7). This setter is the one place every
+    /// core narrows a 16-bit write to 8 bits, so it is also the one place that invariant can
+    /// be enforced for every caller — including the reset sequence's own dummy stack reads —
+    /// without a guard at each call site. Folds away for every other core, the same way
+    /// <see cref="ReadBus"/> does for the 6510's port.
+    /// </para>
+    /// </remarks>
+    private byte S8
+    {
+        get => (byte)_s.S;
+        set => _s.S = TVariant.Variant == CpuVariant.W65C816 && _s.E ? (ushort)(0x0100 | value) : value;
+    }
 
     /// <summary>
     /// The 6510's on-chip registers. Unused by every other variant, where the accesses
@@ -99,6 +127,15 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
 
     /// <summary>The indirect pointer address, for the (zp,X) and (zp),Y modes.</summary>
     private int _ptr;
+
+    /// <summary>
+    /// The 65816's 16-bit access in progress. Holds the low byte, widened, once
+    /// <see cref="MicroOp.ReadExec816"/> or <see cref="MicroOp.ExecWrite816"/> has run; holds
+    /// the combined 16-bit value once <see cref="MicroOp.ReadExecHigh816"/> forms it or
+    /// <see cref="Op.Sta"/> populates it directly from <c>A</c>. 65816 only — no 8-bit-core
+    /// micro-op ever touches it.
+    /// </summary>
+    private ushort _data16;
 
     /// <summary>+0x100 or -0x100, applied by <see cref="MicroOp.BranchFixup"/>.</summary>
     private int _branchFix;
@@ -139,6 +176,12 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
 
     /// <summary>Level on the RDY pin. Low halts the processor on read cycles.</summary>
     private bool _rdy = true;
+
+    /// <summary>Bus-qualifier pins the most recently completed cycle asserted. See <see cref="LastPins"/>.</summary>
+    private BusPins _lastPins;
+
+    /// <summary>Address the most recently completed cycle drove. See <see cref="LastAddress"/>.</summary>
+    private int _lastAddress;
 
     /// <summary>
     /// Interrupt poll result, recomputed at the start of every cycle that continues an
@@ -228,19 +271,45 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
 
     /// <summary>
     /// Drives the RDY pin. Pulling it low halts the processor on its next read cycle; a
-    /// write already in progress completes. A halted processor keeps performing one bus
-    /// read per cycle rather than going silent, which is the basic shape of how a video
-    /// chip steals cycles without disturbing the CPU's state — but the address driven on a
-    /// halted cycle is not guaranteed to be the address the pending micro-op would have
-    /// used; see the <c>ponytail:</c> note at the halted read in <see cref="Tick"/>.
+    /// write already in progress completes. A halted processor keeps re-driving the address
+    /// bus every cycle rather than going silent, which is the basic shape of how a video chip
+    /// steals cycles without disturbing the CPU's state — as a real bus read for every 8-bit
+    /// core, where every cycle is a real access, and, on the 65816, as a real read for a halted
+    /// read micro-op but as a no-access <see cref="IBus.Internal"/> cycle for a halted internal
+    /// one (<c>MicroOps.IsInternalCycle</c>), matching what that cycle would have driven anyway.
+    /// The address driven on a halted cycle is not guaranteed to be the address the pending
+    /// micro-op would have used; see the <c>ponytail:</c> note at the halted read in
+    /// <see cref="Tick"/>.
     /// </summary>
     public void SetRdy(bool ready) => _rdy = ready;
+
+    /// <summary>
+    /// The <see cref="BusPins"/> the current or most recently completed cycle asserted. Set
+    /// by every <see cref="Tick"/>, including one halted by RDY, so a conformance harness
+    /// reading this after each call never misses a cycle. Internal rather than public: every
+    /// test project has <c>InternalsVisibleTo</c>, and this is readback for the harness, not
+    /// library surface a consumer needs.
+    /// </summary>
+    internal BusPins LastPins => _lastPins;
+
+    /// <summary>
+    /// The address the current or most recently completed cycle drove. Companion to
+    /// <see cref="LastPins"/>, set on the same cycles.
+    /// </summary>
+    internal int LastAddress => _lastAddress;
 
     /// <summary>
     /// Pulses the SO pin, setting the overflow flag. Nothing clears it but an instruction
     /// that writes V.
     /// </summary>
     public void SetSo() => _s.V = true;
+
+    /// <summary>
+    /// The pins an opcode-fetch cycle asserts. Not a <see cref="MicroOp"/> classification —
+    /// the fetch is performed by this loop, not by a sequence member — so <see cref="Tick"/>
+    /// assigns it directly rather than through <see cref="MicroOps.PinsFor"/>.
+    /// </summary>
+    private const BusPins OpcodeFetchPins = BusPins.Vda | BusPins.Vpa;
 
     /// <summary>
     /// Advances the core by one clock cycle — or, while RDY is held low on a read cycle,
@@ -252,8 +321,12 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
 
         if (!_rdy && !IsWriteCycleNext())
         {
-            // Halted: re-drive the address bus without advancing. One access, as always.
-            // A cycle skipped this way never reaches the poll below, so a halt mid-
+            // Halted: re-drive the address bus without advancing. One access, as always —
+            // except a pending 65816 internal cycle (MicroOps.IsInternalCycle), which drives
+            // the address through InternalCycle rather than ReadBus, because hardware performs
+            // no memory access on that cycle at all; going through ReadBus there would turn a
+            // no-access cycle into a real read, contradicting the None LastPins already reports
+            // for it. A cycle skipped this way never reaches the poll below, so a halt mid-
             // instruction leaves _intPoll holding whatever the last live cycle computed —
             // exactly as if the clock itself had stopped, which is what RDY models.
             // ponytail: _addr is only the right address for the minority of read micro-ops
@@ -263,8 +336,13 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             // a real hazard on a bus with read side effects. Upgrade path: derive the
             // pending micro-op's true read address (a switch mirroring Execute) instead of
             // hard-coding _addr. WAI and STP are already handled below, because their holds
-            // are unbounded — see MicroOps.HoldsAtPc.
-            ReadBus(_mpc < 0 || MicroOps.HoldsAtPc(_ops[_mpc]) ? _s.PC : _addr);
+            // are unbounded — see MicroOps.HoldsAtPc. LastPins inherits the same hazard: it
+            // reports the pending micro-op's classification (or the fetch pins, at a boundary)
+            // rather than pins derived from the address actually redriven.
+            _lastPins = _mpc < 0 ? OpcodeFetchPins : MicroOps.PinsFor(_ops[_mpc]);
+            var haltedAddress = _mpc < 0 || MicroOps.HoldsAtPc(_ops[_mpc]) ? PcAddress() : _addr;
+            if (_mpc >= 0 && MicroOps.IsInternalCycle(_ops[_mpc])) InternalCycle(haltedAddress);
+            else ReadBus(haltedAddress);
             return;
         }
 
@@ -273,11 +351,23 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             // A fetch cycle does no polling of its own: it consults whatever _intPoll
             // was left holding by the instruction that just finished (see below), the
             // same instant real hardware samples during phase 2 of the penultimate cycle.
+            //
+            // KNOWN GAP, 65816 only: when _intPoll is set, FetchOpcode() below diverts into
+            // the interrupt-entry sequence instead of fetching an opcode, and that cycle is
+            // actually a discarded read at PC — VDA and VPA should not both be asserted
+            // there, unlike a real opcode fetch. Research document §9 covers only phase 7b's
+            // addressing-mode slice and has no interrupt rows, so the correct pin pair cannot
+            // be established from it today. Left as OpcodeFetchPins until phase 7d implements
+            // 65816 interrupts and can pin the right value down. The five 8-bit cores are
+            // unaffected: VDA/VPA do not exist there, and their opcode-fetch-vs-interrupt-entry
+            // pin behaviour has no equivalent gap.
+            _lastPins = OpcodeFetchPins;
             FetchOpcode();
             return;
         }
 
         var micro = _ops[_mpc];
+        _lastPins = MicroOps.PinsFor(micro);
 
         // Poll before this cycle's own work. When this is the last cycle of the
         // instruction, the value computed here — using register state from before this
@@ -317,6 +407,8 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private byte ReadBus(int address)
     {
+        _lastAddress = address;
+
         if (TVariant.Variant == CpuVariant.Mos6510 && (uint)address <= 1)
             return _port.Read(address);
 
@@ -327,6 +419,8 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void WriteBus(int address, byte value)
     {
+        _lastAddress = address;
+
         if (TVariant.Variant == CpuVariant.Mos6510 && (uint)address <= 1)
         {
             _port.Write(address, value);
@@ -336,8 +430,175 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
         _bus.Write(address, value);
     }
 
+    /// <summary>
+    /// An internal-operation cycle: drives an address but performs no read or write. Only the
+    /// 65816 has these — research document §9's <c>IO</c> rows, modelled by
+    /// <see cref="IBus.Internal"/> — so every earlier core's <see cref="MicroOp"/> sequence
+    /// never reaches this method at all.
+    /// </summary>
+    /// <remarks>
+    /// The <c>_bus.Internal</c> call is guarded by a compile-time variant test, the same
+    /// technique <see cref="ReadBus"/> uses to fold away the 6510's port for every other core:
+    /// <see cref="IBus.Internal"/> is a default interface method, and a call through it on a
+    /// <c>struct</c> that does not override it is a constrained call that boxes — unacceptable
+    /// on this per-cycle path for the five 8-bit cores that never take it. Guarding with
+    /// <c>TVariant.Variant</c> lets the JIT see <c>if (false)</c> for those cores and emit
+    /// nothing, exactly as it already does for the port check above.
+    /// </remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void InternalCycle(int address)
+    {
+        _lastAddress = address;
+        if (TVariant.Variant == CpuVariant.W65C816) _bus.Internal(address);
+    }
+
     /// <summary>True when the cycle about to run is a write. RDY cannot halt a write.</summary>
     private bool IsWriteCycleNext() => _mpc >= 0 && MicroOps.IsWriteCycle(_ops[_mpc]);
+
+    /// <summary>
+    /// The program-bank-qualified address of the live program counter: research document §9's
+    /// <c>PBR,PC</c> family of addresses. Every read of the program stream — the opcode fetch,
+    /// an operand fetch, or a dummy read that rereads live PC without advancing it — goes
+    /// through this rather than repeating the shift at each call site.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="CpuState.PC"/> itself needs no change here: it stays a <c>ushort</c> and rolls
+    /// <c>$FFFF</c> to <c>$0000</c> without touching <see cref="CpuState.PBR"/> (research
+    /// document §2.2/§2.4) — this only adds the bank on top of whatever <c>PC</c> already holds.
+    /// Guarded by the same compile-time <c>TVariant.Variant</c> test <see cref="ReadBus"/> uses
+    /// for the 6510's port, so the JIT sees <c>if (false)</c> and folds straight to the bare
+    /// <c>PC</c> for the five 8-bit cores on this per-cycle path — the same technique
+    /// <see cref="InternalCycle"/> uses.
+    /// </remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private int PcAddress() => TVariant.Variant == CpuVariant.W65C816 ? (_s.PBR << 16) | _s.PC : _s.PC;
+
+    /// <summary>
+    /// The <c>X</c> index register, narrowed to 8 bits when the <c>x</c> flag selects that
+    /// width. 65816 only — the five 8-bit cores have no <c>x</c> flag and no micro-op of theirs
+    /// calls this. Read-time narrowing rather than a continuously-enforced invariant on
+    /// <see cref="CpuState.X"/> itself, because a conformance vector's initial state is loaded
+    /// directly into <see cref="CpuState"/> and can carry a nonzero high byte alongside
+    /// <c>x = 1</c> without passing through any of the code paths — <c>XCE</c>, <c>REP</c>,
+    /// <c>SEP</c> — that normally force it to <c>$00</c>.
+    /// </summary>
+    private ushort IndexX() => _s.XFlag ? (byte)_s.X : _s.X;
+
+    /// <inheritdoc cref="IndexX"/>
+    private ushort IndexY() => _s.XFlag ? (byte)_s.Y : _s.Y;
+
+    /// <summary>
+    /// The address one past <c>_addr</c> for the bank-0-confined families — plain direct page
+    /// (<c>0,D+DO+1</c>) and the stack. Bank preserved, low 16 bits wrapped: since <c>_addr</c>'s
+    /// bank is always 0 for these two families (Clark §5.1.2: both are "confined to" bank 0),
+    /// this is the same thing as wrapping within bank 0.
+    /// </summary>
+    /// <remarks>
+    /// Code-review fix: a single "+1" formula used to serve every 65816 addressing mode, direct
+    /// and indirect alike. That is correct only for this bank-0-confined family; it is wrong for
+    /// every DBR-relative and long mode, whose "+1" must carry into the next bank instead — see
+    /// <see cref="HighByteAddressCarry"/>, which those modes use.
+    /// </remarks>
+    private int HighByteAddressBank0() => (_addr & 0xFF0000) | ((_addr + 1) & 0xFFFF);
+
+    /// <summary>
+    /// The address one past <c>_addr</c> for the DBR-relative and long families — every 65816
+    /// addressing mode outside <see cref="HighByteAddressBank0"/>'s two. A plain 24-bit add, so a
+    /// low-16-bit overflow carries into the next bank rather than wrapping within the current
+    /// one.
+    /// </summary>
+    /// <remarks>
+    /// Bruce Clark, "65C816 Opcodes" §5.2, Example 2, verbatim: "If the DBR is $12 and the m flag
+    /// is 0, then LDA $FFFF loads the low byte of the data from address $12FFFF, and the high
+    /// byte from address $130000" — and §5.1.2: "Otherwise, wrapping does not occur at bank
+    /// boundaries." No SingleStepTests vector places the low access at <c>bank:$FFFF</c> with
+    /// <c>m=0</c>, so this case has zero vector coverage; see
+    /// <c>docs/superpowers/research/2026-08-03-65816-reference-sources.md</c> §7/§9 and the task
+    /// 5 review that found the bank-preserving formula was being used here too.
+    /// </remarks>
+    private int HighByteAddressCarry() => (_addr + 1) & 0xFFFFFF;
+
+    /// <summary>
+    /// The address of a direct-page indirect pointer's own high byte — <c>ptr + 1</c>, confined
+    /// to bank 0 (the pointer itself always lives in bank 0: <see cref="MicroOp.FetchDpOffset"/>
+    /// forms <c>_ptr</c> as <c>(D + DO) &amp; 0xFFFF</c>). In emulation mode, when the low byte of
+    /// <c>D</c> is <c>$00</c>, the read wraps within the page instead of carrying into the next
+    /// one — the same condition <see cref="MicroOp.DirectPageIndexX"/> already applies to the
+    /// index add, applied here to the pointer's own <c>+1</c> read.
+    /// </summary>
+    /// <remarks>
+    /// Code-review fix. Clark's appendix, verbatim: "if the D register is $0000 (and the e flag
+    /// is 1), then LDA ($FF) uses a pointer whose low byte is at $0000FF and whose high byte is
+    /// at $000000 (like the 65C02), but PEI $FF pushes a 16-bit value whose low byte is at
+    /// $0000FF and whose high byte is at $000100" — so the pointer read wraps, but a "new"
+    /// instruction's does not. Clark §5.1.1 pins down which addressing modes this applies to:
+    /// "only for 'old' instructions and addressing modes, i.e. instructions and addressing modes
+    /// that are available on the 65C02." <c>(dp)</c>, <c>(dp,X)</c> and <c>(dp),Y</c> are old and
+    /// call this (via <see cref="MicroOp.DpPtrReadHi"/> and <see cref="MicroOp.DpPtrReadHiY"/>);
+    /// <c>[dp]</c> and <c>[dp],Y</c> are new to the 65816 and do not — their pointer reads
+    /// (<see cref="MicroOp.LongPtrReadMid"/>, <see cref="MicroOp.LongPtrReadHi"/>) never wrap, at
+    /// any byte of the three-byte pointer. Zero vector coverage: 0 hits across all ten indirect
+    /// <c>.e</c> files for <c>DL == $00</c> with a pointer base at <c>$xxFF</c>.
+    /// </remarks>
+    private int DirectPagePointerHighAddress() =>
+        _s.E && (_s.DP & 0xFF) == 0
+            ? (_ptr & 0xFF00) | ((_ptr + 1) & 0xFF)
+            : (_ptr & 0xFF0000) | ((_ptr + 1) & 0xFFFF);
+
+    /// <summary>
+    /// Shared address formation for <c>(dp)</c> and <c>(dp),Y</c>'s pointer high byte: reads the
+    /// byte at <see cref="DirectPagePointerHighAddress"/>, combines it with the low byte
+    /// <see cref="MicroOp.PtrReadLo816"/> already read, and returns the resulting 16-bit
+    /// <c>AAH:AAL</c> pair (unindexed). <see cref="MicroOp.DpPtrReadHi"/> uses the pair directly;
+    /// <see cref="MicroOp.DpPtrReadHiY"/> and <see cref="MicroOp.DpPtrReadHiYWrite"/> index it by
+    /// <c>Y</c> afterward.
+    /// </summary>
+    private int DirectPagePointerHigh()
+    {
+        var hi = ReadBus(DirectPagePointerHighAddress());
+        return (hi << 8) | _tmp;
+    }
+
+    /// <summary>
+    /// <c>(dp),Y</c>'s pointer high byte and mis-indexed intermediate address, shared by
+    /// <see cref="MicroOp.DpPtrReadHiY"/> (read) and <see cref="MicroOp.DpPtrReadHiYWrite"/>
+    /// (write) — everything except whether <see cref="MicroOp.IndexDirectPageIndirectY"/> can be
+    /// skipped afterward, which differs between the two and so is left to each case in
+    /// <see cref="Execute"/>.
+    /// </summary>
+    private void DirectPageIndirectYHigh()
+    {
+        var aa = DirectPagePointerHigh();
+        var lo = (aa & 0xFF) + (IndexY() & 0xFF);
+        _pageCross = lo > 0xFF;
+        _addr = (_s.DBR << 16) | (aa & 0xFF00) | (lo & 0xFF);   // mis-indexed intermediate
+        _ptr = aa;                                              // unindexed pointer, for the fixup
+    }
+
+    /// <summary>
+    /// <c>abs,X</c>/<c>abs,Y</c>'s shared cycle 3 (research document §9's "Absolute,X — row 6a,
+    /// and Absolute,Y — row 7"): reads <c>AAH</c> at the live program counter — the same bus
+    /// access <see cref="MicroOp.FetchAddrHi"/> performs — then precomputes everything the
+    /// following conditional cycle needs without spending one on it. <c>_addr</c> is left holding
+    /// the mis-indexed intermediate <c>DBR,AAH,AAL+indexLow</c> (high byte un-carried, for
+    /// <see cref="MicroOp.AbsIndexFixup"/> to drive if the cycle is taken); <c>_ptr</c> is left
+    /// holding the real, possibly bank-carrying target <c>DBR,AA+index</c> (reused as scratch
+    /// exactly as <see cref="DirectPageIndirectYHigh"/> reuses it for the unindexed pointer).
+    /// Called with <see cref="IndexX"/> or <see cref="IndexY"/> depending on which register the
+    /// opcode indexes by; the caller alone decides whether to skip <c>AbsIndexFixup</c>
+    /// afterward, since a write never skips and a read skips only when datasheet Note 4's
+    /// condition is not met.
+    /// </summary>
+    private void AbsIndexedHigh(ushort index)
+    {
+        var hi = ReadBus(PcAddress());
+        _s.PC++;
+        var aa = (hi << 8) | (_addr & 0xFF);
+        var lo = (aa & 0xFF) + (index & 0xFF);
+        _pageCross = lo > 0xFF;
+        _addr = (_s.DBR << 16) | (aa & 0xFF00) | (lo & 0xFF);        // mis-indexed intermediate
+        _ptr = (((_s.DBR << 16) | aa) + index) & 0xFFFFFF;           // real target, may carry a bank
+    }
 
     /// <summary>
     /// Begins a hardware reset. The sequence takes seven cycles; drive it with
@@ -345,7 +606,15 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// </summary>
     /// <remarks>
     /// Reset does not clear the registers. Real hardware leaves A, X, Y and most of P
-    /// undisturbed; it sets I, decrements S three times, and loads PC from $FFFC.
+    /// undisturbed; it sets I, decrements S three times, and loads PC from $FFFC. On the
+    /// 65816 this still holds for N, V, Z and A — the datasheet's reset initialisation table
+    /// (p. 15, §2.25) marks them "not initialized" alongside SL, XL and YL — but D is one of
+    /// the few flags the table does pin down, to 0, so <see cref="Reset"/> clears it
+    /// explicitly for that variant (see below). The table's last P-register column is
+    /// labelled <c>C/E</c> with value 1, ambiguous between "C is set" and "E is set" — and E
+    /// is already listed as 1 under Signals, so this implementation leaves C untouched. No
+    /// conformance vector covers reset, so nothing can arbitrate the ambiguity; research
+    /// document §10 records it.
     /// <para>
     /// It does discard a pending NMI. A reset runs a BRK on this die — RESG high
     /// substitutes BRK into the instruction register — and that BRK clears NMI stage 1
@@ -363,6 +632,30 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     public void Reset()
     {
         _s.I = true;
+
+        // The 65816 resets into emulation mode, not native — CpuState.E defaults to false,
+        // which is native. Emulation mode forces m and x, clears XH and YH, and forces SH to
+        // $01 (research document §7); DBR, PBR and DP are not part of that invariant, but
+        // reset clears them too. SH's forcing here is belt-and-braces: S8's setter (above)
+        // re-forces it on every write for as long as E is set, which is what makes it survive
+        // the reset sequence's own dummy stack decrements below. D is cleared because the
+        // datasheet's reset table pins it to 0 (research document §10) — unlike N, V, Z and
+        // A, which the same table marks "not initialized" and which this deliberately leaves
+        // alone.
+        if (TVariant.Variant == CpuVariant.W65C816)
+        {
+            _s.E = true;
+            _s.M = true;
+            _s.XFlag = true;
+            _s.D = false;
+            _s.X &= 0x00FF;
+            _s.Y &= 0x00FF;
+            _s.S = (ushort)((_s.S & 0x00FF) | 0x0100);
+            _s.DBR = 0;
+            _s.PBR = 0;
+            _s.DP = 0;
+        }
+
         // ponytail: hardware clears ~NMIG at T0 phase 1 — the reset's seventh cycle — not
         // when RES is first pulled. The two differ only for an NMI edge the host asserts
         // during those seven cycles: hardware discards or defers it, this keeps it. That
@@ -453,6 +746,49 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
 
     private void FetchOpcode()
     {
+        // The 65816 emulation-mode stack pointer has no storage for its high byte at all — it
+        // is hard-wired to $01 whenever E is set (Eyes & Lichty p. 71, quoted at Op.Xce), not
+        // merely forced by specific writes. S8's setter (above) enforces this for every write
+        // an instruction performs, and Reset()/XCE enforce it at their own mode-transition
+        // points, but nothing previously enforced it independent of a write — which matters for
+        // any caller that sets CpuState.S directly while E is already true (this project's own
+        // conformance harness does exactly that, loading a vector's `initial` state as one
+        // struct literal) and for any instruction, such as REP/SEP, that never touches S.
+        // Measured against the SingleStepTests $C2/$E2 emulation-mode vectors: `initial.s`
+        // deliberately carries a non-$01 high byte while e=1, and `final.s` still shows it
+        // corrected to $01 even though REP/SEP's own operation never writes S — settling that
+        // the correction is continuous, not write-triggered, and belongs at the instruction
+        // boundary rather than inside Op.Rep/Op.Sep specifically. Applied here, once per
+        // instruction and before this instruction's own sequence runs, which is early enough
+        // that nothing downstream can observe the stale value.
+        //
+        // m, x, XH and YH get the identical treatment, for the identical reason. WDC datasheet
+        // §2.8, verbatim: "The M and X flags are always equal to one in Emulation mode."
+        // Research document §7 gives the full continuously-held invariant as m=1, x=1,
+        // XH=YH=$00, SH=$01. Reset() and XCE already force it at their own mode-transition
+        // points, and REP/SEP force it in Cpu.Exec.cs whenever their own operand would
+        // otherwise clear a bit E pins — but, like SH before this fix, nothing forced it
+        // independent of those specific writes: `State.E = true; State.M = false;` through the
+        // public API produced a 16-bit LDA in emulation mode, which cannot happen on real
+        // silicon, because nothing on that path ever ran XCE, REP or SEP.
+        //
+        // Folded into the same `if` as SH rather than a second one: same guard, same condition,
+        // same instant. That guard is load-bearing, not defensive — Flag.M and Flag.X alias
+        // Flag.U and Flag.B (see CpuState.Flag's remarks), so assigning `_s.M`/`_s.XFlag`
+        // unconditionally would clear bit 5/bit 4 of P on every 8-bit core the moment this ran
+        // there. It cannot run there: `TVariant.Variant == CpuVariant.W65C816` is a compile-time
+        // constant per closed generic type, so the JIT sees `if (false)` and the whole block
+        // folds away for the five 8-bit cores regardless of `_s.E` — the same bit-aliasing trap
+        // Op.Lda/Op.Sta's own variant guard exists to avoid (Cpu.Exec.cs).
+        if (TVariant.Variant == CpuVariant.W65C816 && _s.E)
+        {
+            _s.S = (ushort)((_s.S & 0x00FF) | 0x0100);
+            _s.M = true;
+            _s.XFlag = true;
+            _s.X &= 0x00FF;
+            _s.Y &= 0x00FF;
+        }
+
         if (_intPoll)
         {
             // Take the interrupt instead of an instruction. Hardware spends two cycles
@@ -462,7 +798,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             // sequence's start, not past it. Reset() has no opcode to fetch and so cannot
             // rely on this free read — see MicroOpTable.ResetEntry, which spells out both
             // dummy reads itself.
-            ReadBus(_s.PC);
+            ReadBus(PcAddress());
             // NMI outranks IRQ, and servicing it consumes the latch. IRQ is level-sensitive
             // and so needs no clearing — it fires again next boundary if still asserted.
             if (_nmiPending)
@@ -479,7 +815,10 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
         }
 
         var pc = _s.PC;
-        var opcode = ReadBus(pc);
+
+        // Bank-qualified via PcAddress(): research document §9 shows every opcode fetch at
+        // "PBR,PC", not PC alone.
+        var opcode = ReadBus(PcAddress());
         _s.PC++;
 
         var entry = _entry[opcode];
@@ -488,7 +827,10 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
         // Keyed off the descriptor rather than an empty sequence: the CMOS single-cycle
         // NOPs are defined opcodes that emit no micro-ops at all, so "no micro-ops" and
         // "not implemented" are no longer the same thing.
-        if (info.Operation == Op.Undefined) throw new UndefinedOpcodeException(opcode, pc);
+        if (info.Operation == Op.Undefined)
+            throw TVariant.Variant == CpuVariant.W65C816
+                ? new UndefinedOpcodeException(opcode, pc, _s.PBR)
+                : new UndefinedOpcodeException(opcode, pc);
 
         _op = info.Operation;
         _opcode = opcode;
@@ -534,22 +876,234 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 break;
 
             case MicroOp.ImmExec:
-                _data = ReadBus(_s.PC);
+                _data = ReadBus(PcAddress());
                 _s.PC++;
                 Exec();
                 break;
 
             case MicroOp.ImpliedDummy:
-                ReadBus(_s.PC);
+                ReadBus(PcAddress());
+                break;
+
+            case MicroOp.ImpliedExec816:
+                // Internal cycle at PBR,PC — no memory access — then run the operation.
+                // PC already reflects the opcode fetch's increment, so no further adjustment
+                // is needed to reach research document §9's "PC+1".
+                InternalCycle((_s.PBR << 16) | _s.PC);
+                Exec();
+                break;
+
+            case MicroOp.RepSepOperand:
+                _data = ReadBus(PcAddress());
+                _s.PC++;
+                break;
+
+            case MicroOp.RepSepExec:
+                // Internal cycle at the operand's own address — PC+1 in datasheet Note 1's
+                // terms, which is PC-1 from here since RepSepOperand already advanced past it.
+                InternalCycle((_s.PBR << 16) | ((_s.PC - 1) & 0xFFFF));
+                Exec();
+                break;
+
+            case MicroOp.FetchDpOffset:
+            {
+                var dpOffset = ReadBus(PcAddress());
+                _s.PC++;
+                _addr = (_s.DP + dpOffset) & 0xFFFF;
+                if ((_s.DP & 0xFF) == 0) _mpc++;      // DL == $00: skip DirectPagePenalty
+                break;
+            }
+
+            case MicroOp.DirectPagePenalty:
+                InternalCycle((_s.PBR << 16) | ((_s.PC - 1) & 0xFFFF));
+                break;
+
+            case MicroOp.DirectPageIndexX:
+                InternalCycle((_s.PBR << 16) | ((_s.PC - 1) & 0xFFFF));
+                _addr = _s.E && (_s.DP & 0xFF) == 0
+                    ? (_addr & 0xFF00) | ((_addr + IndexX()) & 0xFF)
+                    : (_addr + IndexX()) & 0xFFFF;
+                break;
+
+            case MicroOp.PtrReadLo816:
+                _ptr = _addr;
+                _tmp = ReadBus(_ptr);
+                break;
+
+            case MicroOp.DpPtrReadHi:
+                _addr = (_s.DBR << 16) | DirectPagePointerHigh();
+                break;
+
+            case MicroOp.DpPtrReadHiY:
+                DirectPageIndirectYHigh();
+                // Read only: skip the indexing cycle when datasheet Note 4's condition is not
+                // met. info.Access decided this micro-op at table-build time — see
+                // MicroOp.DpPtrReadHiY's remarks — so no opcode comparison happens here.
+                if (!_pageCross && _s.XFlag) _mpc++;
+                break;
+
+            case MicroOp.DpPtrReadHiYWrite:
+                // A write pays the indexing cycle unconditionally ("or write") — never skips.
+                DirectPageIndirectYHigh();
+                break;
+
+            case MicroOp.IndexDirectPageIndirectY:
+                InternalCycle(_addr);
+                _addr = (((_s.DBR << 16) | _ptr) + IndexY()) & 0xFFFFFF;
+                break;
+
+            case MicroOp.LongPtrReadMid:
+            {
+                var mid = ReadBus((_ptr & 0xFF0000) | ((_ptr + 1) & 0xFFFF));
+                _addr = (mid << 8) | _tmp;
+                break;
+            }
+
+            case MicroOp.LongPtrReadHi:
+            {
+                var bank = ReadBus((_ptr & 0xFF0000) | ((_ptr + 2) & 0xFFFF));
+                _addr = (bank << 16) | _addr;
+                break;
+            }
+
+            case MicroOp.LongPtrReadHiY:
+            {
+                var bank = ReadBus((_ptr & 0xFF0000) | ((_ptr + 2) & 0xFFFF));
+                _addr = (((bank << 16) | _addr) + IndexY()) & 0xFFFFFF;
+                break;
+            }
+
+            case MicroOp.ReadExec816:
+                _data = ReadBus(_addr);
+                if (_s.M) { Exec(); EndInstruction(); }
+                break;
+
+            case MicroOp.ReadExecHigh816:
+            {
+                var hi = ReadBus(HighByteAddressBank0());
+                _data16 = (ushort)((hi << 8) | _data);
+                Exec();
+                break;
+            }
+
+            case MicroOp.ReadExecHigh816Carry:
+            {
+                var hi = ReadBus(HighByteAddressCarry());
+                _data16 = (ushort)((hi << 8) | _data);
+                Exec();
+                break;
+            }
+
+            case MicroOp.ExecWrite816:
+                Exec();
+                if (_s.M) { WriteBus(_addr, _data); EndInstruction(); }
+                else WriteBus(_addr, (byte)_data16);
+                break;
+
+            case MicroOp.ExecWriteHigh816:
+                WriteBus(HighByteAddressBank0(), (byte)(_data16 >> 8));
+                break;
+
+            case MicroOp.ExecWriteHigh816Carry:
+                WriteBus(HighByteAddressCarry(), (byte)(_data16 >> 8));
+                break;
+
+            // Task 6: absolute, long, stack-relative and immediate. See MicroOp's own remarks
+            // on each member for the research document §9 row it comes from.
+
+            case MicroOp.ImmExec816:
+                _data = ReadBus(PcAddress());
+                _s.PC++;
+                if (_s.M) { Exec(); EndInstruction(); }
+                break;
+
+            case MicroOp.ImmExecHigh816:
+            {
+                var hi = ReadBus(PcAddress());
+                _s.PC++;
+                _data16 = (ushort)((hi << 8) | _data);
+                Exec();
+                break;
+            }
+
+            case MicroOp.AbsHi:
+            {
+                var hi = ReadBus(PcAddress());
+                _s.PC++;
+                _addr = (_s.DBR << 16) | (hi << 8) | (_addr & 0xFF);
+                break;
+            }
+
+            case MicroOp.AbsHiIndexedX:
+                AbsIndexedHigh(IndexX());
+                if (!_pageCross && _s.XFlag) _mpc++;
+                break;
+
+            case MicroOp.AbsHiIndexedXWrite:
+                AbsIndexedHigh(IndexX());
+                break;
+
+            case MicroOp.AbsHiIndexedY:
+                AbsIndexedHigh(IndexY());
+                if (!_pageCross && _s.XFlag) _mpc++;
+                break;
+
+            case MicroOp.AbsHiIndexedYWrite:
+                AbsIndexedHigh(IndexY());
+                break;
+
+            case MicroOp.AbsIndexFixup:
+                InternalCycle(_addr);   // the mis-indexed address AbsHiIndexed* formed
+                _addr = _ptr;           // the real, precomputed (and possibly bank-carried) target
+                break;
+
+            case MicroOp.FetchAddrBank:
+            {
+                var bank = ReadBus(PcAddress());
+                _s.PC++;
+                _addr = (bank << 16) | _addr;
+                break;
+            }
+
+            case MicroOp.FetchAddrBankX:
+            {
+                var bank = ReadBus(PcAddress());
+                _s.PC++;
+                _addr = (((bank << 16) | _addr) + IndexX()) & 0xFFFFFF;
+                break;
+            }
+
+            case MicroOp.FetchSrOffset:
+            {
+                var so = ReadBus(PcAddress());
+                _s.PC++;
+                _addr = (_s.S + so) & 0xFFFF;
+                break;
+            }
+
+            case MicroOp.StackRelativePenalty:
+                InternalCycle((_s.PBR << 16) | ((_s.PC - 1) & 0xFFFF));
+                break;
+
+            case MicroOp.SrPtrReadHi:
+            {
+                var hi = ReadBus((_ptr + 1) & 0xFFFF);
+                _addr = (hi << 8) | _tmp;
+                break;
+            }
+
+            case MicroOp.IndexStackRelativeIndirectY:
+                InternalCycle((_ptr + 1) & 0xFFFF);
+                _addr = (((_s.DBR << 16) | _addr) + IndexY()) & 0xFFFFFF;
                 break;
 
             case MicroOp.FetchAddrLo:
-                _addr = ReadBus(_s.PC);
+                _addr = ReadBus(PcAddress());
                 _s.PC++;
                 break;
 
             case MicroOp.FetchAddrHi:
-                _addr |= ReadBus(_s.PC) << 8;
+                _addr |= ReadBus(PcAddress()) << 8;
                 _s.PC++;
                 break;
 
@@ -581,7 +1135,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 break;
 
             case MicroOp.ImmExecCmosArith:
-                _data = ReadBus(_s.PC);
+                _data = ReadBus(PcAddress());
                 _s.PC++;
                 if (_s.D) break;
                 Exec();
