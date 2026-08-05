@@ -4,7 +4,7 @@
 
 **Goal:** 59 further 65816 opcodes — every read-modify-write, the six accumulator forms, the twelve transfers, `XBA`, the flag instructions and `NOP` — certified per-cycle against 1,180,000 SingleStepTests vectors, taking the core to 212 of 256.
 
-**Architecture:** The 65816 emitter has never emitted a read-modify-write. This phase adds that access class, and with it datasheet Note 17: the RMW middle cycle is a **write** in emulation mode and a **read** in native, decided at run time rather than at table-build time. It is expressed as six conditional slots of which any execution runs four or five, so every micro-op keeps a static entry in `MicroOps.IsWriteCycle`. The other 53 opcodes fetch no operand at all; they keep `Width.None` and test their width flag inside their `Exec` arm.
+**Architecture:** The 65816 emitter has never emitted a read-modify-write. This phase adds that access class, and with it datasheet Note 17: the RMW middle cycle is a **write** in emulation mode and a **read** in native, decided at run time rather than at table-build time. It is expressed as six conditional slots of which any execution runs three or five, so every micro-op keeps a static entry in `MicroOps.IsWriteCycle`. The other 53 opcodes fetch no operand at all; they keep `Width.None` and test their width flag inside their `Exec` arm.
 
 **Tech Stack:** C# 13, .NET 8 and .NET 10 (both must pass), xUnit, no NuGet dependencies in `src/`.
 
@@ -486,7 +486,7 @@ with:
                 ops.Add(carry ? MicroOp.ExecWriteHigh816Carry : MicroOp.ExecWriteHigh816);
                 break;
 
-            // Six slots, of which any one execution runs four (8-bit) or five (16-bit). The rest
+            // Six slots, of which any one execution runs three (8-bit) or five (16-bit). The rest
             // are skipped by the preceding micro-op, the same conditional-slot idiom
             // DirectPagePenalty uses — which is what keeps every one of them statically
             // classified in MicroOps.IsWriteCycle, consulted on every tick of all six cores

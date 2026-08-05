@@ -399,7 +399,12 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             // that actually read it (ReadExec, RmwRead, ReadPageCross, DummyReadFixup,
             // UnstableStoreFixup, ZpIndex*). Every other read micro-op — PC, stack, pointer
             // or vector reads — gets _addr's stale value here instead of its own, which is
-            // a real hazard on a bus with read side effects. Upgrade path: derive the
+            // a real hazard on a bus with read side effects. The 65816's high-byte micro-ops
+            // widen that gap rather than change it: ReadExecHigh816*, RmwReadHigh816* and the
+            // 16-bit form of RmwModifyRead816* all drive HighByteAddress*() when live but get
+            // _addr here, so a halted cycle re-drives the LOW address of a 16-bit access. The
+            // four RMW write-forms are immune, since RDY cannot halt a write at all.
+            // Upgrade path: derive the
             // pending micro-op's true read address (a switch mirroring Execute) instead of
             // hard-coding _addr. WAI and STP are already handled below, because their holds
             // are unbounded — see MicroOps.HoldsAtPc. LastPins inherits the same hazard: it

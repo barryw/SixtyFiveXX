@@ -731,7 +731,7 @@ internal enum MicroOp : byte
 
     // Phase 7c′ task 2: the 65816's read-modify-write access class, research document §13.1's
     // rows 10b (dp), 16b (dp,X), 1d (abs) and 6b (abs,X). Six slots, of which any one execution
-    // runs four (8-bit) or five (16-bit) — the rest are skipped by the preceding micro-op, the
+    // runs three (8-bit) or five (16-bit) — the rest are skipped by the preceding micro-op, the
     // same conditional-slot idiom DirectPagePenalty uses, and the reason every one of them keeps
     // a static entry in MicroOps.IsWriteCycle rather than one micro-op branching on E at run
     // time. That table is consulted on every tick of all six cores, because RDY must never halt

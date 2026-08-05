@@ -583,7 +583,7 @@ internal sealed class MicroOpTable
                 ops.Add(carry ? MicroOp.ExecWriteHigh816Carry : MicroOp.ExecWriteHigh816);
                 break;
 
-            // Six slots, of which any one execution runs four (8-bit) or five (16-bit). The rest
+            // Six slots, of which any one execution runs three (8-bit) or five (16-bit). The rest
             // are skipped by the preceding micro-op, the same conditional-slot idiom
             // DirectPagePenalty uses — which is what keeps every one of them statically
             // classified in MicroOps.IsWriteCycle, consulted on every tick of all six cores
