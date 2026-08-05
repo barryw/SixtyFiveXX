@@ -1288,3 +1288,489 @@ this narrow:
 
 The same shape as §11: a rule the earlier sections do not state, measured from the vectors, and agreeing
 with the one source that speaks to it once that source is read literally rather than generalised.
+
+---
+
+## 13. Phase 7c′'s five unsettled questions — read-modify-write, the implied forms, and Note 17
+
+Added 2026-08-05, before any phase 7c′ code was written. Same practice as §9 and §12: transcribe first,
+implement second. The phase 7c′ plan
+(`docs/superpowers/plans/2026-08-05-phase7cprime-rmw-implied.md`) cites this material as **§13.1**–**§13.5**,
+which is the numbering used here — unlike §12, there is no offset to map.
+
+**Sources, fetched for this section rather than recalled.** Clark, "65C816 Opcodes", from the GitHub mirror
+`https://raw.githubusercontent.com/6502org/6502.org/main/public/tutorials/65c816opcodes.html`
+(**137,171 bytes**, footer "Last Updated September 28, 2015") — the mirror because 6502.org itself 404s
+non-browser agents (§2.2). WDC W65C816S datasheet from
+`https://www.westerndesigncenter.com/wdc/documentation/w65c816s.pdf` (**1,532,025 bytes**, header
+"March 13, 2024"), Table 5-7 on pp. 36–42 and its Notes on p. 43. Both byte counts are identical to the
+ones §12 recorded a day earlier, so this is demonstrably the same pair of files, not a re-issue.
+
+Notation is §5's and §9's: `m` and `x` are the flag values (0 or 1), `w` is 1 when `DL != $00` and 0
+otherwise, `p` is 1 on a page cross; `IO` is an internal cycle with `VDA = VPA = 0` and no memory access;
+`(1)` is the high half of a 16-bit access, `(2)` the direct-page penalty. Two conditional-cycle notes are
+new to this section, and both are transcribed verbatim in §13.1: **`(3)`** and **`(17)`**.
+
+**One extension to §9's column set, and it is load-bearing.** §9 dropped the `VPB` and `MLB` columns because
+"VPB and MLB are `1` (inactive) throughout every one of these modes". **That is not true of the
+read-modify-write rows.** Table 5-7 prints `MLB = 0` — asserted, the pin is active-low — on every cycle of an
+RMW instruction that touches the target byte. `MLB` is the **eighth character of the pin string the vectors
+assert** (`BuildPinString` in `tests/SixtyFiveXX.Conformance/Harte816Tests.cs`, slot 7, the `l`), so it is not
+cosmetic. Every block below therefore carries an `MLB` column, and an `RWB` column as well, since the
+direction of one cycle is the whole subject of §13.1. `VPB` is still `1` throughout and is still dropped.
+
+### 13.1 The RMW per-cycle sequences, and what the middle cycle actually is
+
+> **The native-mode middle cycle is an internal cycle, not a read.** Table 5-7 prints `VDA = 0`, `VPA = 0`,
+> data bus `IO` and `RWB = 1` on that cycle in all four read-modify-write rows. It is the same `IO` §9
+> defines — no memory access, value recorded `null` — and it is **not** the 65C02's dummy read, which would
+> be a genuine access with `VDA` asserted. `RmwModifyRead816` must call `InternalCycle`, not `ReadBus`.
+
+The phase 7c′ brief anticipated the opposite, reasoning that if emulation mode "reverts to the NMOS
+double-write" then the native case ought to be the CMOS-style dummy read. That phrase is the brief's, not
+the datasheet's — Note 17 says nothing of the kind, as its verbatim text below shows — and the table
+contradicts the inference. The 65816's native middle cycle is neither of the two 8-bit shapes this codebase
+already implements: it accesses no memory at all.
+
+**But the cycle is not pin-identical to any internal cycle this codebase has emitted before**, and that is
+the finding that goes with it: `MLB = 0` on that cycle as well, so its pin string is `MLB` asserted with
+neither `VDA` nor `VPA`. No micro-op in the project has ever driven that combination — `MicroOps.PinsFor`
+currently emits `BusPins.Vda | BusPins.Mlb` for the four 8-bit RMW micro-ops and `BusPins.None` for every
+internal cycle. `RmwModifyRead816`'s entry must be `BusPins.Mlb` alone, and it does **not** belong on
+`PinsFor`'s documented list of legitimately-`None` micro-ops.
+
+**Note 17, verbatim** (p. 43):
+
+> 17. In the emulation mode, during a R-M-W instruction the RWB is low during both write and modify cycles.
+
+**Note 3, verbatim** (p. 43), which gates the same cycle and is transcribed because `(3)` appears alongside
+`(17)` on every one of these rows — the run-together "DBRregisters" is the datasheet's own:
+
+> 3. Special case for aborting instruction. This is the last cycle which may be aborted or the Status, PBR or
+>    DBRregisters will be updated.
+
+Note 3 is about `ABORTB`, which §8 already defers out of phase 7 entirely. It is recorded here only so that
+a later reader who sees `(3)(17)` on the row knows both halves have been read and only one of them bites.
+
+Note what Note 17 does and does not say. It speaks of **`RWB` alone**. It does not say `VDA` rises in
+emulation mode, it does not give an address, and it does not say the write is of the unmodified value —
+that last is a property of the NMOS sequence being emulated, not something this datasheet states. See the
+gaps in §13.6.
+
+Transcribed in §9's format, extended with `MLB` and `RWB`. All four rows were read from the datasheet's
+extracted text **and then cross-checked cell by cell against page renderings of pp. 36, 37, 39 and 40** —
+the same precaution §12.5 took with Table 7-1's merged cell, and it earned its place here too (see the note
+on row 16b below).
+
+#### Direct (R-M-W) — row 10b, p. 39
+
+```
+ASL dp / DEC dp / INC dp / LSR dp / ROL dp / ROR dp / TRB dp / TSB dp
+                                                  8 opcodes, 2 bytes, 5 / 6 / 7 / 8 cycles
+  1              VDA=1 VPA=1 MLB=1   PBR,PC       OpCode      RWB=1
+  2              VDA=0 VPA=1 MLB=1   PBR,PC+1     DO          RWB=1
+  2a  (2)        VDA=0 VPA=0 MLB=1   PBR,PC+1     IO          RWB=1   <- DL != $00
+  3              VDA=1 VPA=0 MLB=0   0,D+DO       Data Low    RWB=1
+  3a  (1)        VDA=1 VPA=0 MLB=0   0,D+DO+1     Data High   RWB=1
+  4   (3),(17)   VDA=0 VPA=0 MLB=0   0,D+DO+1     IO          RWB=1   <- the middle cycle; Note 17 in emulation
+  5a  (1)        VDA=1 VPA=0 MLB=0   0,D+DO+1     Data High   RWB=0
+  5              VDA=1 VPA=0 MLB=0   0,D+DO       Data Low    RWB=0
+```
+
+#### Direct,X (R-M-W) — row 16b, p. 40
+
+```
+ASL dp,X / DEC dp,X / INC dp,X / LSR dp,X / ROL dp,X / ROR dp,X
+                                                  6 opcodes, 2 bytes, 6 / 7 / 8 / 9 cycles
+  1              VDA=1 VPA=1 MLB=1   PBR,PC       OpCode      RWB=1
+  2              VDA=0 VPA=1 MLB=1   PBR,PC+1     DO          RWB=1
+  2a  (2)        VDA=0 VPA=0 MLB=1   PBR,PC+1     IO          RWB=1   <- DL != $00
+  3              VDA=0 VPA=0 MLB=1   PBR,PC+1     IO          RWB=1   <- the indexing cycle, unconditional
+  4              VDA=1 VPA=0 MLB=0   0,D+DO+X     Data Low    RWB=1
+  4a  (1)        VDA=1 VPA=0 MLB=0   0,D+DO+X+1   Data High   RWB=1
+  5   (3),(17)   VDA=0 VPA=0 MLB=0   0,D+DO+X+1   IO          RWB=1   <- the middle cycle
+  6a  (1)        VDA=1 VPA=0 MLB=0   0,D+DO+X+1   Data High   RWB=0
+  6              VDA=1 VPA=0 MLB=0   0,D+DO+X     Data Low    RWB=0
+```
+
+**One typographic caveat on this row, resolved rather than guessed.** In the printed table the note cell
+`(3),(17)` wraps onto two lines, which pushes the following `(1)` marker down one line so that it appears
+beside cycle `6` rather than beside `6a`. Rows 1d, 10b and 6b carry the same note cell without wrapping and
+put that `(1)` on the `a` row every time; and the alternative reading — a conditional `Data Low` write and an
+unconditional `Data High` write — is incoherent, since `Data High` exists only when `m = 0`. The marker
+belongs on `6a`. Recorded because the extracted text and the rendered page show the same offset, so a reader
+checking either one alone would see it.
+
+#### Absolute (R-M-W) — row 1d, p. 36
+
+```
+ASL abs / DEC abs / INC abs / LSR abs / ROL abs / ROR abs / TRB abs / TSB abs
+                                                  8 opcodes, 3 bytes, 6 / 8 cycles
+  1              VDA=1 VPA=1 MLB=1   PBR,PC       OpCode      RWB=1
+  2              VDA=0 VPA=1 MLB=1   PBR,PC+1     AAL         RWB=1
+  3              VDA=0 VPA=1 MLB=1   PBR,PC+2     AAH         RWB=1
+  4              VDA=1 VPA=0 MLB=0   DBR,AA       Data Low    RWB=1
+  4a  (1)        VDA=1 VPA=0 MLB=0   DBR,AA+1     Data High   RWB=1
+  5   (3)(17)    VDA=0 VPA=0 MLB=0   DBR,AA+1     IO          RWB=1   <- the middle cycle
+  6a  (1)        VDA=1 VPA=0 MLB=0   DBR,AA+1     Data High   RWB=0
+  6              VDA=1 VPA=0 MLB=0   DBR,AA       Data Low    RWB=0
+```
+
+The row's own header reads `6 OpCodes, 3 bytes, 6 & 8 cycles` while listing **eight** mnemonics
+(`ASL, DEC, INC, LSR, ROL, ROR, TRB, TSB`). Row 10b lists the same eight and says `8 OpCodes`; Clark gives
+`TRB $9876` as `$1C` and `TSB $9876` as `$0C` (§6.1.2.3), so `abs` RMW really is eight opcodes and **`6
+OpCodes` is a miscount in the datasheet**, of the same kind as the punctuation slips §12.3 reproduced from
+these lists. The cycle figures are unaffected.
+
+#### Absolute,X (R-M-W) — row 6b, p. 37
+
+```
+ASL abs,X / DEC abs,X / INC abs,X / LSR abs,X / ROL abs,X / ROR abs,X
+                                                  6 opcodes, 3 bytes, 7 / 9 cycles
+  1              VDA=1 VPA=1 MLB=1   PBR,PC             OpCode      RWB=1
+  2              VDA=0 VPA=1 MLB=1   PBR,PC+1           AAL         RWB=1
+  3              VDA=0 VPA=1 MLB=1   PBR,PC+2           AAH         RWB=1
+  4              VDA=0 VPA=0 MLB=1   DBR,AAH,AAL+XL     IO          RWB=1   <- unconditional, NOT note (4)
+  5              VDA=1 VPA=0 MLB=0   DBR,AA+X           Data Low    RWB=1
+  5a  (1)        VDA=1 VPA=0 MLB=0   DBR,AA+X+1         Data High   RWB=1
+  6   (3)(17)    VDA=0 VPA=0 MLB=0   DBR,AA+X+1         IO          RWB=1   <- the middle cycle
+  7a  (1)        VDA=1 VPA=0 MLB=0   DBR,AA+X+1         Data High   RWB=0
+  7              VDA=1 VPA=0 MLB=0   DBR,AA+X           Data Low    RWB=0
+```
+
+**Cycle 4 carries no note at all.** Compare row 6a in §9, whose analogous cycle `3a` carries `(4)` and is
+skipped when `x = 1` and there is no page cross. The RMW form's indexing cycle is **unconditional**, which
+is why Clark's `9-2*m` (§13.3) has no `p` term and no `x` term — this is the same shape as an indexed
+*write*, and it is stated by the table and by Clark independently. Its address is still the mis-indexed
+`DBR,AAH,AAL+XL`, high byte un-carried, exactly as §9's row 6a.
+
+#### What is common to all four
+
+- The addressing-mode cycles (opcode fetch, operand fetches, direct-page penalty, indexing cycle) keep
+  `MLB = 1`. `MLB` goes to `0` on the first cycle that touches the target byte and stays there to the end.
+  `BusPins.Mlb`'s existing doc comment in `src/SixtyFiveXX/MicroOp.cs` — *"set on the cycles of a
+  read-modify-write instruction that actually touch the target byte … Not set on the addressing-mode cycles
+  that merely compute the target address, even when they occur inside an RMW instruction"* — was written for
+  the 8-bit cores and states the rule the 65816's table follows. Row 6b's cycle 4, the indexing `IO` at the
+  mis-indexed address, is `MLB = 1`, which is that comment's second sentence confirmed on this part. The
+  comment's enumeration (*"the read, the modify, and the final write"*) is the 8-bit shape and needs
+  widening to five cycles for `m = 0`; the rule behind it does not change.
+- The middle cycle drives the **`+1` address** — `AA+1`, `D+DO+1`, `AA+X+1`, `D+DO+X+1` — in every row.
+  This is *not* what the plan's draft `RmwModifyRead816` does (`InternalCycle(_addr)`, the low address).
+  See §13.6, gap 1, for the part the table leaves open.
+- `RWB` is `1` on the two reads and the middle cycle, `0` on the two writes. There is no `1/0` cell anywhere
+  in an RMW row, unlike the load/store rows, because the direction of every cycle is fixed by the row.
+
+### 13.2 The 16-bit write order — the writes reverse
+
+**The reads go low-then-high and the writes go high-then-low.** This is stated by the table rows directly,
+not inferred: in row 1d the read pair is cycle `4` at `DBR,AA` (`Data Low`) then `4a` at `DBR,AA+1`
+(`Data High`), and the write pair is cycle `6a` at `DBR,AA+1` (`Data High`, `RWB = 0`) then `6` at `DBR,AA`
+(`Data Low`, `RWB = 0`) — in that printed order, high before low. All four rows agree:
+
+| Row | Read low | Read high | Write high | Write low |
+| --- | --- | --- | --- | --- |
+| 10b `dp` | 3 @ `0,D+DO` | 3a @ `0,D+DO+1` | 5a @ `0,D+DO+1` | 5 @ `0,D+DO` |
+| 16b `dp,X` | 4 @ `0,D+DO+X` | 4a @ `0,D+DO+X+1` | 6a @ `0,D+DO+X+1` | 6 @ `0,D+DO+X` |
+| 1d `abs` | 4 @ `DBR,AA` | 4a @ `DBR,AA+1` | 6a @ `DBR,AA+1` | 6 @ `DBR,AA` |
+| 6b `abs,X` | 5 @ `DBR,AA+X` | 5a @ `DBR,AA+X+1` | 7a @ `DBR,AA+X+1` | 7 @ `DBR,AA+X` |
+
+Two things make this a *stated* fact rather than a reading of row order. First, the cycle counts force it:
+`abs` RMW is `6 & 8 cycles`, so at `m = 0` the sequence `4, 4a, 5, 6a, 6` is eight cycles with `6a` seventh
+and `6` eighth. There is no ordering left to choose.
+
+Second, the inversion — an `a`-suffixed conditional cycle printed *above* its base cycle, which is the
+reverse of the `2a`/`3a`/`4a` convention everywhere else in Table 5-7 — is the datasheet's deliberate way of
+saying the conditional half happens first, and **one other row proves it means that**. Row 22c, the 16-bit
+pushes, p. 41:
+
+```
+22c.  PHA, PHB PHP, PHD, PHK, PHX, PHY            7 opcodes, 1 byte, 3 and 4 cycles
+  1              VDA=1 VPA=1 MLB=1   PBR,PC       OpCode      RWB=1
+  2              VDA=0 VPA=0 MLB=1   PBR,PC+1     IO          RWB=1
+  3a             VDA=1 VPA=0 MLB=1   0,S          REG High    RWB=0
+  3              VDA=1 VPA=0 MLB=1   0,S-1        REG Low     RWB=0
+
+22b.  PLA, PLB, PLD, PLP, PLX, PLY                6 opcodes, 1 byte, 4 and 5 cycles
+  4              VDA=1 VPA=0 MLB=1   0,S+1        REG Low     RWB=1
+  4a  (1)        VDA=1 VPA=0 MLB=1   0,S+2        REG High    RWB=1
+```
+
+The push prints `3a` above `3`, high byte before low; the pull prints `4a` below `4`, low byte before high.
+Neither order is a matter of interpretation, because the stack descends: a push must write `0,S` before
+`0,S-1`, and a pull must read `0,S+1` before `0,S+2`. So on the one pair of rows where the true order is
+independently fixed, the convention "printed above means happens first" holds in **both** directions. That
+is what licenses reading rows 1d/6b/10b/16b the same way.
+
+(Rows 19c and 19d, `STP` and `WAI`, also print `1c`/`1b`/`1a` above cycle `1`, but those are successive
+states of a stop-and-restart sequence rather than width-conditional halves. Named here so the paragraph
+above is not mistaken for a claim about every suffixed label in the table.)
+
+**Table 5-7 does show the 16-bit RMW explicitly**, so the brief's fallback ("if Table 5-7 does not show a
+16-bit RMW row explicitly, say so") does not apply. The `(1)`-gated rows `4a`/`6a` *are* the 16-bit RMW, and
+the header's second cycle figure (`8` for `abs`, `9` for `abs,X`, `7`/`8` for `dp`, `8`/`9` for `dp,X`) is
+the `m = 0` case.
+
+The six-slot shape in the phase 7c′ plan emits `RmwWriteHigh816` before `RmwWrite816`, which is this order.
+
+### 13.3 A cycle formula for every one of the 59 opcodes
+
+> **`ASL abs` is `8-2*m`. Yes, it is `8-2m`, and the six-slot shape survives unchanged.** Clark §6.1.3, row
+> `0E 3 8-2*m abs`. Sixteen-bit costs exactly `+2` cycles over eight-bit — one extra read and one extra
+> write — in every one of the four memory RMW modes, with no third conditional cycle anywhere. Task 2 does
+> not need redesigning.
+
+Two independent sources agree on all four, in the two-of-three form §4 asks for. Clark's `CYCLES` column
+against Table 5-7's own per-row cycle-count headers:
+
+| Mode | Clark | Table 5-7 row header | `m=1,w=0` | `m=1,w=1` | `m=0,w=0` | `m=0,w=1` |
+| --- | --- | --- | --- | --- | --- | --- |
+| `dp` | `7-2*m+w` | 10b: `5,6,7 and 8 cycles` | 5 | 6 | 7 | 8 |
+| `dp,X` | `8-2*m+w` | 16b: `6,7,8 and 9 cycles` | 6 | 7 | 8 | 9 |
+| `abs` | `8-2*m` | 1d: `6 & 8 cycles` | 6 | — | 8 | — |
+| `abs,X` | `9-2*m` | 6b: `7 and 9 cycles` | 7 | — | 9 | — |
+
+Every enumerated header value is reproduced by the formula and no header value is left over, in all four
+rows. **Across all 59 opcodes the only symbols that appear in a cycle formula are `m` and `w`.** No `p`
+term anywhere — `abs,X` RMW is flat `9-2*m`, per §13.1's unconditional cycle 4 — and no `x` term anywhere
+either, including the four implied register forms, whose cycle count is a flat `2` even though their *flag*
+column is `x`-tagged. `w` appears only on the two direct-page modes, as §5 established for the phase 7b
+slice.
+
+**The 28 memory read-modify-writes.** Clark §6.1.3 (`ASL LSR ROL ROR`), §6.1.1.3 (`DEC DEX DEY INC INX INY`)
+and §6.1.2.3 (`TRB TSB`), transcribed opcode by opcode rather than assumed from one of them:
+
+| Op | `dp` | `abs` | `dp,X` | `abs,X` | Clark § |
+| --- | --- | --- | --- | --- | --- |
+| `ASL` | `$06` | `$0E` | `$16` | `$1E` | 6.1.3 |
+| `LSR` | `$46` | `$4E` | `$56` | `$5E` | 6.1.3 |
+| `ROL` | `$26` | `$2E` | `$36` | `$3E` | 6.1.3 |
+| `ROR` | `$66` | `$6E` | `$76` | `$7E` | 6.1.3 |
+| `DEC` | `$C6` | `$CE` | `$D6` | `$DE` | 6.1.1.3 |
+| `INC` | `$E6` | `$EE` | `$F6` | `$FE` | 6.1.1.3 |
+| `TRB` | `$14` | `$1C` | — | — | 6.1.2.3 |
+| `TSB` | `$04` | `$0C` | — | — | 6.1.2.3 |
+| **cycles** | `7-2*m+w` | `8-2*m` | `8-2*m+w` | `9-2*m` | |
+| **bytes** | 2 | 3 | 2 | 3 | |
+
+`TRB` and `TSB` exist in `dp` and `abs` only — 24 + 4 = **28**. Clark gives them no indexed form and Table
+5-7 lists them in rows 1d and 10b and nowhere else, so neither source has a mode the other lacks.
+
+**The six accumulator forms.** Clark §6.1.3 and §6.1.1.3; Table 5-7 row 8, `8. Accumulator A`,
+`ASL, DEC, INC, LSR, ROL, ROR`, `6 OpCodes, 1 byte, 2 cycles`:
+
+| Op | Opcode | cycles | bytes | Clark flag column | Clark § |
+| --- | --- | --- | --- | --- | --- |
+| `ASL A` | `$0A` | 2 | 1 | `m.....mm` | 6.1.3 |
+| `LSR A` | `$4A` | 2 | 1 | `0.....m*` | 6.1.3 |
+| `ROL A` | `$2A` | 2 | 1 | `m.....mm` | 6.1.3 |
+| `ROR A` | `$6A` | 2 | 1 | `m.....m*` | 6.1.3 |
+| `INC A` | `$1A` | 2 | 1 | `m.....m.` | 6.1.1.3 |
+| `DEC A` | `$3A` | 2 | 1 | `m.....m.` | 6.1.1.3 |
+
+**Flat 2 cycles at both widths** — the cycle column carries no `m` term and row 8 gives a single figure. Its
+one non-fetch cycle is `VDA=0 VPA=0 MLB=1`, `PBR,PC+1`, `IO`, `RWB=1` — pin-identical to §9's implied block,
+row 19a, and carrying no `MLB` assertion despite being a read-modify-write instruction, because no memory
+cycle is involved. Read Clark's flag columns with §6's key: `0` = cleared, `*` = affected, `m` =
+affected by the `(16-8*m)`-bit result. So `LSR`'s `n` is **cleared** at both widths, and `ASL`/`ROL` tag `c`
+with `m` because which bit is shifted out depends on the width, while `LSR`/`ROR` tag it `*` because bit 0
+is bit 0 either way.
+
+> **A source error to implement around, found in Clark and not previously recorded.** §6.1.3's prose reads:
+> *"ASL shifts left; a zero is shifted into the low bit (bit 0); the high bit (bit 15 when the m flag is one,
+> bit 7 when the m flag is 0) is shifted into the c flag."* **The m-flag polarity is inverted.** `m = 1` is
+> the 8-bit case, so the high bit is bit 7, not bit 15. Clark has it the right way round everywhere else —
+> §6.1.1.1 on `ADC`/`SBC` says *"(bit 15 when the m flag is 0, bit 7 when the m flag is 1)"* and §6.1.2.2 on
+> `BIT` says *"bit 14 of the data when the m flag is 0, and bit 6 of the data when the m flag is 1"* — so
+> this is an isolated typo in one sentence, not his convention. Taking that sentence literally puts the wrong
+> bit into `C` on every `ASL` and `ROL`. Clark's own `CYCLES`/flag table for the same instructions is
+> unaffected, and `8-2*m` reads correctly.
+
+**The four implied register read-modify-writes.** Clark §6.1.1.3; Table 5-7 row 19a:
+
+| Op | Opcode | cycles | bytes | Width | Flags | Clark § |
+| --- | --- | --- | --- | --- | --- | --- |
+| `DEX` | `$CA` | 2 | 1 | `x` | `x.....x.` (`N`,`Z`) | 6.1.1.3 |
+| `DEY` | `$88` | 2 | 1 | `x` | `x.....x.` | 6.1.1.3 |
+| `INX` | `$E8` | 2 | 1 | `x` | `x.....x.` | 6.1.1.3 |
+| `INY` | `$C8` | 2 | 1 | `x` | `x.....x.` | 6.1.1.3 |
+
+Clark states the width rule outright rather than leaving it to the flag column: *"DEX, DEY, INX, and INY are
+16-bit operations when the x flag is 0 and 8-bit operations when the x flag is 1."* And for the memory and
+accumulator forms: *"DEC and INC are 16-bit operations when the m flag is 0 and 8-bit operations when the m
+flag is 1."*
+
+**The flag instructions and `NOP`.** Clark §6.4.1 and §6.7; Table 5-7 row 19a. All 1 byte, 2 cycles:
+
+| Op | Opcode | Flag column | Effect |
+| --- | --- | --- | --- |
+| `CLC` | `$18` | `.......0` | `c := 0` |
+| `SEC` | `$38` | `.......1` | `c := 1` |
+| `CLI` | `$58` | `.....0..` | `i := 0` |
+| `SEI` | `$78` | `.....1..` | `i := 1` |
+| `CLD` | `$D8` | `....0...` | `d := 0` |
+| `SED` | `$F8` | `....1...` | `d := 1` |
+| `CLV` | `$B8` | `.0......` | `v := 0` |
+| `NOP` | `$EA` | `........` | none — *"performs no operation (affecting no flags or registers)"* |
+
+`WDM` (`$42`, `2` bytes, `2` cycles, Clark §6.7) is **not** in this phase's 59 and is recorded only so nobody
+adds it to the count.
+
+**`XBA`** is `$EB`, 1 byte, **3** cycles — §13.5.
+
+**The count, and a structural cross-check that it is right.** 28 memory RMW + 6 accumulator + 4 implied
+register RMW + 12 transfers (§13.4) + 1 `XBA` + 7 flag instructions + 1 `NOP` = **59**, the phase's full
+count. Independently: Table 5-7 row 19a's opcode list is `CLC, CLD, CLI, CLV, DEX, DEY, INX, INY, NOP, SEC,
+SED, SEI, TAX, TAY, TCD, TCS, TDC, TSC, TSX, TXA, TXS, TXY, TYA, TYX, XCE`, headed `25 OpCodes, 1 byte, 2
+cycles`. That is exactly this phase's 7 flag instructions + 4 implied register RMWs + `NOP` + 12 transfers =
+24, plus `XCE`, which phase 7b already implemented (§11). The datasheet's own row enumerates the phase's
+implied slice with nothing missing and nothing spare.
+
+**Cycle-count behaviour in emulation mode.** Emulation forces `m = 1` (§7), so every formula above collapses
+to its 8-bit value; **no note subtracts or adds a cycle for `E = 1` on any RMW or implied row.** Note 7
+("Subtract 1 cycle for 6502 emulation mode (E=1)") appears on exactly two rows of Table 5-7 — 22a
+(`ABORT, IRQ, NMI, RES`) and 22g (`RTI`) — and on none of rows 1d, 6b, 8, 10b, 16b, 19a or 19b.
+Note 17 changes the *direction* of the middle cycle in emulation mode, not the cycle count: the row is the
+same length either way.
+
+### 13.4 The transfer rules, per instruction
+
+Clark §6.10.1 (`TAX TAY TSX TXA TXS TXY TYA TYX`) and §6.10.2 (`TCD TCS TDC TSC`). All twelve are 1 byte and
+**2 cycles**, and all twelve are in Table 5-7 row 19a, whose sequence is §9's implied block: cycle 1 opcode
+fetch, cycle 2 `VDA=0 VPA=0`, `PBR,PC+1`, `IO`. Read the flag column with §6's key — `.` not affected,
+`*` affected, `m` affected by the `(16-8*m)`-bit result, `x` affected by the `(16-8*x)`-bit result.
+
+| Instr | Op | Width sized by | Flag column | `N`/`Z` | Cycles | Clark § |
+| --- | --- | --- | --- | --- | --- | --- |
+| `TAX` | `$AA` | destination `X` → **`x`** | `x.....x.` | yes, on the `(16-8*x)`-bit result | 2 | 6.10.1 |
+| `TAY` | `$A8` | destination `Y` → **`x`** | `x.....x.` | yes | 2 | 6.10.1 |
+| `TSX` | `$BA` | destination `X` → **`x`** | `x.....x.` | yes | 2 | 6.10.1 |
+| `TXY` | `$9B` | destination `Y` → **`x`** | `x.....x.` | yes | 2 | 6.10.1 |
+| `TYX` | `$BB` | destination `X` → **`x`** | `x.....x.` | yes | 2 | 6.10.1 |
+| `TXA` | `$8A` | destination `A` → **`m`** | `m.....m.` | yes, on the `(16-8*m)`-bit result | 2 | 6.10.1 |
+| `TYA` | `$98` | destination `A` → **`m`** | `m.....m.` | yes | 2 | 6.10.1 |
+| `TXS` | `$9A` | destination `S` → **always 16-bit**, see below | `........` | **no flags** | 2 | 6.10.1 |
+| `TCD` | `$5B` | **always 16-bit** | `*.....*.` | yes, on the 16-bit result | 2 | 6.10.2 |
+| `TDC` | `$7B` | **always 16-bit** | `*.....*.` | yes | 2 | 6.10.2 |
+| `TSC` | `$3B` | **always 16-bit** | `*.....*.` | yes | 2 | 6.10.2 |
+| `TCS` | `$1B` | **always 16-bit** | `........` | **no flags** | 2 | 6.10.2 |
+
+**The rule the table is an instance of**, Clark §6.10.1, verbatim:
+
+> The size of the destination register (i.e. the register transferred to) determines whether these
+> instructions are 8-bit operations or 16-bit operations. When the destination register is 8 bits wide,
+> 8 bits are transferred, and when the destination register is 16 bits wide, 16 bits are transferred.
+>
+> The width of the accumulator is based on the m flag, and the width of the X and Y registers is based on
+> the x flag, but the S register is always considered 16 bits wide. However, when the e flag is 1, SH is
+> forced to $01, so in effect, TXS is an 8-bit transfer in this case since XL is transferred to SL and SH
+> remains $01. Note that when the e flag is 0 and the x flag is 1 (i.e. 8-bit native mode), that XH is
+> forced to zero, so after a TXS, SH will be $00, rather than $01. This is an important difference that
+> must be accounted for if you want to run emulation mode code in (8-bit) native mode.
+
+and §6.10.2, verbatim:
+
+> TCD, TCS, TDC, and TSC transfer the C accumulator (the full 16-bit accumulator) to and from the D and S
+> registers. These instructions always transfer 16 bits, no matter what the value of the m flag is.
+> However, when the e flag is 1, SH is forced to $01, so in that case, TCS acts like an 8-bit transfer, by
+> transferring the A accumulator (i.e. the low byte of the accumulator) to the SL register.
+
+and, on the two flags, §6.10.1 and §6.10.2 in identical words:
+
+> The n flag is 1 when the high bit of the result (i.e. the value transferred from one register to the
+> other) is 1, and the n flag is 0 when the high bit of the result is 0. The z flag is 1 when the result is
+> zero, and the z flag is 0 when the result is nonzero.
+
+Note that `N`/`Z` are taken from **the value transferred**, i.e. the destination-width result, not from the
+source register. Clark's worked example makes the distinction observable: *"If the accumulator is $1234, the
+X register is $ABCD, and the m flag is 1, then after a TXA the accumulator will be $12CD, the n flag will be
+1 (since only $CD was actually transferred), the z flag will be 0."*
+
+**The brief's five claims, each confirmed or corrected:**
+
+1. **`TAX`, `TAY`, `TSX`, `TXY`, `TYX` are sized by `x`** — **confirmed.** All five have destination `X` or
+   `Y`, and all five carry Clark's `x.....x.` column.
+2. **`TXA`, `TYA` are sized by `m`** — **confirmed.** Destination `A`, column `m.....m.`.
+3. **`TCD`, `TDC`, `TCS`, `TSC` are 16-bit regardless of `m` and `x`** — **confirmed**, and stated in those
+   words by §6.10.2 above.
+4. **`TXS` and `TCS` set no flags; the other ten set `N` and `Z`** — **confirmed.** `$9A` and `$1B` are the
+   only two of the twelve whose flag column is `........`.
+5. **In emulation mode `TXS` and `TCS` force `SH = $01`** — **confirmed**, by both quotations above, and
+   consistent with §7 and §11's independent finding about `SH`.
+
+**One correction the brief's list does not contain, and it matters.** **`TXS` is *not* sized by `x`.** Its
+destination is `S`, and *"the S register is always considered 16 bits wide"* — so in native mode `TXS`
+always writes all 16 bits of `S` from `X`. The reason `TXS` *looks* 8-bit when `x = 1` is that `XH` is
+forced to `$00`, so `SH` receives `$00`; and the reason it looks 8-bit when `e = 1` is that `SH` is forced
+to `$01` afterwards. Neither is the transfer narrowing. Clark spells out the observable consequence: with
+`e = 0, x = 1` a `TXS` leaves `SH = $00`, whereas with `e = 1` it leaves `SH = $01`. Implementing `TXS` as an
+x-width transfer would leave the old `SH` intact in 8-bit native mode and be wrong on exactly the vectors
+that set `SH != $00` before the instruction.
+
+### 13.5 `XBA`
+
+**`XBA` is `$EB`, 1 byte, 3 cycles, and its `N`/`Z` come from the new low byte as an 8-bit result regardless
+of `m`.** Both halves are stated outright.
+
+Clark §6.10.3, the table row and then the prose, verbatim:
+
+```
+OP LEN CYCLES      MODE      nvmxdizc e SYNTAX
+-- --- ----------- --------- ---------- ------
+EB 1   3           imp       *.....*. . XBA
+```
+
+> XBA exchanges the B accumulator and the A accumulator, i.e. it swaps the high byte and the low byte of the
+> accumulator. Note that this is a swap rather than a copy (as is the case for the transfer instructions).
+>
+> The n and z flags are always based on an 8-bit result, no matter what the value of the m flag is.
+> Specifically, they are based on the A accumulator (i.e. the low byte of the accumulator) result; in other
+> words, the final value of the A accumulator, which is the same as the initial value of the B accumulator.
+
+The flag column is `*.....*.` — `*` rather than `m`, which is Clark's own key (§6) distinguishing "affected"
+from "affected by the `(16-8*m)`-bit result". The `*` is therefore consistent with, and a second statement
+of, the prose: the width is not `m`-dependent.
+
+**The cycle count is corroborated independently**, and `XBA` gets a Table 5-7 row of its own rather than
+sharing 19a — `19b. Implied i`, `XBA`, `1 OpCode, 1 byte, 3 cycles` (p. 40):
+
+```
+XBA                                               1 opcode, 1 byte, 3 cycles
+  1              VDA=1 VPA=1 MLB=1   PBR,PC       OpCode      RWB=1
+  2              VDA=0 VPA=0 MLB=1   PBR,PC+1     IO          RWB=1
+  3              VDA=0 VPA=0 MLB=1   PBR,PC+1     IO          RWB=1
+```
+
+Two internal cycles at the same address, both `PBR,PC+1` — row 19a's single `IO` cycle repeated, not a new
+shape. This is why `XBA` is the one implied opcode in the phase that cannot reuse the two-cycle implied
+sequence unchanged.
+
+Clark's worked example, for a single-point check: *"If the accumulator is $6789, then after an XBA the
+accumulator will be $8967, the n flag will be 0, the z flag will be 0."* The result `$8967` has bit 15 set
+while `n` is `0`, so `n` comes from the new `A` of `$67`. **The example corroborates the rule but does not
+establish it**, because Clark does not state the `m` flag's value for it: at `m = 1` an m-width
+implementation would produce the same `n`. The rule rests on the prose above, which states it outright; the
+example is a usable regression check and nothing more.
+
+### 13.6 The gaps this section records, listed in one place
+
+Everything above either carries a named source or appears here. Same practice as §12.6.
+
+| # | Gap | Status |
+| --- | --- | --- |
+| 1 | **The address the middle cycle drives when `m = 1`.** Table 5-7 prints the `+1` (high) address on that cycle in all four rows — `DBR,AA+1`, `0,D+DO+1`, `DBR,AA+X+1`, `0,D+DO+X+1` — and gives **no separate 8-bit form**: the `(1)`-gated high-half rows are skipped when `m = 1`, but the middle cycle's own address expression is printed unconditionally and still carries the `+1`. **The sources are silent** on whether the 8-bit middle cycle drives `AA` or `AA+1`. Not resolvable from the 6502 or 65C02 either, since neither has a 16-bit form for the `+1` to come from | **Open.** Must be measured. Affects `RmwModifyRead816`/`RmwModifyWrite816`'s address argument, which the plan currently draws as `_addr` (the low address) |
+| 2 | **Whether the emulation-mode middle cycle asserts `VDA`.** Note 17 says only *"the RWB is low during both write and modify cycles"* — it speaks of `RWB` and nothing else. Table 5-7 prints `VDA = 0, VPA = 0` on that cycle without qualification, but a cycle that genuinely writes memory asserting neither address-valid pin would be unusual. **The sources are silent** on which of the two the emulation case is | **Open.** Decides the first two characters of that cycle's pin string in emulation mode. The vectors assert it |
+| 3 | **What value the emulation-mode middle cycle writes.** Note 17 states the *direction* only. That the NMOS double-write puts back the **unmodified** value is a property of the NMOS 6502 — which this codebase has certified separately — and **the 65816 sources do not state it**. Recorded explicitly as an inference from a different part, not from a 65816 source, per this document's rule | **Open.** The plan's `RmwModifyWrite816` writes `_data` (unmodified) on that basis. Plausible and untested |
+| 4 | **`TRB`/`TSB`'s `Z` at 16 bits.** Clark §6.1.2.3 states *"The z flag reflects whether the result (of the bitwise And) is zero"* and *"These are 16-bit operations when the m flag is 0"*, but his only worked example is 8-bit. So the width is stated and the `Z` rule is stated; what no source gives is a 16-bit worked value to check an implementation against, the way Example 2 does for decimal `SBC` in §12.1 | **Recorded, not open.** Both rules are cited. Noted only so a later reader knows there is no 16-bit reference value in any source and the vectors are the first check |
+| 5 | **Whether any of the 59 behaves differently in emulation mode beyond the forced `m = 1`/`x = 1`.** Clark's §6 preamble's *"In general, in emulation mode … the 65C816 has the same behavior as 65C02"* is the only statement in view, and §12.6 already records that "In general" was load-bearing and that this exact sentence turned out to be **wrong** for decimal `SBC`. It is not treated as a citation here | **Open by policy.** Treat as hypothesis; the vectors arbitrate |
+
+**Not gaps, so nobody re-opens them:** the native middle cycle's nature (§13.1, Table 5-7, all four rows
+agreeing); the 16-bit write order (§13.2, stated by the rows and forced by the cycle counts); every one of
+the 59 cycle formulas (§13.3, Clark and Table 5-7 agreeing independently); `abs,X` RMW having no `p` term
+(§13.1's unmarked cycle 4 and Clark's flat `9-2*m`); all twelve transfer width and flag rules (§13.4,
+Clark §6.10.1–2, quoted); `XBA`'s 3 cycles and 8-bit `N`/`Z` (§13.5, both stated and both corroborated).
+
+**And two things a reader of Clark alone would get wrong, repeated here because they are the section's most
+expensive findings:** `MLB` is asserted on the RMW data cycles including the internal one, so the pin
+string's eighth character is not `-` there (§13.1); and Clark's §6.1.3 prose has the `m`-flag polarity
+inverted for `ASL`'s carry bit (§13.3).
