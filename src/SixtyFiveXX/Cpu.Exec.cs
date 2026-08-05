@@ -176,10 +176,29 @@ public sealed partial class Cpu<TBus, TVariant>
             case Op.Plx: X8 = _data; SetZN(X8); break;
             case Op.Ply: Y8 = _data; SetZN(Y8); break;
 
-            // Logic
-            case Op.And: A8 &= _data; SetZN(A8); break;
-            case Op.Ora: A8 |= _data; SetZN(A8); break;
-            case Op.Eor: A8 ^= _data; SetZN(A8); break;
+            // Logic. Width-aware for the 65816, the same shape Op.Lda uses: the 8-bit path
+            // writes through A8, which preserves A's high byte (the hidden B accumulator) on the
+            // 816 and folds to a plain assignment on the five 8-bit cores; the 16-bit path
+            // operates on the full accumulator and takes N from bit 15. The variant guard comes
+            // first so those five cores never load _wide at all — see the remarks on _wide, and
+            // Op.Lda's own comment for why the guard is load-bearing rather than defensive.
+            case Op.And:
+                if (TVariant.Variant != CpuVariant.W65C816 || !_wide)
+                { A8 &= _data; SetZN(A8); }
+                else { _s.A &= _data16; SetZN16(_s.A); }
+                break;
+
+            case Op.Ora:
+                if (TVariant.Variant != CpuVariant.W65C816 || !_wide)
+                { A8 |= _data; SetZN(A8); }
+                else { _s.A |= _data16; SetZN16(_s.A); }
+                break;
+
+            case Op.Eor:
+                if (TVariant.Variant != CpuVariant.W65C816 || !_wide)
+                { A8 ^= _data; SetZN(A8); }
+                else { _s.A ^= _data16; SetZN16(_s.A); }
+                break;
 
             // BIT takes N and V straight from the operand's top two bits, and Z from
             // the AND. The accumulator is not modified.

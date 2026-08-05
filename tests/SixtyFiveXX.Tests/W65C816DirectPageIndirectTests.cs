@@ -145,20 +145,21 @@ public class W65C816DirectPageIndirectTests
     // ---- Finding 4: the (dp),Y indexing-cycle skip must come from info.Access ----------
 
     /// <summary>
-    /// Finding 4's actual fix, exercised directly against <c>MicroOpTable.EmitLdaSta816</c>
-    /// via reflection: it is <c>private static</c>, and no opcode other than <c>LDA</c>/<c>STA</c>
-    /// exists in the 65816 table yet for this to reach through the public opcode-execution API
-    /// (phase 7c adds the rest). <c>ADC</c> stands in for "some future reading opcode that is not
-    /// literally <c>Op.Lda</c>" — the exact case the review found: a runtime
+    /// Finding 4's actual fix, exercised directly against <c>MicroOpTable.EmitAddressed816</c>
+    /// (named <c>EmitLdaSta816</c> until phase 7c task 3) via reflection: it is
+    /// <c>private static</c>, and <c>ADC</c> has no entry in the 65816 table yet for this to
+    /// reach through the public opcode-execution API. It stands in for "some future reading
+    /// opcode that is not literally <c>Op.Lda</c>" — the exact case the review found: a runtime
     /// <c>_op == Op.Lda</c> comparison would misclassify it as a write. The fix moves the
     /// decision to table-build time, keyed on <c>info.Access</c>, so any <c>Access.Read</c>
     /// operation — not only <c>LDA</c> by name — gets the skippable
-    /// <see cref="MicroOp.DpPtrReadHiY"/>.
+    /// <see cref="MicroOp.DpPtrReadHiY"/>. Task 3's <c>ORA</c>/<c>AND</c>/<c>EOR</c> are the
+    /// first real opcodes to depend on that, and $11/$31/$51 exercise it through the vectors.
     /// </summary>
     [Fact]
-    public void EmitLdaSta816_ForAReadThatIsNotLda_StillSelectsTheSkippableMicroOp()
+    public void EmitAddressed816_ForAReadThatIsNotLda_StillSelectsTheSkippableMicroOp()
     {
-        var ops = EmitLdaSta816(new OpcodeInfo("ADC", AddrMode.DirectPageIndirectY, Op.Adc, Access.Read));
+        var ops = EmitAddressed816(new OpcodeInfo("ADC", AddrMode.DirectPageIndirectY, Op.Adc, Access.Read));
 
         Assert.Contains(MicroOp.DpPtrReadHiY, ops);
         Assert.DoesNotContain(MicroOp.DpPtrReadHiYWrite, ops);
@@ -171,19 +172,19 @@ public class W65C816DirectPageIndirectTests
     /// diverge, not just both happen to contain <see cref="MicroOp.DpPtrReadHiY"/>.
     /// </summary>
     [Fact]
-    public void EmitLdaSta816_ForAWrite_SelectsTheNeverSkippingMicroOp()
+    public void EmitAddressed816_ForAWrite_SelectsTheNeverSkippingMicroOp()
     {
-        var ops = EmitLdaSta816(new OpcodeInfo("STA", AddrMode.DirectPageIndirectY, Op.Sta, Access.Write));
+        var ops = EmitAddressed816(new OpcodeInfo("STA", AddrMode.DirectPageIndirectY, Op.Sta, Access.Write));
 
         Assert.Contains(MicroOp.DpPtrReadHiYWrite, ops);
         Assert.DoesNotContain(MicroOp.DpPtrReadHiY, ops);
     }
 
-    private static List<MicroOp> EmitLdaSta816(OpcodeInfo info)
+    private static List<MicroOp> EmitAddressed816(OpcodeInfo info)
     {
-        var method = typeof(MicroOpTable).GetMethod("EmitLdaSta816", BindingFlags.NonPublic | BindingFlags.Static)
+        var method = typeof(MicroOpTable).GetMethod("EmitAddressed816", BindingFlags.NonPublic | BindingFlags.Static)
             ?? throw new InvalidOperationException(
-                "MicroOpTable.EmitLdaSta816 not found by reflection — has it been renamed?");
+                "MicroOpTable.EmitAddressed816 not found by reflection — has it been renamed?");
 
         var ops = new List<MicroOp>();
         method.Invoke(null, [ops, info]);
