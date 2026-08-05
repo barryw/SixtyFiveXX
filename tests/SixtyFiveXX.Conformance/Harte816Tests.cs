@@ -77,9 +77,15 @@ public class Harte816Tests(ITestOutputHelper output)
     /// <c>SEI</c>, <c>CLV</c>, <c>CLD</c>, <c>SED</c>), <c>INX</c>/<c>INY</c>/<c>DEX</c>/<c>DEY</c>
     /// and <c>NOP</c> — 200 + 12 = 212. The flag instructions and <c>NOP</c> touch no
     /// width-dependent register; the index increments are sized by <c>x</c>, the same
-    /// implied-mode shape task 5's accumulator forms use.
+    /// implied-mode shape task 5's accumulator forms use. Phase 7d task 2 adds the seven pushes
+    /// (<c>PHA</c>, <c>PHP</c>, <c>PHX</c>, <c>PHY</c>, <c>PHB</c>, <c>PHD</c>, <c>PHK</c>) and
+    /// the six pulls (<c>PLA</c>, <c>PLP</c>, <c>PLX</c>, <c>PLY</c>, <c>PLB</c>, <c>PLD</c>) —
+    /// 212 + 13 = 225 — the first opcodes here routed through
+    /// <c>MicroOpTable.EmitControlFlow816</c> rather than <c>EmitAddressed816</c>, and the first
+    /// to drive the 65816's own stack address (research document §14.1) instead of the eight-bit
+    /// cores' <c>$0100 + SL</c>.
     /// </summary>
-    private static readonly int ExpectedImplementedOpcodes = 212;
+    private static readonly int ExpectedImplementedOpcodes = 225;
 
     /// <summary>
     /// Opcode bytes this phase has emitted a real <c>MicroOpTable.Emit816</c> sequence for —

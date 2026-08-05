@@ -72,24 +72,6 @@ internal sealed class MicroOpTable
         MicroOp.RmwModifyRead, MicroOp.IndexFixupCmos,
         MicroOp.ReadPageCrossCmos, MicroOp.RmwPageCrossCmos);
 
-    /// <summary>
-    /// Placeholder sequences for the 65816. Six copies of <see cref="MicroOp.Unimplemented816"/>
-    /// rather than <see cref="Nmos"/>, because NMOS is not a harmless placeholder here — it is
-    /// wrong: the 65816 has its own native-mode BRK and IRQ vectors, and its read-modify-write
-    /// direction depends on <c>E</c> at run time (datasheet Note 17, research document §7),
-    /// neither of which a <see cref="Nmos"/> substitution would produce. This exists only so
-    /// the shared <c>IrqEntry</c> section built in the constructor below — which reads
-    /// <c>seq.IntPushP</c> unconditionally, for every variant, at table-build time — has
-    /// something to read for the 65816 too. Nothing in phase 7b reaches it: no BRK, IRQ or NMI
-    /// test runs against the 65816 yet, and <c>Reset()</c> drives its own path. The first cycle
-    /// that does reach it, once phase 7d wires up 65816 interrupts, throws
-    /// <see cref="NotImplementedException"/> naming <see cref="MicroOp.Unimplemented816"/>
-    /// instead of quietly running NMOS.
-    /// </summary>
-    private static readonly Sequences NotYet816 = new(
-        MicroOp.Unimplemented816, MicroOp.Unimplemented816, MicroOp.Unimplemented816,
-        MicroOp.Unimplemented816, MicroOp.Unimplemented816, MicroOp.Unimplemented816);
-
     /// <remarks>
     /// Every variant is listed rather than defaulting to <see cref="Nmos"/>, so this fails
     /// as loudly as <see cref="OpcodeTableFor"/> does. A silent default is the worse
@@ -102,11 +84,15 @@ internal sealed class MicroOpTable
         CpuVariant.Wdc65C02 or CpuVariant.Rockwell65C02 or CpuVariant.Synertek65C02 => Cmos,
         CpuVariant.Mos6502 or CpuVariant.Mos6510 => Nmos,
 
-        // The 65816 has its own emission path — Emit816, below — which never reads these
-        // fields; Emit() dispatches to it before any of the six are consulted. See
-        // NotYet816's own remarks for why this arm returns that rather than Nmos, and why
-        // it cannot simply be omitted.
-        CpuVariant.W65C816 => NotYet816,
+        // The 65816 consults none of these six. Emit() dispatches to Emit816 before any of them
+        // is read, and phase 7d task 2 gave the part its own IrqEntry and ResetEntry sections
+        // in the constructor below, which was the last thing that read one (seq.IntPushP) on
+        // its behalf. The arm exists only because this switch deliberately refuses a silent
+        // default; the value returned is arbitrary, and Nmos is the arbitrary value that is
+        // already here. It replaced a NotYet816 placeholder built from six copies of
+        // MicroOp.Unimplemented816, which existed purely to keep the then-shared IrqEntry
+        // section from running NMOS pushes on this part.
+        CpuVariant.W65C816 => Nmos,
 
         _ => throw new NotSupportedException($"No micro-op sequences for {variant} yet."),
     };
@@ -172,14 +158,29 @@ internal sealed class MicroOpTable
         }
 
         IrqEntry = (ushort)ops.Count;
-        ops.AddRange([
-            MicroOp.IntDummy,
-            MicroOp.PushPch,
-            MicroOp.PushPcl,
-            seq.IntPushP,
-            MicroOp.VectorLo,
-            MicroOp.VectorHi,
-        ]);
+        if (variant == CpuVariant.W65C816)
+        {
+            // Phase 7d task 3 replaces this with the real sequence — two vector sets, a PBR
+            // push and VPB. Until then it throws on its FIRST cycle, before touching S or
+            // memory: the shared section below pushed three bytes and moved S three times
+            // before reaching seq.IntPushP's Unimplemented816, which meant a 65816 IRQ
+            // corrupted the stack on the way to reporting that it was not implemented. Every
+            // micro-op in that shared section drives a bare 16-bit PC or a bare 0x0100 + SL
+            // as well, which is what W65C816ReachabilityTests asserts against.
+            ops.Add(MicroOp.Unimplemented816);
+        }
+        else
+        {
+            ops.AddRange([
+                MicroOp.IntDummy,
+                MicroOp.PushPch,
+                MicroOp.PushPcl,
+                seq.IntPushP,
+                MicroOp.VectorLo,
+                MicroOp.VectorHi,
+            ]);
+        }
+
         ops.Add(MicroOp.End);
 
         // Reset behaves like an interrupt whose pushes are replaced by reads: S still
@@ -187,16 +188,38 @@ internal sealed class MicroOpTable
         // goes through FetchOpcode (there is no opcode to fetch), so the sequence spells
         // out both of the dummy PC reads hardware performs — FetchOpcode supplies the
         // first one for free everywhere else.
+        //
+        // The 65816 gets its own copy for the same reason it gets its own IrqEntry, even though
+        // Reset() forces E = true before entering here and so cannot run this outside emulation
+        // mode: IntDummy reads a bare 16-bit PC and StackDummyReadDec drives a bare 0x0100 + SL,
+        // and both are right on this part only because another invariant happens to hold. The
+        // bank-aware ImpliedDummy (same Vpa classification as IntDummy) and
+        // StackDummyReadDec816 compute the right address outright. No cycle of the sequence
+        // changes: PBR is 0 after Reset() and SH is $01, so the two spellings agree cycle for
+        // cycle today. VectorLo/VectorHi are shared unchanged — they read $FFFC/$FFFD as a
+        // literal bank-0 address, which is correct on every variant including this one.
         ResetEntry = (ushort)ops.Count;
-        ops.AddRange([
-            MicroOp.IntDummy,
-            MicroOp.IntDummy,
-            MicroOp.StackDummyReadDec,
-            MicroOp.StackDummyReadDec,
-            MicroOp.StackDummyReadDec,
-            MicroOp.VectorLo,
-            MicroOp.VectorHi,
-        ]);
+        ops.AddRange(variant == CpuVariant.W65C816
+            ?
+            [
+                MicroOp.ImpliedDummy,
+                MicroOp.ImpliedDummy,
+                MicroOp.StackDummyReadDec816,
+                MicroOp.StackDummyReadDec816,
+                MicroOp.StackDummyReadDec816,
+                MicroOp.VectorLo,
+                MicroOp.VectorHi,
+            ]
+            : new[]
+            {
+                MicroOp.IntDummy,
+                MicroOp.IntDummy,
+                MicroOp.StackDummyReadDec,
+                MicroOp.StackDummyReadDec,
+                MicroOp.StackDummyReadDec,
+                MicroOp.VectorLo,
+                MicroOp.VectorHi,
+            });
         ops.Add(MicroOp.End);
 
         Ops = ops.ToArray();
@@ -404,12 +427,61 @@ internal sealed class MicroOpTable
             return;
         }
 
+        // Control flow, the stack and the interrupts do not decompose into an addressing phase
+        // plus an access phase — the same reason EmitStack exists for the five 8-bit cores.
+        // Routed by mode here and switched by operation there.
+        if (info.Mode == AddrMode.Stack)
+        {
+            EmitControlFlow816(ops, info);
+            return;
+        }
+
         // Everything else on the 65816 forms an effective address and then reads or writes it.
         // Routed by mode and access rather than by an ever-growing list of operations: the
         // emitter's own `default:` throw is the tripwire for a mode with no sequence, and
         // keeping every addressed opcode on one path is what makes it a real tripwire rather
         // than one that only fires for operations somebody remembered to list here.
         EmitAddressed816(ops, info);
+    }
+
+    /// <summary>
+    /// The 65816's hand-written sequences: the pushes and pulls, the calls and returns, the
+    /// interrupts, and the three stack-addressing pushes. Switched on
+    /// <see cref="OpcodeInfo.Operation"/> rather than on the mode, because
+    /// <see cref="AddrMode.Stack"/> covers instructions of one, two, three and four bytes and
+    /// only the operation tells them apart — the same shape <see cref="EmitStack"/> has for
+    /// the eight-bit cores, and the same shape <c>Disassembler.DecodeStack</c> relies on.
+    /// </summary>
+    private static void EmitControlFlow816(List<MicroOp> ops, OpcodeInfo info)
+    {
+        switch (info.Operation)
+        {
+            // Cycle 2 is one internal cycle at PBR,PC+1 that also forms the value; the high
+            // slot is skipped when the push is one byte wide. Research document §14.1, row 22c.
+            case Op.Pha or Op.Php or Op.Phx or Op.Phy or Op.Phb or Op.Phd or Op.Phk:
+                ops.AddRange([
+                    MicroOp.StackPushInternal816, MicroOp.PushHigh816, MicroOp.PushLow816,
+                ]);
+                break;
+
+            // TWO internal cycles, both at PBR,PC+1 — that asymmetry with the push is the whole
+            // of the one-cycle difference between rows 22b and 22c, and the datasheet flags it
+            // in row 22b's own label ("Different than N6502") rather than in a note. Both are
+            // ImpliedInternal816, XBA's cycle, because row 22b drives the identical address on
+            // each; measured against 28.n, whose cycles 2 and 3 are both PBR,PC+1 and neither
+            // is a stack address. PullLow816 ends the instruction when the pull is one byte
+            // wide, so the high slot costs nothing.
+            case Op.Pla or Op.Plp or Op.Plx or Op.Ply or Op.Plb or Op.Pld:
+                ops.AddRange([
+                    MicroOp.ImpliedInternal816, MicroOp.ImpliedInternal816,
+                    MicroOp.PullLow816, MicroOp.PullHigh816,
+                ]);
+                break;
+
+            default:
+                throw new InvalidOperationException(
+                    $"{info.Mnemonic}: {info.Operation} has no 65816 control-flow sequence.");
+        }
     }
 
     /// <summary>

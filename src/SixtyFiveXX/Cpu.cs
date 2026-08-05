@@ -545,6 +545,107 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     private int PcAddress() => TVariant.Variant == CpuVariant.W65C816 ? (_s.PBR << 16) | _s.PC : _s.PC;
 
     /// <summary>
+    /// The address the next stack access drives, on the 65816. Native mode puts the stack
+    /// anywhere in bank 0 and uses all sixteen bits of <c>S</c>; emulation mode confines it to
+    /// page one, which <see cref="S8"/>'s setter and <see cref="FetchOpcode"/> hold as an
+    /// invariant rather than something this method re-imposes. Both cases are therefore the
+    /// same expression. Bank 0 either way: research document §14.1, Clark §5.1.2 and §5.22,
+    /// plus every address cell in Table 5-7's rows 22a–22j, which write the bank as a literal
+    /// <c>0</c>.
+    /// </summary>
+    /// <remarks>
+    /// 65816 only. The five 8-bit cores keep their own <c>0x0100 + S8</c> in each stack
+    /// micro-op — those micro-ops are correct for them and are not reached from any 65816
+    /// sequence, which <c>W65C816ReachabilityTests</c> asserts.
+    /// </remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private int StackAddress816() => _s.S;
+
+    /// <summary>
+    /// True when the stack instruction now executing keeps its accesses inside page one in
+    /// emulation mode. Bruce Clark, "65C816 Opcodes" §5.1.1: the page-one wrap applies
+    /// <em>"only for 'old' instructions and addressing modes, i.e. instructions and addressing
+    /// modes that are available on the 65C02."</em> <c>PHA</c>, <c>PHP</c>, <c>PHX</c>,
+    /// <c>PHY</c>, <c>PLA</c>, <c>PLP</c>, <c>PLX</c> and <c>PLY</c> are old; <c>PHB</c>,
+    /// <c>PHK</c>, <c>PHD</c>, <c>PLB</c> and <c>PLD</c> are new to the 65816 and do not wrap
+    /// — the same exception research document §14.7 records for <c>PEA</c> and <c>PEI</c>, which
+    /// Clark states in the same passage.
+    /// </summary>
+    /// <remarks>
+    /// <b>Not in §14.1.</b> That section answers the wrap question from Clark §5.22's blanket
+    /// <em>"In emulation mode, SL will be decremented N times"</em> and does not carry §5.1.1's
+    /// old/new exception across to the five new push/pull opcodes. The vectors settle it and are
+    /// unambiguous: <c>ab e 75</c> starts at <c>S = $27FF</c> (forced to <c>$01FF</c>) and
+    /// <c>PLB</c> reads at <c>$000200</c>, not <c>$000100</c>, while <c>28 e 311</c> starts at
+    /// <c>$01FF</c> and <c>PLP</c> reads at <c>$000100</c>. <c>0b e 435</c> is the discriminating
+    /// push: <c>PHD</c> from <c>S = $0100</c> writes at <c>$000100</c> and then <c>$0000FF</c>,
+    /// below page one entirely. The rule as implemented here — old wraps, new does raw 16-bit
+    /// arithmetic, and <see cref="StackSettle816"/> puts <c>SH</c> back to <c>$01</c> once the
+    /// last access is done — reproduces the access addresses and the final <c>S</c> of all
+    /// 260,000 vectors across the thirteen opcodes, in both modes, with no exceptions.
+    /// </remarks>
+    private bool StackWrapsInPageOne() => _op is Op.Pha or Op.Php or Op.Phx or Op.Phy
+                                                or Op.Pla or Op.Plp or Op.Plx or Op.Ply;
+
+    /// <summary>Writes one byte at <see cref="StackAddress816"/>, then moves <c>S</c> down.</summary>
+    private void PushStack816(byte value)
+    {
+        WriteBus(StackAddress816(), value);
+        if (_s.E && StackWrapsInPageOne()) S8--; else _s.S--;
+    }
+
+    /// <summary>Moves <c>S</c> up, then reads one byte at <see cref="StackAddress816"/>.</summary>
+    /// <remarks>
+    /// The order is the hardware's and matters: a push writes before decrementing and a pull
+    /// increments before reading, so <c>S</c> always points at the next free byte.
+    /// <c>S8++</c> rather than <c>_s.S++</c> is what keeps an old instruction's wrap inside page
+    /// one — <c>_s.S++</c> at <c>$01FF</c> would produce <c>$0200</c>, which is exactly what a
+    /// new instruction does; see <see cref="StackWrapsInPageOne"/>.
+    /// </remarks>
+    private byte PullStack816()
+    {
+        if (_s.E && StackWrapsInPageOne()) S8++; else _s.S++;
+        return ReadBus(StackAddress816());
+    }
+
+    /// <summary>
+    /// Puts <c>SH</c> back to <c>$01</c> after a stack instruction's last access, for emulation
+    /// mode. Emulation mode has no storage for <c>SH</c> at all (Eyes &amp; Lichty p. 71, quoted
+    /// at <see cref="Op.Xce"/>) — but a new instruction's address adder still carries out of
+    /// <c>SL</c>, which is how <c>PHD</c> at <c>S = $0100</c> writes its second byte at
+    /// <c>$0000FF</c> and still ends with <c>S = $01FE</c>. Called from the last cycle of every
+    /// push and pull rather than from <see cref="FetchOpcode"/>'s own forcing block, because the
+    /// register is observable at the instruction boundary — every vector's <c>final.s</c> reads
+    /// it there — and <see cref="FetchOpcode"/> does not run until the next instruction.
+    /// A no-op for the old instructions, whose <see cref="S8"/> arithmetic never left page one.
+    /// </summary>
+    private void StackSettle816()
+    {
+        if (_s.E) S8 = (byte)_s.S;
+    }
+
+    /// <summary>
+    /// True when the stack operation now executing moves sixteen bits. Read from the live flag
+    /// rather than from <c>_wide</c>: these opcodes declare <see cref="Width.None"/>, because
+    /// <c>Width</c> means "the operand fetched from memory is 16 bits" and that is what keeps
+    /// <c>W65C816WidthTests</c>'s set equality meaningful.
+    /// </summary>
+    /// <remarks>
+    /// 65816 only, like <see cref="IndexX"/> and for the same reason: the only micro-ops that
+    /// call it — <see cref="MicroOp.StackPushInternal816"/> and
+    /// <see cref="MicroOp.PullLow816"/> — appear in no 8-bit core's table, so no guard on
+    /// <c>TVariant.Variant</c> is needed to keep <c>_s.M</c> and <c>_s.XFlag</c> (which alias
+    /// the 8-bit cores' <c>U</c> and <c>B</c> bits) from being read there.
+    /// </remarks>
+    private bool StackIsWide() => _op switch
+    {
+        Op.Pha or Op.Pla => !_s.M,
+        Op.Phx or Op.Plx or Op.Phy or Op.Ply => !_s.XFlag,
+        Op.Phd or Op.Pld => true,
+        _ => false,             // PHP, PHB, PHK, PLB — always one byte
+    };
+
+    /// <summary>
     /// The <c>X</c> index register, narrowed to 8 bits when the <c>x</c> flag selects that
     /// width. 65816 only — the five 8-bit cores have no <c>x</c> flag and no micro-op of theirs
     /// calls this. Read-time narrowing rather than a continuously-enforced invariant on
@@ -994,6 +1095,47 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 // The same internal cycle, without the Exec() — XBA's extra one. Research
                 // document §13.5, Table 5-7 row 19b: two IO cycles, both at PBR,PC+1.
                 InternalCycle((_s.PBR << 16) | _s.PC);
+                break;
+
+            case MicroOp.StackPushInternal816:
+                // Cycle 2 of every push: an internal cycle at PBR,PC+1 — research document
+                // §14.1, Table 5-7 row 22c, measured against 08.n/08.e. The value is formed
+                // here, before the first write, so both write cycles are pure.
+                InternalCycle(PcAddress());
+                Exec();
+                if (!StackIsWide()) _mpc++;      // skip PushHigh816: one byte only
+                break;
+
+            case MicroOp.PushHigh816:
+                PushStack816((byte)(_data16 >> 8));
+                break;
+
+            case MicroOp.PushLow816:
+                PushStack816((byte)_data16);
+                StackSettle816();
+                break;
+
+            case MicroOp.PullLow816:
+                _data16 = PullStack816();
+                if (StackIsWide()) break;
+                StackSettle816();
+                Exec();
+                EndInstruction();
+                break;
+
+            case MicroOp.PullHigh816:
+                _data16 |= (ushort)(PullStack816() << 8);
+                StackSettle816();
+                Exec();
+                break;
+
+            case MicroOp.StackDummyReadDec816:
+                // The 65816's reset stack decrement. Same shape as StackDummyReadDec, but the
+                // address comes from StackAddress816() rather than a hard-coded 0x0100 + S8.
+                // Reset always enters emulation mode, where the two agree — this exists so the
+                // formula is right because it is right, not because another invariant holds.
+                ReadBus(StackAddress816());
+                if (_s.E) S8--; else _s.S--;
                 break;
 
             case MicroOp.RepSepOperand:

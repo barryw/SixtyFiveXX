@@ -159,4 +159,18 @@ internal enum Op : byte
     /// 8-bit result regardless of <c>m</c> — research document §13.5. 65816 only.
     /// </summary>
     Xba,
+
+    /// <summary>
+    /// Push and pull the data bank register, and push the program bank register. One byte
+    /// each, regardless of <c>m</c> and <c>x</c>; <c>PLB</c> sets <c>N</c> and <c>Z</c> from
+    /// the eight-bit value, and there is no <c>PLK</c> — the program bank is changed only by
+    /// a long jump, a long call, a long return or an interrupt. 65816 only.
+    /// </summary>
+    Phb, Phk, Plb,
+
+    /// <summary>
+    /// Push and pull the direct register. Always sixteen bits — <c>D</c> has no narrow form —
+    /// and <c>PLD</c>'s <c>N</c> and <c>Z</c> come from all sixteen. 65816 only.
+    /// </summary>
+    Phd, Pld,
 }

@@ -45,14 +45,30 @@ namespace SixtyFiveXX;
 /// instructions (<c>CLC</c>, <c>SEC</c>, <c>CLI</c>, <c>SEI</c>, <c>CLV</c>, <c>CLD</c>,
 /// <c>SED</c>), <c>INX</c>/<c>INY</c>/<c>DEX</c>/<c>DEY</c> and <c>NOP</c> — 200 + 12 = 212. The
 /// flag instructions and <c>NOP</c> touch no width-dependent register; the index increments are
-/// sized by <c>x</c>, the same implied-mode shape task 5's accumulator forms use. The remaining
-/// 44 entries are <see cref="OpcodeInfo.Undefined"/> and throw
-/// <see cref="UndefinedOpcodeException"/> on fetch; phase 7d fills in the rest — control flow,
-/// the stack, interrupts, <c>MVN</c>/<c>MVP</c>, <c>COP</c>/<c>WDM</c> and <c>WAI</c>/<c>STP</c>.
+/// sized by <c>x</c>, the same implied-mode shape task 5's accumulator forms use; and phase 7d
+/// task 2's thirteen: the seven pushes (<c>PHA</c>, <c>PHP</c>, <c>PHX</c>, <c>PHY</c>,
+/// <c>PHB</c>, <c>PHD</c>, <c>PHK</c>) and the six pulls (<c>PLA</c>, <c>PLP</c>, <c>PLX</c>,
+/// <c>PLY</c>, <c>PLB</c>, <c>PLD</c>) — 212 + 13 = 225. These are the first entries here to take
+/// <see cref="AddrMode.Stack"/> and so the first routed through
+/// <c>MicroOpTable.EmitControlFlow816</c> rather than <c>EmitAddressed816</c>. They declare no
+/// <see cref="Width"/> despite four of them being sized by <c>m</c> and four by <c>x</c>: they
+/// fetch no operand from memory and reach no width-deciding micro-op, so each arm tests its own
+/// flag through <c>Cpu.StackIsWide</c> (research document §14.1).
+/// <para>
+/// The remaining 31 entries are <see cref="OpcodeInfo.Undefined"/> and throw
+/// <see cref="UndefinedOpcodeException"/> on fetch. Phase 7d's later tasks fill them in: the ten
+/// branches (<c>BPL</c>, <c>BMI</c>, <c>BVC</c>, <c>BVS</c>, <c>BCC</c>, <c>BCS</c>, <c>BNE</c>,
+/// <c>BEQ</c>, <c>BRA</c>, <c>BRL</c>), the five jumps (<c>$4C</c>, <c>$6C</c>, <c>$7C</c>,
+/// <c>$5C</c>, <c>$DC</c>), the three calls (<c>JSR abs</c>, <c>JSR (abs,X)</c>, <c>JSL</c>), the
+/// three returns (<c>RTI</c>, <c>RTS</c>, <c>RTL</c>), the three stack-addressing pushes
+/// (<c>PEA</c>, <c>PEI</c>, <c>PER</c>), the three interrupts (<c>BRK</c>, <c>COP</c>,
+/// <c>WDM</c>), the two block moves (<c>MVN</c>, <c>MVP</c>) and the two halts (<c>WAI</c>,
+/// <c>STP</c>) — research document §14.8's table of all 44.
+/// </para>
 /// </remarks>
 internal static class Opcodes65C816
 {
-    /// <summary>Opcode byte to descriptor. 212 entries defined, 44 undefined.</summary>
+    /// <summary>Opcode byte to descriptor. 225 entries defined, 31 undefined.</summary>
     public static readonly OpcodeInfo[] Table = BuildTable();
 
     private static OpcodeInfo[] BuildTable()
@@ -337,6 +353,25 @@ internal static class Opcodes65C816
         Set(0x88, "DEY", AddrMode.Implied, Op.Dey, Access.None);
 
         Set(0xEA, "NOP", AddrMode.Implied, Op.Nop, Access.None);
+
+        // The stack. All AddrMode.Stack — the mode this codebase uses for hand-written
+        // sequences — and all Width.None: they fetch no operand from memory, so each arm
+        // tests its own flag. PHP/PHB/PHK/PLB move one byte whatever m and x say; PHD/PLD
+        // move two; PHA/PLA are sized by m and PHX/PHY/PLX/PLY by x.
+        Set(0x48, "PHA", AddrMode.Stack, Op.Pha, Access.None);
+        Set(0x08, "PHP", AddrMode.Stack, Op.Php, Access.None);
+        Set(0xDA, "PHX", AddrMode.Stack, Op.Phx, Access.None);
+        Set(0x5A, "PHY", AddrMode.Stack, Op.Phy, Access.None);
+        Set(0x8B, "PHB", AddrMode.Stack, Op.Phb, Access.None);
+        Set(0x0B, "PHD", AddrMode.Stack, Op.Phd, Access.None);
+        Set(0x4B, "PHK", AddrMode.Stack, Op.Phk, Access.None);
+
+        Set(0x68, "PLA", AddrMode.Stack, Op.Pla, Access.None);
+        Set(0x28, "PLP", AddrMode.Stack, Op.Plp, Access.None);
+        Set(0xFA, "PLX", AddrMode.Stack, Op.Plx, Access.None);
+        Set(0x7A, "PLY", AddrMode.Stack, Op.Ply, Access.None);
+        Set(0xAB, "PLB", AddrMode.Stack, Op.Plb, Access.None);
+        Set(0x2B, "PLD", AddrMode.Stack, Op.Pld, Access.None);
 
         return t;
     }

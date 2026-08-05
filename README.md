@@ -82,7 +82,7 @@ all fifteen 65816 addressing modes, plus `XCE`, `REP` and `SEP` — 32 opcodes i
 certified per-cycle in both emulation and native mode against 640,000 SingleStepTests
 vectors, including the full eight-character bus-qualifier pin string asserted on every cycle.
 
-**This is not a complete core.** 212 of the 65816's 256 opcodes are implemented — phase 7b's 32,
+**This is not a complete core.** 225 of the 65816's 256 opcodes are implemented — phase 7b's 32,
 plus phase 7c's bulk work, which added `ORA`, `AND`, `EOR`, `CMP`, `ADC` and `SBC` in all fifteen
 addressing forms each, `CPX` and `CPY` in three each, `BIT` in five, `LDX` and `LDY` in five each,
 `STX` and `STY` in three each, and `STZ` in four, plus phase 7c′'s read-modify-writes: `ASL`,
@@ -93,7 +93,10 @@ instructions, `INX`/`INY`/`DEX`/`DEY` and `NOP`. A transfer's width comes from t
 register rather than the source, so `TXS` and the four `TC*`/`T*C` forms are always 16-bit
 whatever `m` and `x` say. `XBA` is the only implied opcode on the part that takes three cycles
 rather than two. The index increments are sized by `x`; the flag instructions and `NOP` touch no
-width-dependent register at all.
+width-dependent register at all. Phase 7d then added the seven pushes and six pulls — `PHA`,
+`PHP`, `PHX`, `PHY`, `PHB`, `PHD`, `PHK`, `PLA`, `PLP`, `PLX`, `PLY`, `PLB` and `PLD` — and with
+them the 65816's own stack: sixteen bits wide anywhere in bank 0 in native mode, confined to page
+one in emulation mode, high byte pushed first and low byte pulled first.
 `ADC` and `SBC` are cycle- and result-correct in decimal mode at both operand widths, including
 16-bit BCD, which no source documents — the correction algorithm was measured from the vectors.
 `BIT`'s immediate opcode is a genuinely different operation from its other four forms, not just

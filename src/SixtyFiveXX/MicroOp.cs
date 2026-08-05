@@ -844,6 +844,62 @@ internal enum MicroOp : byte
     /// for a carrying variant to differ about.
     /// </summary>
     RmwWrite816,
+
+    // Phase 7d task 2: the 65816's own stack access path. Research document §14.1, Table 5-7
+    // rows 22c (the seven pushes) and 22b (the six pulls). Every one of these drives
+    // Cpu.StackAddress816() — the full sixteen bits of S, in bank 0 — rather than the five
+    // 8-bit cores' hard-coded 0x0100 + SL.
+
+    /// <summary>
+    /// Cycle 2 of every 65816 push: an internal cycle at <c>PBR,PC+1</c> that also runs the
+    /// operation, leaving the value to push in <c>_data16</c>. Research document §14.1, row 22c
+    /// — a push has exactly one <c>IO</c> cycle and a pull has two, which is the whole of the
+    /// one-cycle difference between the two rows. Skips the following
+    /// <see cref="PushHigh816"/> slot when the push is one byte wide, the same conditional-slot
+    /// idiom <see cref="FetchDpOffset"/> uses for <see cref="DirectPagePenalty"/>; width comes
+    /// from <c>Cpu.StackIsWide</c>, not from <c>_wide</c>, because these opcodes fetch no
+    /// operand and so declare no <see cref="Width"/>.
+    /// </summary>
+    StackPushInternal816,
+
+    /// <summary>
+    /// A 16-bit push's high byte, written first at <c>0,S</c> — row 22c's <c>3a</c>, gated by
+    /// note <c>(1)</c>. The stack descends, so pushing high first puts the low byte at the lower
+    /// address; research document §14.1 question 2 corroborates it from four separate Clark
+    /// passages as well as the row.
+    /// </summary>
+    PushHigh816,
+
+    /// <summary>
+    /// Every push's low byte, written last at <c>0,S</c> (row 22c's <c>3</c>, which is
+    /// <c>0,S-1</c> when <see cref="PushHigh816"/> ran first and moved <c>S</c> down). Also the
+    /// only write cycle of a one-byte push.
+    /// </summary>
+    PushLow816,
+
+    /// <summary>
+    /// Every pull's low byte, read at <c>0,S+1</c> — row 22b's cycle <c>4</c>. Ends the
+    /// instruction here when the pull is one byte wide, which is what makes the following
+    /// <see cref="PullHigh816"/> slot cost nothing for <c>PLP</c>, <c>PLB</c> and a narrow
+    /// <c>PLA</c>/<c>PLX</c>/<c>PLY</c>.
+    /// </summary>
+    PullLow816,
+
+    /// <summary>
+    /// A 16-bit pull's high byte, read at <c>0,S+2</c> — row 22b's <c>4a</c>, gated by note
+    /// <c>(1)</c> — then the operation runs against the assembled 16-bit value.
+    /// </summary>
+    PullHigh816,
+
+    /// <summary>
+    /// The 65816's reset stack decrement: <see cref="StackDummyReadDec"/> with the address taken
+    /// from <c>Cpu.StackAddress816()</c> instead of a hard-coded <c>0x0100 + SL</c>. Reset always
+    /// enters emulation mode, where the two expressions agree — this exists so the reset section
+    /// computes the right address because it is the right address, not because another invariant
+    /// happens to hold. <c>W65C816ReachabilityTests</c> is what asserts the 65816 never reaches
+    /// the 8-bit form.
+    /// </summary>
+    StackDummyReadDec816,
 }
 
 /// <summary>
@@ -969,6 +1025,7 @@ internal static class MicroOps
                      MicroOp.ExecWrite816, MicroOp.ExecWriteHigh816, MicroOp.ExecWriteHigh816Carry,
                      MicroOp.RmwModifyWrite816, MicroOp.RmwWriteHigh816, MicroOp.RmwWriteHigh816Carry,
                      MicroOp.RmwWrite816,
+                     MicroOp.PushHigh816, MicroOp.PushLow816,
                  })
         {
             writes[(int)op] = true;
@@ -1045,6 +1102,12 @@ internal static class MicroOps
                      MicroOp.ReadExec816, MicroOp.ReadExecHigh816, MicroOp.ReadExecHigh816Carry,
                      MicroOp.ExecWrite816, MicroOp.ExecWriteHigh816, MicroOp.ExecWriteHigh816Carry,
                      MicroOp.SrPtrReadHi,
+                     // The 65816's stack accesses. A stack access is a data access, never a
+                     // program one: research document §14.1's rows 22b and 22c print VDA=1
+                     // VPA=0 on every one of them, and MLB and VPB stay inactive throughout.
+                     MicroOp.PushHigh816, MicroOp.PushLow816,
+                     MicroOp.PullLow816, MicroOp.PullHigh816,
+                     MicroOp.StackDummyReadDec816,
                  })
         {
             pins[(int)op] = BusPins.Vda;
@@ -1118,6 +1181,10 @@ internal static class MicroOps
     /// <see cref="BusPins.None"/> — see this method's own summary. They are here because
     /// <c>Cpu.Tick</c>'s RDY halt path uses this table to choose between <c>InternalCycle</c> and
     /// <c>ReadBus</c>, and would otherwise fake a read on a halted cycle that accesses nothing.
+    /// <see cref="MicroOp.StackPushInternal816"/> is phase 7d task 2's one — cycle 2 of every
+    /// 65816 push, an <c>IO</c> row at <c>PBR,PC+1</c> in research document §14.1's row 22c. The
+    /// pulls' two internal cycles are <see cref="MicroOp.ImpliedInternal816"/>, already here:
+    /// row 22b drives the identical address on both of them, so they need no member of their own.
     /// </summary>
     private static bool[] BuildInternalCycleTable()
     {
@@ -1131,6 +1198,7 @@ internal static class MicroOps
                      MicroOp.IndexDirectPageIndirectY,
                      MicroOp.AbsIndexFixup, MicroOp.StackRelativePenalty, MicroOp.IndexStackRelativeIndirectY,
                      MicroOp.RmwModifyRead816, MicroOp.RmwModifyRead816Carry,
+                     MicroOp.StackPushInternal816,
                  })
         {
             internalCycles[(int)op] = true;
