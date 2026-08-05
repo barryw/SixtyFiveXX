@@ -931,7 +931,7 @@ adjustment of the binary result that `SbcCmos` uses. Implemented in `Cpu.Exec.cs
 | --- | --- |
 | 1. The correction algorithm | Nibble-wise, at 8 and 16 bits, for both instructions. Two digits at `m = 1`, four at `m = 0`, same rule repeated |
 | 2. How `V` is computed | `ADC`: from the **partially corrected** top digit — the sum before that digit's own `+$06`. `SBC`: from the **binary** difference. Both are exactly what the 8-bit NMOS/CMOS helpers in this codebase already did; `V` needed no new rule at either width |
-| 3. Where `Z` and `C` come from | `ADC`: both from the corrected result (`C` = carry out of the corrected top digit) — discriminated by vector `73 n 1007`. `SBC`: `C` from the binary difference, `Z` from the corrected result — discriminated by vector `fd n 3835`. Each is the sole discriminating vector among 37,519 |
+| 3. Where `Z` and `C` come from | `ADC`: both from the corrected result (`C` = carry out of the corrected top digit) — discriminated by vector `73 n 1007`. `SBC`: `C` from the binary difference, `Z` from the corrected result — discriminated by vector `fd n 3835`. Each is the sole discriminating vector in its own corpus — 37,519 16-bit decimal `ADC` vectors, 37,465 `SBC` |
 | 4. Invalid BCD digits (`$A`-`$F`) | Fall out of the nibble-wise rule with no special case. This is the *only* thing that distinguishes nibble-wise from `$60`/`$06`, and it is what made gap 1 measurable at all |
 | 5. `ADC`'s decimal `N` at 16 bits | The **corrected** result — the same source as `SBC`'s, though no source licensed assuming so. `SetZN16` on the corrected accumulator; passed first run |
 

@@ -153,7 +153,10 @@ public class W65C816DirectPageIndirectTests
 
     /// <summary>
     /// The other half of Finding 3, and the reason the fix cannot be a blanket "always wrap in
-    /// emulation mode with DL = $00": Clark §5.1.1, verbatim, page wrapping applies "only for
+    /// emulation mode" (phase 7c task 5 further narrowed the condition itself from
+    /// <c>DL == $00</c> to <c>D == $0000</c> — see the two tests above and research document
+    /// §12.7; <c>DL</c> happens to be <c>$00</c> here too, so this test reads the same either
+    /// way): Clark §5.1.1, verbatim, page wrapping applies "only for
     /// 'old' instructions and addressing modes, i.e. instructions and addressing modes that are
     /// available on the 65C02." <c>[dp]</c> is new to the 65816, so under the identical E/DL
     /// condition its pointer's middle-byte read must NOT wrap — it stays at the plain
