@@ -344,6 +344,27 @@ internal enum MicroOp : byte
     ImpliedExec816,
 
     /// <summary>
+    /// <see cref="ImpliedExec816"/>'s first half: the same internal cycle at <c>PBR,PC</c>, with
+    /// no <c>Exec()</c>. <c>XBA</c> is the only instruction that needs it, and the only implied
+    /// opcode on the part that is 3 cycles rather than 2 — research document §13.5, quoting
+    /// datasheet Table 5-7 row <b>19b</b>, which <c>XBA</c> has to itself rather than sharing row
+    /// 19a with the twelve transfers:
+    /// <code>
+    /// XBA                                               1 opcode, 1 byte, 3 cycles
+    ///   1              VDA=1 VPA=1 MLB=1   PBR,PC       OpCode      RWB=1
+    ///   2              VDA=0 VPA=0 MLB=1   PBR,PC+1     IO          RWB=1
+    ///   3              VDA=0 VPA=0 MLB=1   PBR,PC+1     IO          RWB=1
+    /// </code>
+    /// Two internal cycles at the same address, both <c>PBR,PC+1</c> — row 19a's single <c>IO</c>
+    /// cycle repeated, not a new shape, which is why this is <see cref="ImpliedExec816"/> split
+    /// rather than a new address calculation. Sequenced ahead of it so the operation still runs
+    /// on the last cycle. Deliberately <em>not</em> <see cref="DirectPagePenalty"/>, which drives
+    /// <c>PC - 1</c>; here <c>PC</c> already reflects the opcode fetch's increment and so is
+    /// §13.5's "PC+1" unadjusted, exactly as in <see cref="ImpliedExec816"/>.
+    /// </summary>
+    ImpliedInternal816,
+
+    /// <summary>
     /// <c>REP</c>/<c>SEP</c>'s cycle 2: reads the one-byte operand at <c>PBR,PC</c> into
     /// <c>_data</c>, then <c>PC++</c>. No <c>Exec()</c> here — datasheet Note 1 (research
     /// document §9) spends a whole extra cycle before the operation actually runs, unlike
@@ -728,6 +749,101 @@ internal enum MicroOp : byte
     /// carries no <c>p</c> term, so this never skips.
     /// </summary>
     IndexStackRelativeIndirectY,
+
+    // Phase 7c′ task 2: the 65816's read-modify-write access class, research document §13.1's
+    // rows 10b (dp), 16b (dp,X), 1d (abs) and 6b (abs,X). Six slots, of which any one execution
+    // runs three (8-bit) or five (16-bit) — the rest are skipped by the preceding micro-op, the
+    // same conditional-slot idiom DirectPagePenalty uses, and the reason every one of them keeps
+    // a static entry in MicroOps.IsWriteCycle rather than one micro-op branching on E at run
+    // time. That table is consulted on every tick of all six cores, because RDY must never halt
+    // a write cycle, so an E test there would land on five cores that have no E.
+
+    /// <summary>
+    /// The RMW's low-byte read — research document §13.1's cycle 3 (row 10b), 4 (16b/1d) or 5
+    /// (6b), <c>Data Low</c>, <c>RWB=1</c>, <c>MLB</c> asserted. At 8-bit width it skips the
+    /// high-byte read, and in native mode the NMOS write-form as well, so the sequence continues
+    /// at <see cref="RmwModifyRead816"/>; in emulation mode it continues at
+    /// <see cref="RmwModifyWrite816"/> instead. Datasheet Note 17 is decided here, at run time
+    /// from <c>E</c>, and nowhere else.
+    /// </summary>
+    RmwRead816,
+
+    /// <summary>
+    /// The RMW's high-byte read for the bank-0-confined modes — <c>dp</c> and <c>dp,X</c>;
+    /// research document §13.1's cycle 3a (row 10b) or 4a (16b), <c>0,D+DO[+X]+1</c>. Reached
+    /// only when <c>M</c> selects 16 bits, which is native-mode-only (emulation forces
+    /// <c>m = 1</c>), so it skips the NMOS write-form unconditionally rather than testing
+    /// <c>E</c>.
+    /// </summary>
+    RmwReadHigh816,
+
+    /// <summary>
+    /// <see cref="RmwReadHigh816"/> for the DBR-relative modes — <c>abs</c> and <c>abs,X</c>;
+    /// research document §13.1's cycle 4a (row 1d) or 5a (6b), <c>DBR,AA[+X]+1</c>. The <c>+1</c>
+    /// carries into the next bank: see <c>Cpu.HighByteAddressCarry</c>.
+    /// </summary>
+    RmwReadHigh816Carry,
+
+    /// <summary>
+    /// The emulation-mode middle cycle — datasheet Note 17, verbatim: "In the emulation mode,
+    /// during a R-M-W instruction the RWB is low during both write and modify cycles." The NMOS
+    /// double-write: the UNMODIFIED value goes back before the result. Emulation forces
+    /// <c>m = 1</c>, so this form is always 8-bit and always skips both the internal middle cycle
+    /// and the high-byte write that follow it.
+    /// </summary>
+    /// <remarks>
+    /// Its pins are <see cref="BusPins.Mlb"/> alone — the same as
+    /// <see cref="RmwModifyRead816"/>'s, and the only micro-op here that writes memory while
+    /// asserting neither <c>VDA</c> nor <c>VPA</c>. Note 17 governs <c>RWB</c> and nothing else,
+    /// so the emulation and native middle cycles are pin-identical apart from direction. Measured
+    /// against the vectors, not cited: research document §13.1's "Measured" note, which closed
+    /// §13.6's gap 2. The <em>value</em> written — the unmodified one — was §13.6 gap 3, an
+    /// inference from the certified NMOS part rather than a 65816 source, and the same vectors
+    /// corroborated it.
+    /// </remarks>
+    RmwModifyWrite816,
+
+    /// <summary>
+    /// The native-mode middle cycle for the bank-0-confined modes — research document §13.1's
+    /// cycle 4 (row 10b) or 5 (16b), <c>(3),(17)</c>: <c>VDA=0 VPA=0</c>, data bus <c>IO</c>,
+    /// <c>RWB=1</c>. An internal cycle, <b>not</b> the 65C02's dummy read — no memory access at
+    /// all — but with <c>MLB</c> still asserted, so its pins are <see cref="BusPins.Mlb"/> alone,
+    /// a combination no other micro-op in this codebase drives. The address is the <c>+1</c>
+    /// (high) one at 16 bits, which is what all four rows print; §13.6 gap 1 records the 8-bit
+    /// case as unstated by any source, so <c>_addr</c> is driven there and the vectors settle it.
+    /// </summary>
+    RmwModifyRead816,
+
+    /// <summary>
+    /// <see cref="RmwModifyRead816"/> for the DBR-relative modes, driving the bank-carrying
+    /// <c>+1</c> address. Two variants for the same reason the read and write halves have two:
+    /// whether the <c>+1</c> carries into the next bank is a property of the addressing mode,
+    /// decided at table-build time, not something a shared micro-op can test.
+    /// </summary>
+    RmwModifyRead816Carry,
+
+    /// <summary>
+    /// The 16-bit RMW's high-byte write, which comes <em>first</em> — research document §13.2:
+    /// the reads go low-then-high and the writes go high-then-low, cycle 5a (row 10b) or 6a
+    /// (16b/1d) or 7a (6b), <c>RWB=0</c>. Bank-0-confined form, for <c>dp</c> and <c>dp,X</c>.
+    /// Reached only at 16-bit width.
+    /// </summary>
+    RmwWriteHigh816,
+
+    /// <summary>
+    /// <see cref="RmwWriteHigh816"/> for the DBR-relative modes, at the bank-carrying <c>+1</c>
+    /// address <see cref="RmwReadHigh816Carry"/> read.
+    /// </summary>
+    RmwWriteHigh816Carry,
+
+    /// <summary>
+    /// The RMW's final low-byte write — research document §13.1's cycle 5 (row 10b), 6 (16b/1d)
+    /// or 7 (6b), <c>RWB=0</c>, at <c>_addr</c>. Writes <c>_data</c> at 8 bits and
+    /// <c>_data16</c>'s low byte at 16, and is the last cycle of the instruction in all three
+    /// cases. One micro-op, not two: the low address never needs a <c>+1</c>, so there is nothing
+    /// for a carrying variant to differ about.
+    /// </summary>
+    RmwWrite816,
 }
 
 /// <summary>
@@ -774,10 +890,15 @@ internal enum BusPins : byte
 
     /// <summary>
     /// Memory Lock, active-low on the part. This flag is set on the cycles of a
-    /// read-modify-write instruction that actually touch the target byte — the read, the
-    /// modify, and the final write — so an external bus arbiter knows not to interrupt the
-    /// sequence. Not set on the addressing-mode cycles that merely compute the target address,
-    /// even when they occur inside an RMW instruction.
+    /// read-modify-write instruction that actually touch the target byte — on the 8-bit cores
+    /// the read, the modify, and the final write; on the 65816 five of those cycles when
+    /// <c>m = 0</c> (two reads, the internal middle cycle, two writes) — so an external bus
+    /// arbiter knows not to interrupt the sequence. Not set on the addressing-mode cycles that
+    /// merely compute the target address, even when they occur inside an RMW instruction:
+    /// research document §13.1 confirms that second sentence on this part, since row 6b's
+    /// indexing <c>IO</c> at the mis-indexed address prints <c>MLB=1</c> while the very next
+    /// cycle prints <c>MLB=0</c>. Note that the 65816's middle cycle asserts this pin while
+    /// performing no bus access at all — see <see cref="MicroOps.IsInternalCycle"/>.
     /// </summary>
     Mlb = 8,
 }
@@ -817,13 +938,22 @@ internal static class MicroOps
     private static readonly bool[] InternalCycles = BuildInternalCycleTable();
 
     /// <summary>
-    /// True for the micro-ops legitimately classified <see cref="BusPins.None"/> by
-    /// <see cref="PinsFor"/> — a cycle that performs no bus access at all, rather than one
-    /// nobody got around to classifying. Kept as its own explicit table, not a fallback,
-    /// specifically so a genuinely unclassified micro-op still reads <see cref="BusPins.None"/>
-    /// from <see cref="Pins"/> and still fails the "every micro-op is classified" test instead
-    /// of silently passing it.
+    /// True for the micro-ops that perform no bus access at all — a real internal cycle, rather
+    /// than one nobody got around to classifying. Kept as its own explicit table, not a
+    /// fallback, specifically so a genuinely unclassified micro-op still reads
+    /// <see cref="BusPins.None"/> from <see cref="Pins"/> and still fails the "every micro-op is
+    /// classified" test instead of silently passing it.
     /// </summary>
+    /// <remarks>
+    /// This used to be worded as "the micro-ops <see cref="PinsFor"/> legitimately classifies
+    /// <see cref="BusPins.None"/>", because until phase 7c′ the two coincided. They no longer
+    /// do: <see cref="MicroOp.RmwModifyRead816"/> and
+    /// <see cref="MicroOp.RmwModifyRead816Carry"/> perform no access yet assert
+    /// <see cref="BusPins.Mlb"/> — the 65816 holds memory locked across its read-modify-write
+    /// sequence, internal cycle included (research document §13.1). "Performs no bus access" is
+    /// the property this table has always meant; <c>None</c> pins were a consequence of it that
+    /// happened to hold for every earlier member.
+    /// </remarks>
     public static bool IsInternalCycle(MicroOp op) => InternalCycles[(int)op];
 
     private static bool[] BuildWriteTable()
@@ -837,6 +967,8 @@ internal static class MicroOps
                      MicroOp.PushPBrk, MicroOp.PushPInt,
                      MicroOp.PushPBrkCmos, MicroOp.PushPIntCmos,
                      MicroOp.ExecWrite816, MicroOp.ExecWriteHigh816, MicroOp.ExecWriteHigh816Carry,
+                     MicroOp.RmwModifyWrite816, MicroOp.RmwWriteHigh816, MicroOp.RmwWriteHigh816Carry,
+                     MicroOp.RmwWrite816,
                  })
         {
             writes[(int)op] = true;
@@ -919,14 +1051,33 @@ internal static class MicroOps
         }
 
         // The locked cycles of a read-modify-write — read, modify (NMOS writes here, CMOS
-        // reads), and the final write. See BusPins.Mlb.
+        // reads), and the final write. See BusPins.Mlb. The 65816's four real accesses are here
+        // too: one or two reads and one or two writes, all carrying VDA with MLB, exactly as
+        // research document §13.1's four rows print them. Its MIDDLE cycle is the exception, in
+        // BOTH modes, and is classified separately below.
         foreach (var op in new[]
                  {
                      MicroOp.RmwRead, MicroOp.RmwModifyWrite, MicroOp.RmwModifyRead, MicroOp.RmwWrite,
+                     MicroOp.RmwRead816, MicroOp.RmwReadHigh816, MicroOp.RmwReadHigh816Carry,
+                     MicroOp.RmwWriteHigh816, MicroOp.RmwWriteHigh816Carry, MicroOp.RmwWrite816,
                  })
         {
             pins[(int)op] = BusPins.Vda | BusPins.Mlb;
         }
+
+        // The 65816's RMW middle cycle: MLB asserted with NEITHER address-valid pin. Research
+        // document §13.1 — all four RMW rows print VDA=0 VPA=0, MLB=1 on it, and §13.1's
+        // "Measured" note records that this holds in emulation mode too, where the cycle is a
+        // real write. So all three forms carry the same pins and datasheet Note 17 changes RWB
+        // and only RWB, exactly as its wording says.
+        //
+        // RmwModifyWrite816 is the one micro-op in this codebase that WRITES memory while
+        // asserting neither VDA nor VPA — unusual enough that research §13.6 recorded it as an
+        // open question rather than assuming it; the vectors closed it. The other two perform no
+        // access at all, which is why only they are in IsInternalCycle's table.
+        pins[(int)MicroOp.RmwModifyRead816] = BusPins.Mlb;
+        pins[(int)MicroOp.RmwModifyRead816Carry] = BusPins.Mlb;
+        pins[(int)MicroOp.RmwModifyWrite816] = BusPins.Mlb;
 
         // Vector pulls. See BusPins.Vpb.
         pins[(int)MicroOp.VectorLo] = BusPins.Vda | BusPins.Vpb;
@@ -944,7 +1095,10 @@ internal static class MicroOps
     /// never gets that far), not a guess about what a future opcode in its slot will assert.
     /// <see cref="MicroOp.ImpliedExec816"/> is the first micro-op that is <c>None</c> because
     /// it genuinely drives neither pin — a real 65816 internal cycle, per research document §9.
-    /// <see cref="MicroOp.RepSepExec"/> is the second, for the same reason — see its own remarks
+    /// <see cref="MicroOp.ImpliedInternal816"/> is that same cycle without the <c>Exec()</c>,
+    /// <c>XBA</c>'s extra one, and is <c>None</c> for exactly the same reason — research document
+    /// §13.5's row 19b drives <c>VDA=0 VPA=0</c> on both of its <c>IO</c> cycles.
+    /// <see cref="MicroOp.RepSepExec"/> is the next, for the same reason — see its own remarks
     /// for why VDA is 0 there despite Note 1 stating only VPA outright.
     /// <see cref="MicroOp.DirectPagePenalty"/>, <see cref="MicroOp.DirectPageIndexX"/> and
     /// <see cref="MicroOp.IndexDirectPageIndirectY"/> are phase 7b task 5's three — every one of
@@ -959,6 +1113,11 @@ internal static class MicroOps
     /// <see cref="MicroOp.DirectPageIndexY"/> is phase 7c task 7's one — <c>dp,Y</c>'s indexing
     /// cycle, the same <c>IO</c> row of §9's direct-page block that
     /// <see cref="MicroOp.DirectPageIndexX"/> already occupies, with Y substituted.
+    /// <see cref="MicroOp.RmwModifyRead816"/> and <see cref="MicroOp.RmwModifyRead816Carry"/> are
+    /// phase 7c′ task 2's two, and the first members that are <em>not</em>
+    /// <see cref="BusPins.None"/> — see this method's own summary. They are here because
+    /// <c>Cpu.Tick</c>'s RDY halt path uses this table to choose between <c>InternalCycle</c> and
+    /// <c>ReadBus</c>, and would otherwise fake a read on a halted cycle that accesses nothing.
     /// </summary>
     private static bool[] BuildInternalCycleTable()
     {
@@ -966,10 +1125,12 @@ internal static class MicroOps
 
         foreach (var op in new[]
                  {
-                     MicroOp.End, MicroOp.Unimplemented816, MicroOp.ImpliedExec816, MicroOp.RepSepExec,
+                     MicroOp.End, MicroOp.Unimplemented816, MicroOp.ImpliedExec816,
+                     MicroOp.ImpliedInternal816, MicroOp.RepSepExec,
                      MicroOp.DirectPagePenalty, MicroOp.DirectPageIndexX, MicroOp.DirectPageIndexY,
                      MicroOp.IndexDirectPageIndirectY,
                      MicroOp.AbsIndexFixup, MicroOp.StackRelativePenalty, MicroOp.IndexStackRelativeIndirectY,
+                     MicroOp.RmwModifyRead816, MicroOp.RmwModifyRead816Carry,
                  })
         {
             internalCycles[(int)op] = true;

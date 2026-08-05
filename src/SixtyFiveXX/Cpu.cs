@@ -399,7 +399,12 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             // that actually read it (ReadExec, RmwRead, ReadPageCross, DummyReadFixup,
             // UnstableStoreFixup, ZpIndex*). Every other read micro-op — PC, stack, pointer
             // or vector reads — gets _addr's stale value here instead of its own, which is
-            // a real hazard on a bus with read side effects. Upgrade path: derive the
+            // a real hazard on a bus with read side effects. The 65816's high-byte micro-ops
+            // widen that gap rather than change it: ReadExecHigh816*, RmwReadHigh816* and the
+            // 16-bit form of RmwModifyRead816* all drive HighByteAddress*() when live but get
+            // _addr here, so a halted cycle re-drives the LOW address of a 16-bit access. The
+            // four RMW write-forms are immune, since RDY cannot halt a write at all. Upgrade
+            // path: derive the
             // pending micro-op's true read address (a switch mirroring Execute) instead of
             // hard-coding _addr. WAI and STP are already handled below, because their holds
             // are unbounded — see MicroOps.HoldsAtPc. LastPins inherits the same hazard: it
@@ -985,6 +990,12 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 Exec();
                 break;
 
+            case MicroOp.ImpliedInternal816:
+                // The same internal cycle, without the Exec() — XBA's extra one. Research
+                // document §13.5, Table 5-7 row 19b: two IO cycles, both at PBR,PC+1.
+                InternalCycle((_s.PBR << 16) | _s.PC);
+                break;
+
             case MicroOp.RepSepOperand:
                 _data = ReadBus(PcAddress());
                 _s.PC++;
@@ -1105,6 +1116,71 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
 
             case MicroOp.ExecWriteHigh816Carry:
                 WriteBus(HighByteAddressCarry(), (byte)(_data16 >> 8));
+                break;
+
+            // Phase 7c′ task 2: the read-modify-write access class. Six slots emitted, four run
+            // at 8-bit width and five at 16 — the skips below, not a shorter emitted sequence,
+            // are what keeps every slot statically classified in MicroOps.IsWriteCycle. See
+            // MicroOp's own remarks on each member for the research document §13.1 row it is.
+
+            case MicroOp.RmwRead816:
+                _data = ReadBus(_addr);
+                if (!_wide)
+                {
+                    _mpc++;                       // 8-bit: skip the high-byte read
+                    if (!_s.E) _mpc++;            // native: skip the NMOS write-form too
+                }
+                break;
+
+            case MicroOp.RmwReadHigh816:
+                _data16 = (ushort)((ReadBus(HighByteAddressBank0()) << 8) | _data);
+                _mpc++;                           // 16-bit is native-only, so always skip the write-form
+                break;
+
+            case MicroOp.RmwReadHigh816Carry:
+                _data16 = (ushort)((ReadBus(HighByteAddressCarry()) << 8) | _data);
+                _mpc++;
+                break;
+
+            case MicroOp.RmwModifyWrite816:
+                // Datasheet Note 17: in emulation mode the middle cycle writes the UNMODIFIED
+                // value back, as NMOS does. Emulation forces m=1, so this is always 8-bit.
+                WriteBus(_addr, _data);
+                Exec();
+                _mpc += 2;                        // skip the read-form and the high-byte write
+                break;
+
+            // Native mode: an INTERNAL cycle, not a read — research document §13.1, Table 5-7
+            // rows 1d/6b/10b/16b all print VDA=0 VPA=0, data bus IO, RWB=1. MLB is still
+            // asserted, which is why these two carry BusPins.Mlb alone. The address driven is the
+            // high one (AA+1) at 16 bits; §13.1 records the 8-bit case as a gap, so _addr is used
+            // there and the vectors settle it.
+            //
+            // Two variants for the same reason the read and write halves have two: whether the
+            // "+1" carries into the next bank is a property of the addressing mode, decided at
+            // table-build time, not something a shared micro-op can test.
+            case MicroOp.RmwModifyRead816:
+                InternalCycle(_wide ? HighByteAddressBank0() : _addr);
+                Exec();
+                if (!_wide) _mpc++;               // 8-bit: skip the high-byte write
+                break;
+
+            case MicroOp.RmwModifyRead816Carry:
+                InternalCycle(_wide ? HighByteAddressCarry() : _addr);
+                Exec();
+                if (!_wide) _mpc++;
+                break;
+
+            case MicroOp.RmwWriteHigh816:
+                WriteBus(HighByteAddressBank0(), (byte)(_data16 >> 8));
+                break;
+
+            case MicroOp.RmwWriteHigh816Carry:
+                WriteBus(HighByteAddressCarry(), (byte)(_data16 >> 8));
+                break;
+
+            case MicroOp.RmwWrite816:
+                WriteBus(_addr, _wide ? (byte)_data16 : _data);
                 break;
 
             // Task 6: absolute, long, stack-relative and immediate. See MicroOp's own remarks

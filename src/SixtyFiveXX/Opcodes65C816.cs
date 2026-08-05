@@ -4,7 +4,7 @@ namespace SixtyFiveXX;
 /// The WDC 65C816 opcode table.
 /// </summary>
 /// <remarks>
-/// A hundred and fifty-three opcodes are defined: every addressing form of <c>LDA</c> and
+/// Two hundred opcodes are defined: every addressing form of <c>LDA</c> and
 /// <c>STA</c> (<c>STA</c> has no immediate form), plus <c>XCE</c>, <c>REP</c> and <c>SEP</c> —
 /// phase 7b's thirty-two, chosen so the variant, its table and its reset semantics could be
 /// exercised end to end before any 65816 micro-op sequence existed — phase 7c task 3's
@@ -18,13 +18,41 @@ namespace SixtyFiveXX;
 /// <c>LDY</c> in five forms each, <c>STX</c> and <c>STY</c> in three each, and <c>STZ</c> in
 /// four — the only ones here that do not reuse an addressing sequence phase 7b certified, since
 /// <c>LDX</c>/<c>STX</c>'s <c>dp,Y</c> (<see cref="AddrMode.DirectPageY"/>) is used by no other
-/// instruction on the part and so had to be added with them. The remaining 103 entries are
-/// <see cref="OpcodeInfo.Undefined"/> and throw <see cref="UndefinedOpcodeException"/> on
-/// fetch; phases 7c′ and 7d fill the rest of the instruction set in.
+/// instruction on the part and so had to be added with them; and phase 7c′ task 2's sixteen:
+/// <c>ASL</c>, <c>LSR</c>, <c>ROL</c> and <c>ROR</c> in <c>dp</c>, <c>dp,X</c>, <c>abs</c> and
+/// <c>abs,X</c> each — the first <see cref="Access.ReadModifyWrite"/> entries on this part, and
+/// with them datasheet Note 17, the one behaviour here whose bus direction is decided at run
+/// time rather than at table-build time (research document §13.1); task 3's twelve:
+/// <c>INC</c> and <c>DEC</c> on memory in <c>dp</c>, <c>dp,X</c>, <c>abs</c> and <c>abs,X</c>
+/// each, plus <c>TSB</c> and <c>TRB</c> in <c>dp</c> and <c>abs</c> each — <c>TSB</c>/<c>TRB</c>
+/// set Z from the AND of A and memory over the operative width, like <c>BIT</c>, but leave N and
+/// V untouched, unlike <c>BIT</c>; and task 4's six: <c>ASL</c>, <c>LSR</c>, <c>ROL</c>,
+/// <c>ROR</c>, <c>INC</c> and <c>DEC</c> on the accumulator — the first opcodes here with no
+/// operand at all, <see cref="AddrMode.Accumulator"/> and <see cref="Access.None"/>, sized by
+/// <c>m</c> like every other accumulator operation but declaring no <see cref="Width"/>, since
+/// they never reach a width-deciding micro-op (<c>MicroOpTable.Emit816</c>'s
+/// <see cref="AddrMode.Implied"/>/<see cref="AddrMode.Accumulator"/> branch routes them through
+/// <c>MicroOp.ImpliedExec816</c> instead); and task 5's thirteen: the twelve transfers —
+/// <c>TAX</c>, <c>TAY</c>, <c>TXA</c>, <c>TYA</c>, <c>TXS</c>, <c>TSX</c>, <c>TXY</c>,
+/// <c>TYX</c>, <c>TCD</c>, <c>TDC</c>, <c>TCS</c> and <c>TSC</c> — plus <c>XBA</c>. The transfers'
+/// width comes from the destination register, not from the source (research document §13.4): an
+/// index destination is sized by <c>x</c>, an accumulator destination by <c>m</c>, and the four
+/// <c>TC*</c>/<c>T*C</c> forms plus <c>TXS</c> are always 16-bit because <c>D</c> and <c>S</c>
+/// have no narrow form. <c>XBA</c> is the odd one out twice over: its <c>N</c>/<c>Z</c> come from
+/// the new low byte as an 8-bit result whatever <c>m</c> says (§13.5), and it is the only implied
+/// opcode on the part that takes three cycles rather than two, so it is the first here to need a
+/// sequence of its own rather than the shared implied one; and task 6's twelve: the seven flag
+/// instructions (<c>CLC</c>, <c>SEC</c>, <c>CLI</c>, <c>SEI</c>, <c>CLV</c>, <c>CLD</c>,
+/// <c>SED</c>), <c>INX</c>/<c>INY</c>/<c>DEX</c>/<c>DEY</c> and <c>NOP</c> — 200 + 12 = 212. The
+/// flag instructions and <c>NOP</c> touch no width-dependent register; the index increments are
+/// sized by <c>x</c>, the same implied-mode shape task 5's accumulator forms use. The remaining
+/// 44 entries are <see cref="OpcodeInfo.Undefined"/> and throw
+/// <see cref="UndefinedOpcodeException"/> on fetch; phase 7d fills in the rest — control flow,
+/// the stack, interrupts, <c>MVN</c>/<c>MVP</c>, <c>COP</c>/<c>WDM</c> and <c>WAI</c>/<c>STP</c>.
 /// </remarks>
 internal static class Opcodes65C816
 {
-    /// <summary>Opcode byte to descriptor. 153 entries defined, 103 undefined.</summary>
+    /// <summary>Opcode byte to descriptor. 212 entries defined, 44 undefined.</summary>
     public static readonly OpcodeInfo[] Table = BuildTable();
 
     private static OpcodeInfo[] BuildTable()
@@ -220,6 +248,51 @@ internal static class Opcodes65C816
         Set(0x9C, "STZ", AddrMode.Absolute,     Op.Stz, Access.Write, Width.M);
         Set(0x9E, "STZ", AddrMode.AbsoluteX,    Op.Stz, Access.Write, Width.M);
 
+        // Read-modify-write shifts. Width.M — the operand comes from memory and is sized by m.
+        Set(0x06, "ASL", AddrMode.DirectPage,  Op.Asl, Access.ReadModifyWrite, Width.M);
+        Set(0x16, "ASL", AddrMode.DirectPageX, Op.Asl, Access.ReadModifyWrite, Width.M);
+        Set(0x0E, "ASL", AddrMode.Absolute,    Op.Asl, Access.ReadModifyWrite, Width.M);
+        Set(0x1E, "ASL", AddrMode.AbsoluteX,   Op.Asl, Access.ReadModifyWrite, Width.M);
+
+        Set(0x46, "LSR", AddrMode.DirectPage,  Op.Lsr, Access.ReadModifyWrite, Width.M);
+        Set(0x56, "LSR", AddrMode.DirectPageX, Op.Lsr, Access.ReadModifyWrite, Width.M);
+        Set(0x4E, "LSR", AddrMode.Absolute,    Op.Lsr, Access.ReadModifyWrite, Width.M);
+        Set(0x5E, "LSR", AddrMode.AbsoluteX,   Op.Lsr, Access.ReadModifyWrite, Width.M);
+
+        Set(0x26, "ROL", AddrMode.DirectPage,  Op.Rol, Access.ReadModifyWrite, Width.M);
+        Set(0x36, "ROL", AddrMode.DirectPageX, Op.Rol, Access.ReadModifyWrite, Width.M);
+        Set(0x2E, "ROL", AddrMode.Absolute,    Op.Rol, Access.ReadModifyWrite, Width.M);
+        Set(0x3E, "ROL", AddrMode.AbsoluteX,   Op.Rol, Access.ReadModifyWrite, Width.M);
+
+        Set(0x66, "ROR", AddrMode.DirectPage,  Op.Ror, Access.ReadModifyWrite, Width.M);
+        Set(0x76, "ROR", AddrMode.DirectPageX, Op.Ror, Access.ReadModifyWrite, Width.M);
+        Set(0x6E, "ROR", AddrMode.Absolute,    Op.Ror, Access.ReadModifyWrite, Width.M);
+        Set(0x7E, "ROR", AddrMode.AbsoluteX,   Op.Ror, Access.ReadModifyWrite, Width.M);
+
+        Set(0xE6, "INC", AddrMode.DirectPage,  Op.Inc, Access.ReadModifyWrite, Width.M);
+        Set(0xF6, "INC", AddrMode.DirectPageX, Op.Inc, Access.ReadModifyWrite, Width.M);
+        Set(0xEE, "INC", AddrMode.Absolute,    Op.Inc, Access.ReadModifyWrite, Width.M);
+        Set(0xFE, "INC", AddrMode.AbsoluteX,   Op.Inc, Access.ReadModifyWrite, Width.M);
+
+        Set(0xC6, "DEC", AddrMode.DirectPage,  Op.Dec, Access.ReadModifyWrite, Width.M);
+        Set(0xD6, "DEC", AddrMode.DirectPageX, Op.Dec, Access.ReadModifyWrite, Width.M);
+        Set(0xCE, "DEC", AddrMode.Absolute,    Op.Dec, Access.ReadModifyWrite, Width.M);
+        Set(0xDE, "DEC", AddrMode.AbsoluteX,   Op.Dec, Access.ReadModifyWrite, Width.M);
+
+        Set(0x04, "TSB", AddrMode.DirectPage,  Op.Tsb, Access.ReadModifyWrite, Width.M);
+        Set(0x0C, "TSB", AddrMode.Absolute,    Op.Tsb, Access.ReadModifyWrite, Width.M);
+
+        Set(0x14, "TRB", AddrMode.DirectPage,  Op.Trb, Access.ReadModifyWrite, Width.M);
+        Set(0x1C, "TRB", AddrMode.Absolute,    Op.Trb, Access.ReadModifyWrite, Width.M);
+
+        // Accumulator forms. AddrMode.Accumulator, Access.None, and no Width: they fetch nothing.
+        Set(0x0A, "ASL", AddrMode.Accumulator, Op.AslA, Access.None);
+        Set(0x4A, "LSR", AddrMode.Accumulator, Op.LsrA, Access.None);
+        Set(0x2A, "ROL", AddrMode.Accumulator, Op.RolA, Access.None);
+        Set(0x6A, "ROR", AddrMode.Accumulator, Op.RorA, Access.None);
+        Set(0x1A, "INC", AddrMode.Accumulator, Op.IncA, Access.None);
+        Set(0x3A, "DEC", AddrMode.Accumulator, Op.DecA, Access.None);
+
         // Mode switch and status-bit instructions. REP/SEP take AddrMode.ImmediateByte, not
         // AddrMode.Immediate: their operand is always 8 bits and they are flat 3-cycle
         // instructions regardless of m or x (datasheet Note 1, research document §5/§9) —
@@ -227,6 +300,43 @@ internal static class Opcodes65C816
         Set(0xFB, "XCE", AddrMode.Implied,      Op.Xce, Access.None);
         Set(0xC2, "REP", AddrMode.ImmediateByte, Op.Rep, Access.Read);
         Set(0xE2, "SEP", AddrMode.ImmediateByte, Op.Sep, Access.Read);
+
+        // Transfers and XBA. Implied, no operand, so no Width.
+        Set(0xAA, "TAX", AddrMode.Implied, Op.Tax, Access.None);
+        Set(0xA8, "TAY", AddrMode.Implied, Op.Tay, Access.None);
+        Set(0x8A, "TXA", AddrMode.Implied, Op.Txa, Access.None);
+        Set(0x98, "TYA", AddrMode.Implied, Op.Tya, Access.None);
+        Set(0x9A, "TXS", AddrMode.Implied, Op.Txs, Access.None);
+        Set(0xBA, "TSX", AddrMode.Implied, Op.Tsx, Access.None);
+        Set(0x9B, "TXY", AddrMode.Implied, Op.Txy, Access.None);
+        Set(0xBB, "TYX", AddrMode.Implied, Op.Tyx, Access.None);
+        Set(0x5B, "TCD", AddrMode.Implied, Op.Tcd, Access.None);
+        Set(0x7B, "TDC", AddrMode.Implied, Op.Tdc, Access.None);
+        Set(0x1B, "TCS", AddrMode.Implied, Op.Tcs, Access.None);
+        Set(0x3B, "TSC", AddrMode.Implied, Op.Tsc, Access.None);
+
+        // XBA is implied like the twelve above but 3 cycles rather than 2 — research document
+        // §13.5, Table 5-7 row 19b. MicroOpTable.Emit816 gives it its own branch for that.
+        Set(0xEB, "XBA", AddrMode.Implied, Op.Xba, Access.None);
+
+        // Flag instructions, the index increments and NOP. All implied, all two cycles. The
+        // seven flag opcodes and NOP touch no width-dependent register and need no widening;
+        // INX/INY/DEX/DEY are sized by x, the same implied-mode shape as the accumulator forms
+        // above.
+        Set(0x18, "CLC", AddrMode.Implied, Op.Clc, Access.None);
+        Set(0x38, "SEC", AddrMode.Implied, Op.Sec, Access.None);
+        Set(0x58, "CLI", AddrMode.Implied, Op.Cli, Access.None);
+        Set(0x78, "SEI", AddrMode.Implied, Op.Sei, Access.None);
+        Set(0xB8, "CLV", AddrMode.Implied, Op.Clv, Access.None);
+        Set(0xD8, "CLD", AddrMode.Implied, Op.Cld, Access.None);
+        Set(0xF8, "SED", AddrMode.Implied, Op.Sed, Access.None);
+
+        Set(0xE8, "INX", AddrMode.Implied, Op.Inx, Access.None);
+        Set(0xC8, "INY", AddrMode.Implied, Op.Iny, Access.None);
+        Set(0xCA, "DEX", AddrMode.Implied, Op.Dex, Access.None);
+        Set(0x88, "DEY", AddrMode.Implied, Op.Dey, Access.None);
+
+        Set(0xEA, "NOP", AddrMode.Implied, Op.Nop, Access.None);
 
         return t;
     }

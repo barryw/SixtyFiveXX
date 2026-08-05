@@ -143,4 +143,20 @@ internal enum Op : byte
     /// document §12.1.
     /// </summary>
     Adc816, Sbc816,
+
+    /// <summary>Transfer X to Y, and Y to X. Sized by the <c>x</c> flag. 65816 only.</summary>
+    Txy, Tyx,
+
+    /// <summary>
+    /// Transfers between the 16-bit accumulator and the direct and stack registers. All four move
+    /// all sixteen bits regardless of <c>m</c> and <c>x</c> — the registers they touch have no
+    /// narrow form. <c>Tcs</c> sets no flags, as <see cref="Txs"/> does not. 65816 only.
+    /// </summary>
+    Tcd, Tdc, Tcs, Tsc,
+
+    /// <summary>
+    /// Exchange the two halves of the 16-bit accumulator. Flags come from the new low byte as an
+    /// 8-bit result regardless of <c>m</c> — research document §13.5. 65816 only.
+    /// </summary>
+    Xba,
 }

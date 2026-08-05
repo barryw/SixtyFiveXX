@@ -56,13 +56,65 @@ public sealed partial class Cpu<TBus, TVariant>
                 else { _s.Y = _data16; SetZN16(_s.Y); }
                 break;
 
-            // Transfers. TXS is the only one that leaves flags alone.
-            case Op.Tax: X8 = A8; SetZN(X8); break;
-            case Op.Tay: Y8 = A8; SetZN(Y8); break;
-            case Op.Tsx: X8 = S8; SetZN(X8); break;
-            case Op.Txa: A8 = X8; SetZN(A8); break;
-            case Op.Tya: A8 = Y8; SetZN(A8); break;
-            case Op.Txs: S8 = X8; break;
+            // Transfers. Width comes from the DESTINATION register's flag: an index destination
+            // is sized by x, an accumulator destination by m. The four TC*/T*C forms move all
+            // sixteen bits regardless, and TXS/TCS set no flags. Research document §13.4.
+            case Op.Tax:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.XFlag) { X8 = A8; SetZN(X8); }
+                else { _s.X = _s.A; SetZN16(_s.X); }
+                break;
+
+            case Op.Tay:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.XFlag) { Y8 = A8; SetZN(Y8); }
+                else { _s.Y = _s.A; SetZN16(_s.Y); }
+                break;
+
+            case Op.Tsx:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.XFlag) { X8 = S8; SetZN(X8); }
+                else { _s.X = _s.S; SetZN16(_s.X); }
+                break;
+
+            case Op.Txa:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.M) { A8 = X8; SetZN(A8); }
+                else { _s.A = _s.X; SetZN16(_s.A); }
+                break;
+
+            case Op.Tya:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.M) { A8 = Y8; SetZN(A8); }
+                else { _s.A = _s.Y; SetZN16(_s.A); }
+                break;
+
+            // TXS takes no flags. On the 65816 it moves all sixteen bits in native mode; S8's
+            // setter forces SH to $01 in emulation mode, which is exactly the required behaviour.
+            case Op.Txs:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.E) S8 = X8;
+                else _s.S = _s.X;
+                break;
+
+            case Op.Txy:
+                if (_s.XFlag) { Y8 = X8; SetZN(Y8); }
+                else { _s.Y = _s.X; SetZN16(_s.Y); }
+                break;
+
+            case Op.Tyx:
+                if (_s.XFlag) { X8 = Y8; SetZN(X8); }
+                else { _s.X = _s.Y; SetZN16(_s.X); }
+                break;
+
+            // Always sixteen bits. Tcs sets no flags, as Txs does not.
+            case Op.Tcd: _s.DP = _s.A; SetZN16(_s.DP); break;
+            case Op.Tdc: _s.A = _s.DP; SetZN16(_s.A); break;
+            case Op.Tsc: _s.A = _s.S; SetZN16(_s.A); break;
+
+            case Op.Tcs:
+                if (_s.E) S8 = A8;
+                else _s.S = _s.A;
+                break;
+
+            case Op.Xba:
+                _s.A = (ushort)((_s.A >> 8) | (_s.A << 8));
+                SetZN((byte)_s.A);
+                break;
 
             // Flags
             case Op.Clc: _s.C = false; break;
@@ -175,22 +227,75 @@ public sealed partial class Cpu<TBus, TVariant>
             case Op.Bbs:
                 break;
 
+            // Memory increment and decrement, operating in place. Same variant guard as
+            // Op.Lda, variant test first: 16-bit INC/DEC carries across the byte boundary
+            // ($00FF + 1 = $0100), the whole difference from two independent 8-bit increments.
+            case Op.Inc:
+                if (TVariant.Variant != CpuVariant.W65C816 || !_wide)
+                { _data = (byte)(_data + 1); SetZN(_data); }
+                else { _data16 = (ushort)(_data16 + 1); SetZN16(_data16); }
+                break;
+
+            case Op.Dec:
+                if (TVariant.Variant != CpuVariant.W65C816 || !_wide)
+                { _data = (byte)(_data - 1); SetZN(_data); }
+                else { _data16 = (ushort)(_data16 - 1); SetZN16(_data16); }
+                break;
+
             // Test-and-modify. Z comes from the AND, as for BIT, but N and V are left
-            // alone — unlike BIT, which takes them from the operand's top two bits.
-            case Op.Trb: _s.Z = (A8 & _data) == 0; _data = (byte)(_data & ~A8); break;
-            case Op.Tsb: _s.Z = (A8 & _data) == 0; _data = (byte)(_data | A8); break;
+            // alone — unlike BIT, which takes them from the operand's top two bits. Same
+            // variant guard as Op.Lda, variant test first.
+            case Op.Trb:
+                if (TVariant.Variant != CpuVariant.W65C816 || !_wide)
+                { _s.Z = (A8 & _data) == 0; _data = (byte)(_data & ~A8); }
+                else { _s.Z = (_s.A & _data16) == 0; _data16 = (ushort)(_data16 & ~_s.A); }
+                break;
 
-            // Memory increment and decrement, operating on _data in place.
-            case Op.Inc: _data = (byte)(_data + 1); SetZN(_data); break;
-            case Op.Dec: _data = (byte)(_data - 1); SetZN(_data); break;
+            case Op.Tsb:
+                if (TVariant.Variant != CpuVariant.W65C816 || !_wide)
+                { _s.Z = (A8 & _data) == 0; _data = (byte)(_data | A8); }
+                else { _s.Z = (_s.A & _data16) == 0; _data16 = (ushort)(_data16 | _s.A); }
+                break;
 
-            // Register increment and decrement.
-            case Op.IncA: A8 = (byte)(A8 + 1); SetZN(A8); break;
-            case Op.DecA: A8 = (byte)(A8 - 1); SetZN(A8); break;
-            case Op.Inx: X8 = (byte)(X8 + 1); SetZN(X8); break;
-            case Op.Dex: X8 = (byte)(X8 - 1); SetZN(X8); break;
-            case Op.Iny: Y8 = (byte)(Y8 + 1); SetZN(Y8); break;
-            case Op.Dey: Y8 = (byte)(Y8 - 1); SetZN(Y8); break;
+            // Register increment and decrement. IncA/DecA are width-aware for the 65816 — the
+            // same shape as Op.AslA below, and see its comment for why the arm tests _s.M
+            // directly rather than _wide: these are implied-mode, declare no Width, and never
+            // reach a width-deciding micro-op (MicroOpTable.Emit816's Implied/Accumulator
+            // branch), so _wide is never resolved for them at all. Variant test first, so the
+            // five 8-bit cores fold to the code they had.
+            case Op.IncA:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.M) { A8 = (byte)(A8 + 1); SetZN(A8); }
+                else { _s.A = (ushort)(_s.A + 1); SetZN16(_s.A); }
+                break;
+
+            case Op.DecA:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.M) { A8 = (byte)(A8 - 1); SetZN(A8); }
+                else { _s.A = (ushort)(_s.A - 1); SetZN16(_s.A); }
+                break;
+
+            // Sized by x on the 65816, not m — the same implied-mode shape as IncA/DecA above,
+            // and see that comment for why the guard reads _s.XFlag directly rather than _wide:
+            // these are implied, declare no Width, and never reach a width-deciding micro-op.
+            // Variant test first, so the five 8-bit cores fold to the code they had.
+            case Op.Inx:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.XFlag) { X8 = (byte)(X8 + 1); SetZN(X8); }
+                else { _s.X = (ushort)(_s.X + 1); SetZN16(_s.X); }
+                break;
+
+            case Op.Dex:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.XFlag) { X8 = (byte)(X8 - 1); SetZN(X8); }
+                else { _s.X = (ushort)(_s.X - 1); SetZN16(_s.X); }
+                break;
+
+            case Op.Iny:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.XFlag) { Y8 = (byte)(Y8 + 1); SetZN(Y8); }
+                else { _s.Y = (ushort)(_s.Y + 1); SetZN16(_s.Y); }
+                break;
+
+            case Op.Dey:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.XFlag) { Y8 = (byte)(Y8 - 1); SetZN(Y8); }
+                else { _s.Y = (ushort)(_s.Y - 1); SetZN16(_s.Y); }
+                break;
 
             // Stack. PHP and BRK are the only ways the B flag reaches memory.
             case Op.Pha: _data = A8; break;
@@ -269,17 +374,51 @@ public sealed partial class Cpu<TBus, TVariant>
                 else Compare16(_s.Y);
                 break;
 
-            // Shifts and rotates on memory, operating on _data in place.
-            case Op.Asl: _data = Asl(_data); break;
-            case Op.Lsr: _data = Lsr(_data); break;
-            case Op.Rol: _data = Rol(_data); break;
-            case Op.Ror: _data = Ror(_data); break;
+            // Shifts and rotates on memory. Width-aware for the 65816: _data carries the operand
+            // at 8 bits, _data16 at 16. The variant guard comes first so the five 8-bit cores
+            // never load _wide — see the remarks on _wide and Op.Lda's own comment.
+            case Op.Asl:
+                if (TVariant.Variant != CpuVariant.W65C816 || !_wide) _data = Asl(_data);
+                else _data16 = Asl16(_data16);
+                break;
 
-            // The same four on the accumulator.
-            case Op.AslA: A8 = Asl(A8); break;
-            case Op.LsrA: A8 = Lsr(A8); break;
-            case Op.RolA: A8 = Rol(A8); break;
-            case Op.RorA: A8 = Ror(A8); break;
+            case Op.Lsr:
+                if (TVariant.Variant != CpuVariant.W65C816 || !_wide) _data = Lsr(_data);
+                else _data16 = Lsr16(_data16);
+                break;
+
+            case Op.Rol:
+                if (TVariant.Variant != CpuVariant.W65C816 || !_wide) _data = Rol(_data);
+                else _data16 = Rol16(_data16);
+                break;
+
+            case Op.Ror:
+                if (TVariant.Variant != CpuVariant.W65C816 || !_wide) _data = Ror(_data);
+                else _data16 = Ror16(_data16);
+                break;
+
+            // The same four shifts on the accumulator. Width comes from m directly rather than
+            // from _wide: these fetch no operand, so they declare Width.None (see Width's own
+            // remarks). Variant test first, so the five 8-bit cores fold to the code they had.
+            case Op.AslA:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.M) A8 = Asl(A8);
+                else _s.A = Asl16(_s.A);
+                break;
+
+            case Op.LsrA:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.M) A8 = Lsr(A8);
+                else _s.A = Lsr16(_s.A);
+                break;
+
+            case Op.RolA:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.M) A8 = Rol(A8);
+                else _s.A = Rol16(_s.A);
+                break;
+
+            case Op.RorA:
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.M) A8 = Ror(A8);
+                else _s.A = Ror16(_s.A);
+                break;
 
             // Arithmetic
             case Op.Adc: Adc(_data); break;
@@ -441,6 +580,53 @@ public sealed partial class Cpu<TBus, TVariant>
         _s.C = (value & 0x01) != 0;
         var result = (byte)((value >> 1) | carryIn);
         SetZN(result);
+        return result;
+    }
+
+    /// <summary>
+    /// 16-bit <c>ASL</c>. The 65816 native-mode counterpart of <see cref="Asl"/>.
+    /// </summary>
+    /// <remarks>
+    /// Carry comes from bit 15, which is what <c>m = 0</c> means. Clark §6.1.3's prose says the
+    /// opposite — "the high bit (bit 15 when the m flag is one, bit 7 when the m flag is 0)" —
+    /// and that sentence has its m-flag polarity inverted; he has it the right way round in
+    /// §6.1.1.1 and §6.1.2.2, and his own cycle formula <c>8-2*m</c> reads correctly. Recorded in
+    /// research document §13.3. Do not "correct" this toward that sentence.
+    /// </remarks>
+    private ushort Asl16(ushort value)
+    {
+        _s.C = (value & 0x8000) != 0;
+        var result = (ushort)(value << 1);
+        SetZN16(result);
+        return result;
+    }
+
+    /// <summary>16-bit <c>LSR</c>. See <see cref="Asl16"/>.</summary>
+    private ushort Lsr16(ushort value)
+    {
+        _s.C = (value & 0x0001) != 0;
+        var result = (ushort)(value >> 1);
+        SetZN16(result);
+        return result;
+    }
+
+    /// <summary>16-bit <c>ROL</c>. See <see cref="Asl16"/>.</summary>
+    private ushort Rol16(ushort value)
+    {
+        var carryIn = _s.C ? 1 : 0;
+        _s.C = (value & 0x8000) != 0;
+        var result = (ushort)((value << 1) | carryIn);
+        SetZN16(result);
+        return result;
+    }
+
+    /// <summary>16-bit <c>ROR</c>. See <see cref="Asl16"/>.</summary>
+    private ushort Ror16(ushort value)
+    {
+        var carryIn = _s.C ? 0x8000 : 0x0000;
+        _s.C = (value & 0x0001) != 0;
+        var result = (ushort)((value >> 1) | carryIn);
+        SetZN16(result);
         return result;
     }
 

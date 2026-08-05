@@ -382,6 +382,28 @@ internal sealed class MicroOpTable
             return;
         }
 
+        // XBA is implied, but 3 cycles rather than the implied block's 2: research document
+        // §13.5, datasheet Table 5-7 row 19b, which XBA has to itself. Its cycles 2 and 3 are
+        // both row 19a's IO cycle at PBR,PC+1, so the sequence is that cycle twice over, with
+        // the operation on the last one. Ahead of the general implied branch below, which stays
+        // unconditional: making that branch test for XBA would put a run-time check on the path
+        // every other implied opcode takes to get the shape only this one needs.
+        if (info.Operation == Op.Xba)
+        {
+            ops.AddRange([MicroOp.ImpliedInternal816, MicroOp.ImpliedExec816]);
+            return;
+        }
+
+        // Every 65816 implied and accumulator-mode instruction is two cycles: the opcode fetch,
+        // then one internal cycle at PBR,PC+1 (research document §9 row 19a, the shape XCE
+        // already uses). They fetch no operand, so they declare no Width and never reach a
+        // width-deciding micro-op; each arm in Cpu.Exec tests the flag its own result depends on.
+        if (info.Mode is AddrMode.Implied or AddrMode.Accumulator)
+        {
+            ops.Add(MicroOp.ImpliedExec816);
+            return;
+        }
+
         // Everything else on the 65816 forms an effective address and then reads or writes it.
         // Routed by mode and access rather than by an ever-growing list of operations: the
         // emitter's own `default:` throw is the tripwire for a mode with no sequence, and
@@ -455,14 +477,19 @@ internal sealed class MicroOpTable
                 break;
 
             case AddrMode.DirectPageIndirectY:
-                // Code-review fix (task 5): which of DpPtrReadHiY (read, can skip the indexing
-                // cycle) or DpPtrReadHiYWrite (write, never skips) is selected here, at
+                // Code-review fix (task 5): which of DpPtrReadHiY (a plain read, which can skip
+                // the indexing cycle) or DpPtrReadHiYWrite (never skips) is selected here, at
                 // table-build time, from info.Access — not at run time from info.Operation. See
                 // MicroOp.DpPtrReadHiY. Task 6's abs,X/abs,Y reuse the same mechanism below.
+                //
+                // The predicate is "not a plain read", not "is a write" — see AddrMode.AbsoluteX
+                // below for why. (dp),Y has no read-modify-write opcode on this part, so the two
+                // spellings pick the same micro-op here; it is written this way so all three
+                // modes state one rule.
                 ops.AddRange([
                     MicroOp.FetchDpOffset, MicroOp.DirectPagePenalty,
                     MicroOp.PtrReadLo816,
-                    info.Access == Access.Write ? MicroOp.DpPtrReadHiYWrite : MicroOp.DpPtrReadHiY,
+                    info.Access != Access.Read ? MicroOp.DpPtrReadHiYWrite : MicroOp.DpPtrReadHiY,
                     MicroOp.IndexDirectPageIndirectY,
                 ]);
                 break;
@@ -489,12 +516,22 @@ internal sealed class MicroOpTable
 
             // §9's "Absolute,X — row 6a": AbsHiIndexedX(Write) fetches AAH and precomputes both
             // the mis-indexed and real addresses; AbsIndexFixup is the conditional cycle 3a that
-            // drives the former and installs the latter — selected read-vs-write at table-build
-            // time from info.Access, the same mechanism (dp),Y above uses.
+            // drives the former and installs the latter — selected at table-build time from
+            // info.Access, the same mechanism (dp),Y above uses.
+            //
+            // The predicate is `!= Access.Read`, matching EmitAddressing's own predicate for the
+            // five 8-bit cores, and the difference is load-bearing for exactly one family: an
+            // indexed READ-MODIFY-WRITE pays the indexing cycle unconditionally, like a write and
+            // unlike a read. Research document §13.1's row 6b puts NO note on that cycle — where
+            // §9's read row 6a carries Note 4 there and skips it when x=1 without a page cross —
+            // and Clark's flat 9-2*m for abs,X RMW (§13.3) has no p term and no x term, which
+            // says the same thing independently; §13.6 lists it among the settled questions.
+            // Spelled `== Access.Write`, ASL/LSR/ROL/ROR abs,X would take the skip and cost
+            // 8-2m instead of 9-2m whenever x=1 and indexing did not cross a page.
             case AddrMode.AbsoluteX:
                 ops.AddRange([
                     MicroOp.FetchAddrLo,
-                    info.Access == Access.Write ? MicroOp.AbsHiIndexedXWrite : MicroOp.AbsHiIndexedX,
+                    info.Access != Access.Read ? MicroOp.AbsHiIndexedXWrite : MicroOp.AbsHiIndexedX,
                     MicroOp.AbsIndexFixup,
                 ]);
                 break;
@@ -503,7 +540,7 @@ internal sealed class MicroOpTable
             case AddrMode.AbsoluteY:
                 ops.AddRange([
                     MicroOp.FetchAddrLo,
-                    info.Access == Access.Write ? MicroOp.AbsHiIndexedYWrite : MicroOp.AbsHiIndexedY,
+                    info.Access != Access.Read ? MicroOp.AbsHiIndexedYWrite : MicroOp.AbsHiIndexedY,
                     MicroOp.AbsIndexFixup,
                 ]);
                 break;
@@ -561,15 +598,34 @@ internal sealed class MicroOpTable
         var carry = info.Mode is not (AddrMode.DirectPage or AddrMode.DirectPageX
             or AddrMode.DirectPageY or AddrMode.StackRelative);
 
-        if (info.Access == Access.Write)
+        switch (info.Access)
         {
-            ops.Add(MicroOp.ExecWrite816);
-            ops.Add(carry ? MicroOp.ExecWriteHigh816Carry : MicroOp.ExecWriteHigh816);
-        }
-        else
-        {
-            ops.Add(MicroOp.ReadExec816);
-            ops.Add(carry ? MicroOp.ReadExecHigh816Carry : MicroOp.ReadExecHigh816);
+            case Access.Write:
+                ops.Add(MicroOp.ExecWrite816);
+                ops.Add(carry ? MicroOp.ExecWriteHigh816Carry : MicroOp.ExecWriteHigh816);
+                break;
+
+            // Six slots, of which any one execution runs three (8-bit) or five (16-bit). The rest
+            // are skipped by the preceding micro-op, the same conditional-slot idiom
+            // DirectPagePenalty uses — which is what keeps every one of them statically
+            // classified in MicroOps.IsWriteCycle, consulted on every tick of all six cores
+            // because RDY must never halt a write. Datasheet Note 17 decides which of the two
+            // middle forms runs, at run time, from E.
+            case Access.ReadModifyWrite:
+                ops.AddRange([
+                    MicroOp.RmwRead816,
+                    carry ? MicroOp.RmwReadHigh816Carry : MicroOp.RmwReadHigh816,
+                    MicroOp.RmwModifyWrite816,
+                    carry ? MicroOp.RmwModifyRead816Carry : MicroOp.RmwModifyRead816,
+                    carry ? MicroOp.RmwWriteHigh816Carry : MicroOp.RmwWriteHigh816,
+                    MicroOp.RmwWrite816,
+                ]);
+                break;
+
+            default:
+                ops.Add(MicroOp.ReadExec816);
+                ops.Add(carry ? MicroOp.ReadExecHigh816Carry : MicroOp.ReadExecHigh816);
+                break;
         }
     }
 
