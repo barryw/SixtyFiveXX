@@ -94,8 +94,9 @@ in `dp` and `abs` each.
 a narrower addressing mode: it sets Z alone, leaving N and V untouched. `LDX` and `STX` bring
 `dp,Y`, the one addressing mode phase 7c adds and the only one no other instruction on the part
 uses. `TSB` and `TRB` set Z from the AND of `A` and memory, like `BIT`, but leave N and V
-untouched, unlike `BIT`. Every other opcode throws `UndefinedOpcodeException`. Phase 7d adds the
-rest.
+untouched, unlike `BIT`. Every other opcode throws `UndefinedOpcodeException`. Phase 7c′ is still
+in progress — its remaining tasks add the accumulator forms, the transfers and `XBA` — and phase 7d
+adds control flow, the stack and interrupts after it.
 
 **The state widening is a breaking change**: `CpuState.A`, `X`, `Y` and `S` are now `ushort`
 rather than `byte`.
