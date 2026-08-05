@@ -168,6 +168,32 @@ public class W65C816ImpliedTests
     }
 
     /// <summary>
+    /// <c>TXS</c> moves all sixteen bits even when <c>x</c> selects an 8-bit index, because the
+    /// destination <c>S</c> has no narrow form — research document §13.4, which refutes the
+    /// natural-looking assumption that <c>TXS</c> is sized by <c>x</c> like its <c>TSX</c>
+    /// counterpart. Twenty thousand <c>$9A</c> vectors agree, but nothing pinned it below the
+    /// conformance suite until this test: <see cref="Txs_SetsNoFlags"/> above uses a 16-bit index
+    /// and so cannot tell the two rules apart. An x-sized <c>TXS</c> leaves <c>S</c> at
+    /// <c>$0034</c>.
+    /// </summary>
+    [Fact]
+    public void Txs_IsAlwaysSixteenBit_EvenWithAnEightBitIndex()
+    {
+        var ram = new BankedBus();
+        ram[0xC000] = 0x9A;       // TXS
+
+        var cpu = Banked816TestMachine.Make(ram);
+        cpu.State.E = false;
+        cpu.State.M = false;      // opposed, so neither width flag can be read by accident
+        cpu.State.XFlag = true;   // 8-bit index — must NOT narrow the transfer
+        cpu.State.X = 0x1234;
+
+        cpu.Step();
+
+        Assert.Equal(0x1234, cpu.State.S);
+    }
+
+    /// <summary>
     /// XBA swaps A's two halves and sets N and Z from the new low byte as an 8-bit result, even
     /// with a 16-bit accumulator (research document §13.5).
     /// </summary>

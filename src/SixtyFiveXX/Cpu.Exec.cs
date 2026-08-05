@@ -87,8 +87,7 @@ public sealed partial class Cpu<TBus, TVariant>
             // TXS takes no flags. On the 65816 it moves all sixteen bits in native mode; S8's
             // setter forces SH to $01 in emulation mode, which is exactly the required behaviour.
             case Op.Txs:
-                if (TVariant.Variant != CpuVariant.W65C816) S8 = X8;
-                else if (_s.E) S8 = X8;
+                if (TVariant.Variant != CpuVariant.W65C816 || _s.E) S8 = X8;
                 else _s.S = _s.X;
                 break;
 
