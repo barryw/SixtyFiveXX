@@ -9,7 +9,9 @@
 **Tech Stack:** C# 13, .NET 8 and .NET 10 (both must pass), xUnit, no NuGet dependencies in `src/`.
 
 **Spec:** `docs/superpowers/specs/2026-08-03-65816-core-design.md` §"Phase 7c".
-**Research:** `docs/superpowers/research/2026-08-03-65816-reference-sources.md`. **§9 is the cycle-by-cycle specification the addressing engine was built against and is mandatory reading.** §5 gives Clark's cycle formulas for 7b's slice; task 1 of this plan extends both with a new §10. §3 records two places the most-cited 65816 book is wrong.
+**Research:** `docs/superpowers/research/2026-08-03-65816-reference-sources.md`. **§9 is the cycle-by-cycle specification the addressing engine was built against and is mandatory reading.** §5 gives Clark's cycle formulas for 7b's slice; task 1 of this plan extends both. §3 records two places the most-cited 65816 book is wrong.
+
+> **Section numbering, corrected after task 1 ran.** This plan was written believing the research document ended at §9, so task 1's own text below calls its output "§10". It is **§12**: phase 7b had already added §10 (reset initialisation) and §11 (`XCE` and `SH`), both cited by section number from doc comments in `src/SixtyFiveXX/Cpu.cs` and `Cpu.Exec.cs`, so renumbering them would have silently falsified those comments. Task 1's text is left as written, since it is the historical record of what was asked; **every other task below has been corrected to §12.x**, and §12 opens with an exact §10.x→§12.x mapping table.
 
 **Scope:** `ORA`, `AND`, `EOR`, `ADC`, `CMP`, `SBC` (15 modes each), `BIT` (5), `LDX` (5), `LDY` (5), `STX` (3), `STY` (3), `STZ` (4), `CPX` (3), `CPY` (3) — 121 opcodes, taking the 65816 from 32 defined opcodes to 153. Explicitly **not** in scope: control flow, stack instructions, read-modify-writes, shifts, transfers, accumulator and implied forms. Those are phases 7c′ and 7d.
 
@@ -64,7 +66,7 @@ Recorded so nobody "fixes" one mid-phase and lands an unattributable change:
 | `tests/SixtyFiveXX.Tests/W65C816AluTests.cs` | **Create** (task 3). 16-bit logic, arithmetic, compare and `BIT` discrimination tests. |
 | `tests/SixtyFiveXX.Tests/W65C816IndexModeTests.cs` | **Create** (task 7). `dp,Y` wrapping and bank confinement. |
 | `tests/SixtyFiveXX.Conformance/Harte816Tests.cs` | Modify, once per task. `ExpectedImplementedOpcodes` and its doc comment. |
-| `docs/superpowers/research/2026-08-03-65816-reference-sources.md` | Modify (task 1). New §10. |
+| `docs/superpowers/research/2026-08-03-65816-reference-sources.md` | Modify (task 1). New §12 — see the numbering note above. |
 
 ---
 
@@ -918,21 +920,21 @@ git commit -m "feat: 65816 CMP, CPX and CPY, the first opcodes sized by the x fl
 The hardest task in the phase. Binary and decimal ship together because they cannot be separated by gate: a single `.n` file mixes vectors with `D` set and clear, so no subset of the vectors certifies binary arithmetic alone.
 
 **Files:**
-- Modify: `src/SixtyFiveXX/Op.cs` (two new members, per §10.2)
+- Modify: `src/SixtyFiveXX/Op.cs` (two new members, per §12.2)
 - Modify: `src/SixtyFiveXX/Opcodes65C816.cs` (30 entries)
 - Modify: `src/SixtyFiveXX/Cpu.Exec.cs` (two arms, two helpers)
 - Modify: `tests/SixtyFiveXX.Conformance/Harte816Tests.cs` (98 → 128)
 - Test: `tests/SixtyFiveXX.Tests/W65C816AluTests.cs` (append)
 
 **Interfaces:**
-- Consumes: research §10.1, §10.2 and §10.5; `_wide`; `EmitAddressed816`.
+- Consumes: research §12.1, §12.2 and §12.5; `_wide`; `EmitAddressed816`.
 - Produces: `Op.Adc816`, `Op.Sbc816`, `private void Adc816(...)`, `private void Sbc816(...)`.
 
 **Read research §10 before writing a line of this task.** Three of its findings change what you write:
 
-1. **§10.2 decides the `Op` members.** The plan below assumes the pre-committed default — a new `Op.Adc816`/`Op.Sbc816` pair, which is what the rule produces on divergence *or* on silence. If §10.2 concluded the sources state the behaviour is identical to the 65C02's, use `Op.AdcCmos`/`Op.SbcCmos` instead and skip step 3 entirely; everything else is unchanged.
-2. **§10.5's first sentence decides whether an extra decimal cycle exists.** If the 65816's `ADC` formula carries a decimal term the way the 65C02's does, the emitter needs a conditionally skipped slot — see step 6's alternative. If it does not, `ADC` uses the ordinary read tail and no emitter change is needed at all.
-3. **§10.1 may be a recorded gap.** If Clark was silent on the 16-bit decimal algorithm, derive it from the vectors in step 8 and write the derivation back into §10.1 as a *measured* result, labelled as measured. Do not retro-fit a citation to a number you measured.
+1. **§12.2 decides the `Op` members.** The plan below assumes the pre-committed default — a new `Op.Adc816`/`Op.Sbc816` pair, which is what the rule produces on divergence *or* on silence. If §12.2 concluded the sources state the behaviour is identical to the 65C02's, use `Op.AdcCmos`/`Op.SbcCmos` instead and skip step 3 entirely; everything else is unchanged.
+2. **§12.5's first sentence decides whether an extra decimal cycle exists.** If the 65816's `ADC` formula carries a decimal term the way the 65C02's does, the emitter needs a conditionally skipped slot — see step 6's alternative. If it does not, `ADC` uses the ordinary read tail and no emitter change is needed at all.
+3. **§12.1 may be a recorded gap.** If Clark was silent on the 16-bit decimal algorithm, derive it from the vectors in step 8 and write the derivation back into §12.1 as a *measured* result, labelled as measured. Do not retro-fit a citation to a number you measured.
 
 - [ ] **Step 1: Write the failing binary tests**
 
@@ -1021,7 +1023,7 @@ Append to `tests/SixtyFiveXX.Tests/W65C816AluTests.cs`:
 Run: `dotnet test tests/SixtyFiveXX.Tests -f net10.0 --filter "FullyQualifiedName~W65C816AluTests"`
 Expected: **FAIL, 3 of 8**, `UndefinedOpcodeException` for `$69` and `$E9`.
 
-- [ ] **Step 3: Add the `Op` members (skip if §10.2 said reuse)**
+- [ ] **Step 3: Add the `Op` members (skip if §12.2 said reuse)**
 
 In `src/SixtyFiveXX/Op.cs`, in the 65816 group beside `Xce`/`Rep`/`Sep`:
 
@@ -1032,7 +1034,7 @@ In `src/SixtyFiveXX/Op.cs`, in the 65816 group beside `Xce`/`Rep`/`Sep`:
     /// pair: the decimal-mode correction and the flags it leaks are what distinguish these
     /// parts, and folding two behaviours into one member behind a variant test would put a
     /// branch on the ALU path to save an enum member. These are also the only arithmetic
-    /// members that operate at two widths — see research document §10.1.
+    /// members that operate at two widths — see research document §12.1.
     /// </summary>
     Adc816, Sbc816,
 ```
@@ -1077,12 +1079,12 @@ Note `$EB` is **not** here: on the 65816 that byte is `XBA`, not the 6502's undo
 
 - [ ] **Step 5: Implement binary arithmetic at both widths**
 
-In `src/SixtyFiveXX/Cpu.Exec.cs`, add the two helpers and the two arms. **The decimal branches are written in step 7, from §10.1** — write them as the binary path only for now, so this step can be verified in isolation:
+In `src/SixtyFiveXX/Cpu.Exec.cs`, add the two helpers and the two arms. **The decimal branches are written in step 7, from §12.1** — write them as the binary path only for now, so this step can be verified in isolation:
 
 ```csharp
     /// <summary>
     /// The 65816's add with carry, at whichever width <c>_wide</c> selects. Binary mode only in
-    /// this form; the decimal correction is added below from research document §10.1.
+    /// this form; the decimal correction is added below from research document §12.1.
     /// </summary>
     private void Adc816(byte value8, ushort value16)
     {
@@ -1139,17 +1141,17 @@ The arms, in the arithmetic group:
             case Op.Sbc816: Sbc816(_data, _data16); break;
 ```
 
-- [ ] **Step 6: Emitter — only if §10.5 says a decimal cycle exists**
+- [ ] **Step 6: Emitter — only if §12.5 says a decimal cycle exists**
 
-If §10.5's first sentence says the 65816 pays **no** extra cycle in decimal mode, **do nothing in this step**: `ADC` and `SBC` are ordinary `Access.Read` opcodes and `EmitAddressed816` already emits the right sequence.
+If §12.5's first sentence says the 65816 pays **no** extra cycle in decimal mode, **do nothing in this step**: `ADC` and `SBC` are ordinary `Access.Read` opcodes and `EmitAddressed816` already emits the right sequence.
 
 If it says a decimal cycle **is** paid, add a conditionally skipped slot, the idiom `MicroOp.BcdExtra` already uses for the 65C02: emit an extra micro-op after the access tail, and have the preceding micro-op advance `_mpc` past it when `D` is clear. Follow `MicroOp.ReadExecCmosArith`/`MicroOp.BcdExtra` in `Cpu.cs` and `MicroOpTable.EmitAccess` exactly rather than inventing a second mechanism, and classify the new micro-op in `MicroOps.BuildPinsTable` or `BuildInternalCycleTable` — `BusPinsTests.EveryMicroOpHasAPinClassification` will fail until you do.
 
 - [ ] **Step 7: Write the decimal branches**
 
-**If §10.1 gives a cited algorithm, implement that and ignore the code below.** §10.1 wins over everything here.
+**If §12.1 gives a cited algorithm, implement that and ignore the code below.** §12.1 wins over everything here.
 
-If §10.1 is a recorded gap, start from the code below. **It is a hypothesis, not a fact**, and the plan says so in the comment it carries into the source: the 8-bit path delegates to this codebase's already-certified CMOS helpers, and the 16-bit path is the four-digit generalisation of the same algorithm. Step 8's vectors are the arbiter, and whatever they establish gets written back into §10.1 as a measured result.
+If §12.1 is a recorded gap, start from the code below. **It is a hypothesis, not a fact**, and the plan says so in the comment it carries into the source: the 8-bit path delegates to this codebase's already-certified CMOS helpers, and the 16-bit path is the four-digit generalisation of the same algorithm. Step 8's vectors are the arbiter, and whatever they establish gets written back into §12.1 as a measured result.
 
 Insert at the top of each helper's non-`_wide` branch:
 
@@ -1158,7 +1160,7 @@ Insert at the top of each helper's non-`_wide` branch:
         {
             // 8-bit decimal on the 65816 is taken to be the 65C02's, which this codebase has
             // already certified against 40,000 vectors of $69/$72/$E9/$F2. Same silicon family,
-            // and no source describes a divergence — see research document §10.1. If the vectors
+            // and no source describes a divergence — see research document §12.1. If the vectors
             // disagree, they are right and this delegation is what has to change.
             if (_s.D) { AdcCmos(value8); return; }
             ...existing binary 8-bit body...
@@ -1172,7 +1174,7 @@ and, for the 16-bit branch of `Adc816`, before the binary body:
         {
             // HYPOTHESIS, not a citation: the four-digit generalisation of AdcCmos above —
             // nibble-wise correction, V taken from the partially corrected top nibble, N and Z
-            // from the final decimal result. Research document §10.1 records that the sources are
+            // from the final decimal result. Research document §12.1 records that the sources are
             // silent on this; the vectors settle it, and the settled version is written back
             // there as a measured result.
             var dcarry = _s.C ? 1 : 0;
@@ -1225,11 +1227,11 @@ Restructuring the binary bodies so `borrow` and the flag assignments are in scop
 
 Run: `dotnet test tests/SixtyFiveXX.Conformance -f net10.0 --filter "FullyQualifiedName~Harte816Tests"` after raising `ExpectedImplementedOpcodes` to **128**.
 
-If decimal vectors fail, do **not** tune constants until the vectors stop complaining. Instead: pick one failing vector, hand-trace it, and work out which of the four flags and which correction step disagrees. Then write the finding into §10.1 as a measured result with the vector that established it — the same way §11 records the `XCE` `SH` rule and phase 1's ledger records the NMOS `ADC` flag leak. A correction landed without an explanation is a correction the next reader cannot check.
+If decimal vectors fail, do **not** tune constants until the vectors stop complaining. Instead: pick one failing vector, hand-trace it, and work out which of the four flags and which correction step disagrees. Then write the finding into §12.1 as a measured result with the vector that established it — the same way §11 records the `XCE` `SH` rule and phase 1's ledger records the NMOS `ADC` flag leak. A correction landed without an explanation is a correction the next reader cannot check.
 
 - [ ] **Step 9: Add one decimal unit test, from whatever step 8 established**
 
-Append a test pinning a 16-bit decimal case whose answer is now known — for example `A = $9999`, `ADC #$0001`, `D` set, `m = 0`, expecting `A = $0000` and `C` set if that is what §10.1 (as cited or as measured) says. Write the expectation from §10.1, and reference §10.1 in the test's doc comment.
+Append a test pinning a 16-bit decimal case whose answer is now known — for example `A = $9999`, `ADC #$0001`, `D` set, `m = 0`, expecting `A = $0000` and `C` set if that is what §12.1 (as cited or as measured) says. Write the expectation from §12.1, and reference §12.1 in the test's doc comment.
 
 - [ ] **Step 10: Run everything, both TFMs, commit**
 
@@ -1568,7 +1570,7 @@ In `src/SixtyFiveXX/AddrMode.cs`, immediately after `DirectPageX`:
 
 - [ ] **Step 4: Add `MicroOp.DirectPageIndexY`**
 
-In `src/SixtyFiveXX/MicroOp.cs`, next to `DirectPageIndexX`, with a `<summary>` mirroring it and naming research §10.3 as its source. Then add it to `BuildInternalCycleTable`'s list — it drives an address and performs no access, like every other `IO` row:
+In `src/SixtyFiveXX/MicroOp.cs`, next to `DirectPageIndexX`, with a `<summary>` mirroring it and naming research §12.3 as its source. Then add it to `BuildInternalCycleTable`'s list — it drives an address and performs no access, like every other `IO` row:
 
 ```csharp
                      MicroOp.End, MicroOp.Unimplemented816, MicroOp.ImpliedExec816, MicroOp.RepSepExec,
@@ -1599,7 +1601,7 @@ In `src/SixtyFiveXX/Cpu.cs`, immediately after `case MicroOp.DirectPageIndexX`:
 In `MicroOpTable.EmitAddressed816`, after the `DirectPageX` case:
 
 ```csharp
-            // Research document §10.3. Identical in shape to DirectPageX with Y substituted —
+            // Research document §12.3. Identical in shape to DirectPageX with Y substituted —
             // LDX and STX are the only instructions that use it.
             case AddrMode.DirectPageY:
                 ops.AddRange([MicroOp.FetchDpOffset, MicroOp.DirectPagePenalty, MicroOp.DirectPageIndexY]);
@@ -1726,7 +1728,7 @@ Every item below is a specific failure this project has actually had:
 - **Width declared on every new entry.** `W65C816WidthTests` covers it, but confirm the test itself still runs and that no opcode was added with `Width.None` and an access micro-op.
 - **No unguarded width test in variant-shared code.** `grep -n "_wide" src/SixtyFiveXX/Cpu.Exec.cs` — every hit must sit behind `TVariant.Variant != CpuVariant.W65C816 ||`, except arms for operations that appear in no 8-bit table (`Op.Adc816`, `Op.Sbc816`).
 - **Bank-carry grouping complete.** Re-derive the exclusion set from Clark §5.1.2 rather than from the code: bank-0 confinement is direct page and the stack; everything else carries.
-- **Cycle counts derive to §10.5's formulas** for every new opcode, at every `m`/`x`/`w`/`p` combination — the check 7b's final review ran against §5 and which found all sixteen matched.
+- **Cycle counts derive to §12.5's formulas** for every new opcode, at every `m`/`x`/`w`/`p` combination — the check 7b's final review ran against §5 and which found all sixteen matched.
 - **Every new test genuinely discriminates.** For each, name the production line it fails against. A test that passes against the broken code is worse than no test, because it reads as coverage. 7b's reviews found two of these.
 - **No test asserts only one of a Z/N pair** where both are set by the operation under test.
 - **`ExpectedImplementedOpcodes` is 153** and its doc comment describes all five bumps.
