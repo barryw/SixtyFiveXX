@@ -316,7 +316,10 @@ public class W65C816AluTests
         var ram = new BankedBus();
         ram[0xC000] = 0x89;       // BIT #
         ram[0xC001] = 0x00;
-        ram[0xC002] = 0x80;       // operand $8000 — would set N if Op.Bit ran
+        ram[0xC002] = 0xC0;       // operand $C000 — bits 15 AND 14 set, so Op.Bit would flip
+                                  // BOTH N and V. $8000 would leave V clear either way, making
+                                  // that assertion non-discriminating; this is the operand that
+                                  // makes all three assertions do work.
 
         var cpu = Banked816TestMachine.Make(ram);
         cpu.State.E = false;
