@@ -1366,29 +1366,11 @@ Expected: **FAIL**, `UndefinedOpcodeException` for `$F4`.
         Set(0x62, "PER", AddrMode.Stack, Op.Per, Access.None);
 ```
 
-- [ ] **Step 6: Run everything, raise `ExpectedImplementedOpcodes` to 256, both TFMs, commit**
+- [ ] **Step 6: Retire the undefined-opcode probe test and replace it, in this same task**
 
-Expected: conformance **1822**. Bump the README to 256, and say the 65816 is complete.
+The moment the table reaches 256, `W65C816StateTests.UnimplementedOpcode_Throws` has no probe byte left — it derives one from the first `Op.Undefined` entry and calls `Assert.Fail` with an explanatory message when there is none. **Delete it and add its replacement in the same commit**, so the suite never goes red and no commit exists in which nothing asserts the tables are full.
 
-**`W65C816StateTests.UnimplementedOpcode_Throws` fails here** — it derives its probe byte from the first `Op.Undefined` entry and there is no longer one, so it calls `Assert.Fail` with an explanatory message by design. **Leave it failing and hand it to task 9**, which deletes it and replaces it. Do not delete it here: task 9's replacement test is the thing that has to prove the table is full, and landing the deletion without the replacement leaves a window with neither.
-
-Because of that, **this task's unit run is expected to report exactly one failure**, and the commit message must say so.
-
-```bash
-git commit -m "feat: 65816 PEA, PEI and PER — 256 of 256 opcodes"
-```
-
-**Gate:** conformance **1822**, both TFMs, 60,000 new vectors green, and exactly one known unit failure — `UnimplementedOpcode_Throws` — named in the task report.
-
----
-
-### Task 9: Whole-branch review, the undefined-opcode path, and the full 512-file gate
-
-**Files:** whatever the review finds, plus `tests/SixtyFiveXX.Tests/W65C816StateTests.cs`, `tests/SixtyFiveXX.Tests/MicroOpTableTests.cs`, `README.md`, and the spec's Phase 7d Gate section.
-
-- [ ] **Step 1: Retire the probe test and replace it**
-
-Delete `W65C816StateTests.UnimplementedOpcode_Throws`. Add to `MicroOpTableTests.cs`:
+Delete `W65C816StateTests.UnimplementedOpcode_Throws`. Add to `tests/SixtyFiveXX.Tests/MicroOpTableTests.cs`:
 
 ```csharp
     /// <summary>
@@ -1422,13 +1404,31 @@ The six type names above are the actual file names in `src/SixtyFiveXX/Variants/
 
 `UndefinedOpcodeException` and `FetchOpcode`'s guard that throws it **stay**. The type is public API in a released package, so removing it is a breaking change that buys nothing, and the guard is the defensive path for exactly the hole this new test detects. Leave its remarks count-free.
 
-- [ ] **Step 2: Produce the branch diff**
+- [ ] **Step 7: Run everything, raise `ExpectedImplementedOpcodes` to 256, both TFMs, commit**
+
+Expected: conformance **1822**, and the unit suite **green** — no known failures. Bump the README to 256, and say the 65816 is complete.
+
+```bash
+git commit -m "feat: 65816 PEA, PEI and PER — 256 of 256 opcodes"
+```
+
+**Gate:** conformance **1822**, unit suite green with no known failures, both TFMs, 60,000 new vectors green.
+
+---
+
+### Task 9: Whole-branch review and the full 512-file gate
+
+**Files:** whatever the review finds, plus `README.md` and the spec's Phase 7d Gate section.
+
+The undefined-opcode path was settled in task 8: the probe test is gone and `MicroOpTableTests.EveryVariantDefinesAll256Opcodes` replaced it in the same commit, so no commit on this branch has either a red suite or an unguarded table. `UndefinedOpcodeException` and its fetch guard stay.
+
+- [ ] **Step 1: Produce the branch diff**
 
 ```bash
 git diff main...HEAD > .superpowers/sdd/p7d-review.diff
 ```
 
-- [ ] **Step 3: Review against this checklist**
+- [ ] **Step 2: Review against this checklist**
 
 Each item is a failure this project has actually had:
 
@@ -1444,19 +1444,19 @@ Each item is a failure this project has actually had:
 - **No count in a doc comment that will drift.** Three sites were deliberately made count-free; do not reintroduce one.
 - **`PublicSurfaceTests` untouched**, and no vector file or cache directory staged.
 
-- [ ] **Step 4: Fix Critical and Important findings, each as its own commit**
+- [ ] **Step 3: Fix Critical and Important findings, each as its own commit**
 
 Minor findings are either fixed or recorded in the ledger with the reason for not fixing. Do not silently drop one.
 
-- [ ] **Step 5: Update the README**
+- [ ] **Step 4: Update the README**
 
 The 65816 section says 256 of 256 and lists the phase's groups. The support-matrix row was deliberately made count-free — leave it that way.
 
-- [ ] **Step 6: Add the Verified paragraph to the spec, and mark the phase-table row**
+- [ ] **Step 5: Add the Verified paragraph to the spec, and mark the phase-table row**
 
 Under §"Phase 7d" Gate, in the shape 7a, 7b, 7c and 7c′ already use: the measured counts, both TFMs, and any rule with no vector coverage that is pinned only by a unit test. Then mark the phase-split table's **7d** row complete.
 
-- [ ] **Step 7: Run the full gate on an idle machine**
+- [ ] **Step 6: Run the full gate on an idle machine**
 
 ```bash
 uptime
@@ -1467,7 +1467,7 @@ dotnet test tests/SixtyFiveXX.Tests -c Release --filter "Category=Performance"
 
 Expected: conformance **1822** on both TFMs — all 512 files, 5,120,000 vectors — the unit suite green on both, and a throughput figure above the 50 MHz floor. Pass an explicit 600000 ms timeout on the conformance call. If the throughput gate fails, check `uptime` before believing it.
 
-- [ ] **Step 8: Record the phase in the ledger**
+- [ ] **Step 7: Record the phase in the ledger**
 
 Append a phase-7d section to `.superpowers/sdd/progress.md`: per-task commits, what each gate measured, every defect the vectors found that review did not, every defect review found that the vectors could not, every research gap §14 recorded as open, and the carry-forward list for 7e.
 
