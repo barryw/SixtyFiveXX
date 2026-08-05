@@ -1461,6 +1461,46 @@ is why Clark's `9-2*m` (§13.3) has no `p` term and no `x` term — this is the 
 - `RWB` is `1` on the two reads and the middle cycle, `0` on the two writes. There is no `1/0` cell anywhere
   in an RMW row, unlike the load/store rows, because the direction of every cycle is fixed by the row.
 
+#### Measured, not cited: the middle cycle's pins are the same in emulation mode
+
+Added 2026-08-05 by phase 7c′ task 2, from the vectors. Recorded in §12's form for a measured result: this
+is **not** in Clark and **not** in the datasheet, and the two open questions it closes were recorded as
+gaps *before* the measurement was taken, not rationalised afterwards.
+
+> **The emulation-mode middle cycle asserts `MLB` with neither `VDA` nor `VPA` — the same pins as the
+> native one, differing only in `RWB`.** Table 5-7's unqualified `VDA = 0, VPA = 0` on that row is
+> **literal, and holds in emulation mode too**, where the cycle is a genuine write to memory. Note 17
+> governs `RWB` and only `RWB`, exactly as its wording says; the datasheet's silence about `VDA` was not an
+> omission to be filled in by inference.
+
+**The vector that established it.** `06 e`, vector `1` (`ASL dp`, emulation), **cycle 4** — the middle
+cycle. Expected pin string `---wemxl`, against `d--wemxl` from a core classifying that cycle
+`VDA | MLB`. Only the first character differs: the address (`$0021CB`), the value (`$74`), the direction
+(`w`, slot 3) and `MLB` (`l`, slot 7) all matched. The eight-character string is
+`BuildPinString`'s, in `tests/SixtyFiveXX.Conformance/Harte816Tests.cs`.
+
+**All four rows agree, and so do all sixteen opcodes.** `ASL`, `LSR`, `ROL` and `ROR` in `dp` (row 10b),
+`dp,X` (16b), `abs` (1d) and `abs,X` (6b) each failed identically and only on that character, at cycle 4
+for the unindexed modes and cycle 5 for the indexed ones — sixteen of sixteen, 160,000 emulation vectors.
+The 160,000 native vectors passed unchanged, which is the same statement for the native form. So the
+generalisation, and the useful one for phase 7d's remaining read-modify-writes (`DEC`, `INC`, `TRB`,
+`TSB`):
+
+> **All three middle-cycle forms carry `MLB` alone.** Native (internal, `RWB = 1`) and emulation (write,
+> `RWB = 0`) are pin-identical. A read-modify-write's middle cycle never asserts an address-valid pin, in
+> either mode, at either width.
+
+**The second gap the same run closed.** The middle cycle drives the **low** address (`AA`, `D+DO`,
+`AA+X`, `D+DO+X`) when `m = 1` — *not* the `+1` printed unconditionally in all four rows. Established
+twice over and independently: every emulation vector matched on the address field above, and all 160,000
+native vectors passed with the low address driven at `m = 1`. The `+1` in the printed rows belongs to the
+16-bit form only, where it is confirmed. See §13.6, gaps 1 and 2, both now closed.
+
+**And one inference corroborated.** §13.6 gap 3 — that the emulation middle cycle writes the *unmodified*
+value — was an inference from the certified NMOS part rather than a 65816 source. The value field matched
+on all sixteen opcodes, so it is right; it remains an inference that the vectors confirmed, not a cited
+fact.
+
 ### 13.2 The 16-bit write order — the writes reverse
 
 **The reads go low-then-high and the writes go high-then-low.** This is stated by the table rows directly,
@@ -1758,9 +1798,9 @@ Everything above either carries a named source or appears here. Same practice as
 
 | # | Gap | Status |
 | --- | --- | --- |
-| 1 | **The address the middle cycle drives when `m = 1`.** Table 5-7 prints the `+1` (high) address on that cycle in all four rows — `DBR,AA+1`, `0,D+DO+1`, `DBR,AA+X+1`, `0,D+DO+X+1` — and gives **no separate 8-bit form**: the `(1)`-gated high-half rows are skipped when `m = 1`, but the middle cycle's own address expression is printed unconditionally and still carries the `+1`. **The sources are silent** on whether the 8-bit middle cycle drives `AA` or `AA+1`. Not resolvable from the 6502 or 65C02 either, since neither has a 16-bit form for the `+1` to come from | **Open.** Must be measured. Affects `RmwModifyRead816`/`RmwModifyWrite816`'s address argument, which the plan currently draws as `_addr` (the low address) |
-| 2 | **Whether the emulation-mode middle cycle asserts `VDA`.** Note 17 says only *"the RWB is low during both write and modify cycles"* — it speaks of `RWB` and nothing else. Table 5-7 prints `VDA = 0, VPA = 0` on that cycle without qualification, but a cycle that genuinely writes memory asserting neither address-valid pin would be unusual. **The sources are silent** on which of the two the emulation case is | **Open.** Decides the first two characters of that cycle's pin string in emulation mode. The vectors assert it |
-| 3 | **What value the emulation-mode middle cycle writes.** Note 17 states the *direction* only. That the NMOS double-write puts back the **unmodified** value is a property of the NMOS 6502 — which this codebase has certified separately — and **the 65816 sources do not state it**. Recorded explicitly as an inference from a different part, not from a 65816 source, per this document's rule | **Open.** The plan's `RmwModifyWrite816` writes `_data` (unmodified) on that basis. Plausible and untested |
+| 1 | **The address the middle cycle drives when `m = 1`.** Table 5-7 prints the `+1` (high) address on that cycle in all four rows — `DBR,AA+1`, `0,D+DO+1`, `DBR,AA+X+1`, `0,D+DO+X+1` — and gives **no separate 8-bit form**: the `(1)`-gated high-half rows are skipped when `m = 1`, but the middle cycle's own address expression is printed unconditionally and still carries the `+1`. **The sources are silent** on whether the 8-bit middle cycle drives `AA` or `AA+1`. Not resolvable from the 6502 or 65C02 either, since neither has a 16-bit form for the `+1` to come from | **CLOSED 2026-08-05, measured.** It drives the **low** address, `AA` — the plan's `_addr` was right. All 160,000 native vectors pass with it, and all sixteen emulation vectors matched on the address field. See §13.1's "Measured, not cited" note. The `+1` in the printed rows is the 16-bit form's alone |
+| 2 | **Whether the emulation-mode middle cycle asserts `VDA`.** Note 17 says only *"the RWB is low during both write and modify cycles"* — it speaks of `RWB` and nothing else. Table 5-7 prints `VDA = 0, VPA = 0` on that cycle without qualification, but a cycle that genuinely writes memory asserting neither address-valid pin would be unusual. **The sources are silent** on which of the two the emulation case is | **CLOSED 2026-08-05, measured.** It does **not**. Table 5-7's `VDA = 0, VPA = 0` is literal and holds in emulation mode too, so the native and emulation middle cycles are pin-identical and differ only in `RWB`. The "unusual" reading was the correct one. Established by `06 e` vector 1 cycle 4, `---wemxl` against `d--wemxl`, and by all sixteen opcodes agreeing. See §13.1's "Measured, not cited" note |
+| 3 | **What value the emulation-mode middle cycle writes.** Note 17 states the *direction* only. That the NMOS double-write puts back the **unmodified** value is a property of the NMOS 6502 — which this codebase has certified separately — and **the 65816 sources do not state it**. Recorded explicitly as an inference from a different part, not from a 65816 source, per this document's rule | **Corroborated 2026-08-05, still an inference.** The unmodified value is right: the vectors' value field matched on all sixteen opcodes. Remains an inference from a different part that the vectors confirmed, not a cited 65816 fact — the distinction is kept deliberately, per this document's rule |
 | 4 | **`TRB`/`TSB`'s `Z` at 16 bits.** Clark §6.1.2.3 states *"The z flag reflects whether the result (of the bitwise And) is zero"* and *"These are 16-bit operations when the m flag is 0"*, but his only worked example is 8-bit. So the width is stated and the `Z` rule is stated; what no source gives is a 16-bit worked value to check an implementation against, the way Example 2 does for decimal `SBC` in §12.1 | **Recorded, not open.** Both rules are cited. Noted only so a later reader knows there is no 16-bit reference value in any source and the vectors are the first check |
 | 5 | **Whether any of the 59 behaves differently in emulation mode beyond the forced `m = 1`/`x = 1`.** Clark's §6 preamble's *"In general, in emulation mode … the 65C816 has the same behavior as 65C02"* is the only statement in view, and §12.6 already records that "In general" was load-bearing and that this exact sentence turned out to be **wrong** for decimal `SBC`. It is not treated as a citation here | **Open by policy.** Treat as hypothesis; the vectors arbitrate |
 
@@ -1774,3 +1814,10 @@ Clark §6.10.1–2, quoted); `XBA`'s 3 cycles and 8-bit `N`/`Z` (§13.5, both st
 expensive findings:** `MLB` is asserted on the RMW data cycles including the internal one, so the pin
 string's eighth character is not `-` there (§13.1); and Clark's §6.1.3 prose has the `m`-flag polarity
 inverted for `ASL`'s carry bit (§13.3).
+
+**Gaps 1, 2 and 3 were closed on 2026-08-05 by phase 7c′ task 2, from the vectors** — see §13.1's
+"Measured, not cited" note for the measurement and the vector that established it. Gaps 4 and 5 remain as
+recorded. Worth noting how the three fell: gap 1 confirmed the plan's guess, gap 2 refuted it, and gap 3
+confirmed an inference borrowed from a different part. All three had been written down as open *before* the
+code was run, which is the only reason the second one reads as a measurement rather than as a constant
+tuned to fit a failing vector.
