@@ -802,7 +802,7 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
         Op.Pha or Op.Pla => !_s.M,
         Op.Phx or Op.Plx or Op.Phy or Op.Ply => !_s.XFlag,
         Op.Phd or Op.Pld or Op.Pea or Op.Pei or Op.Per => true,
-        _ => false,             // PHP, PHB, PHK, PLB — always one byte
+        _ => false,             // PHP, PLP, PHB, PHK, PLB — always one byte
     };
 
     /// <summary>

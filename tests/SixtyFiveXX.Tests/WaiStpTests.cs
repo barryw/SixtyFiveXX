@@ -515,7 +515,7 @@ public class WaiStpTests
         cpu.Tick();
 
         Assert.Equal(0x12C001, cpu.LastAddress);
-        Assert.Equal(BusPins.None, cpu.LastPins);    // an internal cycle: the halt reads nothing
+        Assert.Equal(BusPins.None, cpu.LastPins);    // WaiHold816's fixed classification, not proof this cycle took the internal-cycle branch — BusPinsTests' structural invariant covers that
     }
 
     // ---- The other sub-variants do not have them ----
