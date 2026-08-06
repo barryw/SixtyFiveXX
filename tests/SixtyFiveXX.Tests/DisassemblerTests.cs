@@ -646,7 +646,7 @@ public class DisassemblerTests
 
     /// <summary>
     /// The library renders dialect-neutral text. <c>@w</c> and <c>@l</c> are 64tass's spelling
-    /// of "this width, not the shorter one that also fits" (research §15.2, gap 2); ca65 writes
+    /// of "this width, not the shorter one that also fits" (research §15.5 gap 2); ca65 writes
     /// <c>a:</c>. They belong in <c>RoundTripTests.ForAssembler</c>, which is where this project
     /// already puts an assembler's spelling — the <c>RMB0</c>/<c>rmb 0,</c> case — and putting
     /// them here instead was tried in task 3 and reversed.

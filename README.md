@@ -80,8 +80,7 @@ IRQ and NMI (hardware-correct sampling, edge latching, and BRK/NMI hijacking), t
 halt line, and the SO pin are complete, alongside `Reset()` and `BRK`.
 
 The 65816 was built in five phases; the core and its disassembler are both finished.
-Phase 7a widened `CpuState` to carry
-the 65816's register file on **every** variant — 16-bit `A`, `X`, `Y` and `S`, plus `DP`,
+Phase 7a widened `CpuState` to carry the 65816's register file on **every** variant — 16-bit `A`, `X`, `Y` and `S`, plus `DP`,
 `DBR`, `PBR` and `E` — and added `IBus.Internal(int)` for the cycles that drive an address
 without accessing memory, which no 8-bit core has. The 8-bit cores use the low bytes and are
 unchanged: the full conformance suite passes identically either side of the widening, and
