@@ -8,13 +8,19 @@ namespace SixtyFiveXX;
 /// <para>
 /// Text and behaviour cannot drift because there is nothing to drift from: the mnemonic
 /// and the addressing mode come out of the row <c>MicroOpTable</c> turned into a micro-op
-/// sequence. For the five 8-bit cores, adding an opcode makes it decodable in the same
-/// commit that makes it executable, without exception. The 65816 does not have that
-/// property yet: most of its addressing modes have no case in the <c>switch</c> below and
-/// throw <see cref="NotSupportedException"/>, and <see cref="AddrMode.Immediate"/> decodes
-/// at a fixed length that ignores the <c>m</c> flag. Phase 7e closes the gap. No count is
-/// quoted deliberately — it has drifted with every task of phase 7c, and the <c>switch</c>
-/// below is the live answer.
+/// sequence. Adding an opcode makes it decodable in the same commit that makes it
+/// executable, without exception, and that now holds on all six cores: every addressing mode
+/// any of their tables uses has an arm in the <c>switch</c> below. The
+/// <see cref="NotSupportedException"/> at the end is not reachable for a defined opcode of
+/// any shipped variant and stays as the loud failure a seventh core's new mode would get.
+/// </para>
+/// <para>
+/// One mode's length is not a property of the encoding. On the 65816
+/// <see cref="AddrMode.Immediate"/> is two bytes when the operative width flag says eight
+/// bits and three when it says sixteen, and <em>which</em> flag applies is the operation's
+/// own — the accumulator operations follow <c>m</c> and the index operations <c>x</c>. That
+/// is why the width-carrying overload exists, and why an assumed default is documented on
+/// the other one rather than hidden.
 /// </para>
 /// <para>
 /// <strong>Decoding reads the bus.</strong> On a flat memory map that is free; on a bus
@@ -73,14 +79,34 @@ public static class Disassembler
         {
             AddrMode.Implied => new Instruction(info.Mnemonic, "", 1),
             AddrMode.Accumulator => new Instruction(info.Mnemonic, "A", 1),
+
+            // The one mode whose length is not a property of the encoding. Which flag sizes it
+            // is a property of the operation, and the opcode table already declares that per
+            // opcode — Width.M for the operations that move through the accumulator, Width.X
+            // for the ones that move through an index register. Read from there rather than
+            // from a list of Op values kept in this file, so a table edit cannot leave the
+            // disassembler behind. The five 8-bit cores never take this arm: their tables
+            // declare no Width at all, so info.Width is permanently Width.None there and the
+            // JIT sees a constant false for the flags besides.
+            AddrMode.Immediate when (info.Width == Width.M && wideAccumulator) ||
+                                    (info.Width == Width.X && wideIndex) =>
+                new Instruction(info.Mnemonic, $"#${Operand16<TBus, TVariant>(bus, address):X4}", 3),
             AddrMode.Immediate =>
                 new Instruction(info.Mnemonic, $"#${Operand8<TBus, TVariant>(bus, address, 1):X2}", 2),
 
-            AddrMode.ZeroPage =>
+            // REP, SEP and WDM. Written like an immediate because that is what assemblers take,
+            // but a fixed eight bits that no width flag reaches (datasheet Table 5-7 Note 1).
+            AddrMode.ImmediateByte =>
+                new Instruction(info.Mnemonic, $"#${Operand8<TBus, TVariant>(bus, address, 1):X2}", 2),
+
+            // Page zero on the eight-bit cores and the direct page on the 65816 differ in how
+            // the address is formed — D is added, and the result is always bank 0 — but not in
+            // how the operand is written, so they share an arm rather than duplicating one.
+            AddrMode.ZeroPage or AddrMode.DirectPage =>
                 new Instruction(info.Mnemonic, $"${Operand8<TBus, TVariant>(bus, address, 1):X2}", 2),
-            AddrMode.ZeroPageX =>
+            AddrMode.ZeroPageX or AddrMode.DirectPageX =>
                 new Instruction(info.Mnemonic, $"${Operand8<TBus, TVariant>(bus, address, 1):X2},X", 2),
-            AddrMode.ZeroPageY =>
+            AddrMode.ZeroPageY or AddrMode.DirectPageY =>
                 new Instruction(info.Mnemonic, $"${Operand8<TBus, TVariant>(bus, address, 1):X2},Y", 2),
 
             AddrMode.Absolute =>
@@ -90,6 +116,13 @@ public static class Disassembler
             AddrMode.AbsoluteY =>
                 new Instruction(info.Mnemonic, $"${Operand16<TBus, TVariant>(bus, address):X4},Y", 3),
 
+            // 24-bit absolute. Six hex digits rather than four is the whole of the notation:
+            // the operand carries its own bank byte and addresses anywhere in the 16 MB space.
+            AddrMode.AbsoluteLong =>
+                new Instruction(info.Mnemonic, $"${Operand24<TBus, TVariant>(bus, address):X6}", 4),
+            AddrMode.AbsoluteLongX =>
+                new Instruction(info.Mnemonic, $"${Operand24<TBus, TVariant>(bus, address):X6},X", 4),
+
             // The NMOS page-wrap bug and its CMOS fix are the same three bytes and the same
             // notation; they differ only in where the second vector byte is fetched from.
             AddrMode.Indirect or AddrMode.IndirectFixed =>
@@ -97,26 +130,60 @@ public static class Disassembler
             AddrMode.AbsoluteIndexedIndirect =>
                 new Instruction(info.Mnemonic, $"(${Operand16<TBus, TVariant>(bus, address):X4},X)", 3),
 
-            AddrMode.ZeroPageIndirect =>
+            // Square brackets are how every 65816 assembler distinguishes a long indirect —
+            // one that takes a 24-bit pointer, and therefore its bank, out of memory — from the
+            // sixteen-bit indirects written in parentheses. JML [abs] is the only user of this.
+            AddrMode.AbsoluteIndirectLong =>
+                new Instruction(info.Mnemonic, $"[${Operand16<TBus, TVariant>(bus, address):X4}]", 3),
+
+            AddrMode.ZeroPageIndirect or AddrMode.DirectPageIndirect =>
                 new Instruction(info.Mnemonic, $"(${Operand8<TBus, TVariant>(bus, address, 1):X2})", 2),
-            AddrMode.IndexedIndirect =>
+            AddrMode.IndexedIndirect or AddrMode.DirectPageIndexedIndirectX =>
                 new Instruction(info.Mnemonic, $"(${Operand8<TBus, TVariant>(bus, address, 1):X2},X)", 2),
-            AddrMode.IndirectIndexed =>
+            AddrMode.IndirectIndexed or AddrMode.DirectPageIndirectY =>
                 new Instruction(info.Mnemonic, $"(${Operand8<TBus, TVariant>(bus, address, 1):X2}),Y", 2),
+
+            AddrMode.DirectPageIndirectLong =>
+                new Instruction(info.Mnemonic, $"[${Operand8<TBus, TVariant>(bus, address, 1):X2}]", 2),
+            AddrMode.DirectPageIndirectLongY =>
+                new Instruction(info.Mnemonic, $"[${Operand8<TBus, TVariant>(bus, address, 1):X2}],Y", 2),
+
+            AddrMode.StackRelative =>
+                new Instruction(info.Mnemonic, $"${Operand8<TBus, TVariant>(bus, address, 1):X2},S", 2),
+            AddrMode.StackRelativeIndirectY =>
+                new Instruction(info.Mnemonic, $"(${Operand8<TBus, TVariant>(bus, address, 1):X2},S),Y", 2),
+
+            // MVN/MVP. The stream is opcode, destination bank, source bank; the text is
+            // source, destination — the reverse (research document §14.3, and §15.1 measured
+            // MVN $12,$34 assembling to 54 34 12). Rendering the two bytes in the order they
+            // were read produces a move in the opposite direction that an assembler accepts
+            // without complaint, because both operands are syntactically valid banks. Hence
+            // offset 2 first.
+            AddrMode.BlockMove => new Instruction(
+                info.Mnemonic,
+                $"${Operand8<TBus, TVariant>(bus, address, 2):X2}," +
+                $"${Operand8<TBus, TVariant>(bus, address, 1):X2}",
+                3),
 
             // Shown as the address landed on, not the displacement encoded. The base is the
             // byte after the instruction, which is why the length is added before the offset.
             AddrMode.Relative => new Instruction(
                 info.Mnemonic,
-                $"${BranchTarget(address, 2, Operand8<TBus, TVariant>(bus, address, 1)):X4}",
+                BranchTarget<TVariant>(address, 2, (sbyte)Operand8<TBus, TVariant>(bus, address, 1)),
                 2),
+
+            // BRL, and the only operand read as a signed sixteen-bit word.
+            AddrMode.RelativeLong => new Instruction(
+                info.Mnemonic,
+                BranchTarget<TVariant>(address, 3, (short)Operand16<TBus, TVariant>(bus, address)),
+                3),
 
             // BBR/BBS: a page-zero address, then a displacement measured from the end of a
             // three-byte instruction.
             AddrMode.ZeroPageRelative => new Instruction(
                 info.Mnemonic,
                 $"${Operand8<TBus, TVariant>(bus, address, 1):X2}," +
-                $"${BranchTarget(address, 3, Operand8<TBus, TVariant>(bus, address, 2)):X4}",
+                BranchTarget<TVariant>(address, 3, (sbyte)Operand8<TBus, TVariant>(bus, address, 2)),
                 3),
 
             // The 65C02's undefined opcodes are NOPs, but not uniform ones: these two shapes
@@ -148,22 +215,32 @@ public static class Disassembler
         where TVariant : struct, ICpuVariant =>
         info.Operation switch
         {
-            // The byte after BRK is fetched and discarded, never executed. Written as an
+            // The byte after BRK or COP is fetched and discarded, never executed. Written as an
             // immediate because that is both what it is and what assemblers accept.
-            Op.Brk =>
+            Op.Brk or Op.Cop =>
                 new Instruction(info.Mnemonic, $"#${Operand8<TBus, TVariant>(bus, address, 1):X2}", 2),
-            Op.Jmp or Op.Jsr =>
+
+            // PEA's operand is not an address it dereferences — it is the literal word pushed —
+            // but it is written and encoded exactly like an absolute one, which is why 64tass
+            // accepts PEA @w $1234 and why it shares this arm.
+            Op.Jmp or Op.Jsr or Op.Pea =>
                 new Instruction(info.Mnemonic, $"${Operand16<TBus, TVariant>(bus, address):X4}", 3),
 
-            // COP, PEA, PEI and PER: 65816-only stack opcodes that share AddrMode.Stack with
-            // the arms above but match none of their shapes — COP takes a signature byte like
-            // BRK, PEA and PER take an absolute-sized operand, PEI a zero-page-sized one. Not
-            // decoded here for the same reason the class header gives for every other 65816
-            // mode this switch does not cover: phase 7e owns 65816 disassembly whole, and a
-            // decoder for four of its opcodes without the rest is worse than a loud gap.
-            Op.Cop or Op.Pea or Op.Pei or Op.Per =>
-                throw new NotSupportedException($"No operand format for {info.Mnemonic} yet — phase 7e."),
+            // PEI's operand really is a direct-page offset, and is written in parentheses
+            // because that is what it does: push the word found there.
+            Op.Pei =>
+                new Instruction(info.Mnemonic, $"(${Operand8<TBus, TVariant>(bus, address, 1):X2})", 2),
 
+            // PER encodes a signed sixteen-bit displacement exactly as BRL does and is
+            // rendered the same way — as the address it computes, not the displacement it
+            // stores. Its bytes therefore depend on where the instruction sits (research
+            // document §15.1, measured at four origins).
+            Op.Per => new Instruction(
+                info.Mnemonic,
+                BranchTarget<TVariant>(address, 3, (short)Operand16<TBus, TVariant>(bus, address)),
+                3),
+
+            // The pushes, the pulls, RTS, RTI and RTL: one byte and no operand.
             _ => new Instruction(info.Mnemonic, "", 1),
         };
 
@@ -179,6 +256,16 @@ public static class Disassembler
         where TVariant : struct, ICpuVariant =>
         bus.Read(OperandAddress<TVariant>(address, 1)) |
         (bus.Read(OperandAddress<TVariant>(address, 2)) << 8);
+
+    /// <summary>
+    /// Reads a little-endian 24-bit operand — the long modes' <c>AAL</c>, <c>AAH</c>,
+    /// <c>AAB</c>. 65816 only, because no other variant has a four-byte instruction.
+    /// </summary>
+    private static int Operand24<TBus, TVariant>(in TBus bus, int address)
+        where TBus : struct, IBus
+        where TVariant : struct, ICpuVariant =>
+        Operand16<TBus, TVariant>(bus, address) |
+        (bus.Read(OperandAddress<TVariant>(address, 3)) << 16);
 
     /// <summary>
     /// How much of the decode address is significant: 16 bits for the eight-bit cores, 24 for
@@ -207,8 +294,33 @@ public static class Disassembler
             : (address + offset) & 0xFFFF;
 
     /// <summary>
-    /// Where a branch lands: the byte after the instruction, plus the signed displacement.
+    /// Where a branch lands, already written as an operand: the byte after the instruction,
+    /// plus the signed displacement, which the caller has sign-extended to the width its mode
+    /// encodes — eight bits for <see cref="AddrMode.Relative"/> and
+    /// <see cref="AddrMode.ZeroPageRelative"/>, sixteen for <see cref="AddrMode.RelativeLong"/>
+    /// and <c>PER</c>.
     /// </summary>
-    private static int BranchTarget(int address, int length, int displacement) =>
-        (address + length + (sbyte)displacement) & 0xFFFF;
+    /// <remarks>
+    /// <para>
+    /// <strong>The add wraps within the program bank and never carries into <c>PBR</c></strong>
+    /// (research document §14.5), so a branch's target is always in the instruction's own bank
+    /// — which is precisely <see cref="OperandAddress{TVariant}"/>'s rule, reused here rather
+    /// than restated. Before this the arithmetic masked to 16 bits unconditionally, which was
+    /// invisible while the decode address was masked to bank 0 and became a dropped bank the
+    /// moment it was not.
+    /// </para>
+    /// <para>
+    /// Six digits when the bank is non-zero and four when it is not. Four is the notation
+    /// research §15.1 measured, and every eight-bit core keeps it because their targets cannot
+    /// exceed <c>$FFFF</c>; six is the only rendering that says which bank a banked target is
+    /// in, and a sixteen-bit one would print <c>$C036</c> for a branch in bank <c>$12</c> and
+    /// read as bank 0.
+    /// </para>
+    /// </remarks>
+    private static string BranchTarget<TVariant>(int address, int length, int displacement)
+        where TVariant : struct, ICpuVariant
+    {
+        var target = OperandAddress<TVariant>(address, length + displacement);
+        return target > 0xFFFF ? $"${target:X6}" : $"${target:X4}";
+    }
 }

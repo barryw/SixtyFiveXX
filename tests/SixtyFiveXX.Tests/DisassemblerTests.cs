@@ -74,25 +74,6 @@ public class DisassemblerTests
         Assert.Equal(2, Decode(0x00, 0x12).Length);
     }
 
-    /// <summary>
-    /// COP, PEA, PEI and PER are 65816-only and share <see cref="AddrMode.Stack"/> with the
-    /// pushes, pulls, BRK, JMP and JSR above, but fit none of those shapes. Phase 7e owns
-    /// 65816 disassembly whole, so these throw rather than guess at a length — the same
-    /// contract every other undecoded 65816 addressing mode already has.
-    /// </summary>
-    [Theory]
-    [InlineData(0x02, "COP")]
-    [InlineData(0xF4, "PEA")]
-    [InlineData(0xD4, "PEI")]
-    [InlineData(0x62, "PER")]
-    public void W65C816StackOpcodes_ThrowUntilPhase7e(byte opcode, string mnemonic)
-    {
-        var ex = Assert.Throws<NotSupportedException>(
-            () => Decode<W65C816Variant>(0x1000, opcode, 0x00, 0x00));
-
-        Assert.Contains(mnemonic, ex.Message);
-    }
-
     [Theory]
     // The displacement is measured from the byte after the branch, so $00 lands on the next
     // instruction, $7F is the furthest forward and $80 the furthest back.
@@ -425,5 +406,259 @@ public class DisassemblerTests
         var narrow = Disassembler.Decode<FlatBus, W65C816Variant>(new FlatBus(ram), 0x1000);
 
         Assert.Equal(2, narrow.Length);
+    }
+
+    /// <summary>
+    /// Lays bytes at <paramref name="address"/> in a full 24-bit space and decodes there.
+    /// Operand bytes wrap within the program bank, the way the processor fetches them.
+    /// </summary>
+    private static Instruction Decode816(
+        int address, bool wideAccumulator, bool wideIndex, params byte[] bytes)
+    {
+        var ram = new BankedBus();
+        for (var i = 0; i < bytes.Length; i++)
+        {
+            ram[(address & 0xFF0000) | ((address + i) & 0xFFFF)] = bytes[i];
+        }
+
+        return Disassembler.Decode<RefBus, W65C816Variant>(
+            new RefBus(ram), address, wideAccumulator, wideIndex);
+    }
+
+    /// <summary>
+    /// Every 65816 addressing mode and the text it renders, at a fixed <c>$C000</c>. Expected
+    /// values are research §15.1's notation table, which was measured by assembling each line
+    /// with 64tass rather than recalled. Operand bytes are <c>$12</c>, <c>$34</c>, <c>$56</c>
+    /// in stream order, so a renderer that transposed a little-endian pair would show it.
+    /// </summary>
+    /// <remarks>
+    /// The <c>@w</c>/<c>@l</c> prefixes §15.1's table carries are deliberately absent: they are
+    /// 64tass spellings (§15.5 gap 2) and live in <c>RoundTripTests.ForAssembler</c>, not in
+    /// <see cref="Instruction.Operand"/>. <see cref="W65C816_RendersNoAssemblerSpecificText"/>
+    /// holds that line.
+    /// </remarks>
+    [Theory]
+    [InlineData(new byte[] { 0xEA }, "NOP", "", 1)]
+    [InlineData(new byte[] { 0x0A }, "ASL", "A", 1)]
+
+    // ImmediateByte — one byte whatever m and x say (datasheet Table 5-7 Note 1).
+    [InlineData(new byte[] { 0xC2, 0x12 }, "REP", "#$12", 2)]
+    [InlineData(new byte[] { 0xE2, 0x12 }, "SEP", "#$12", 2)]
+    [InlineData(new byte[] { 0x42, 0x12 }, "WDM", "#$12", 2)]
+
+    // The direct-page family. Same notation as the eight-bit cores' page zero.
+    [InlineData(new byte[] { 0xA5, 0x12 }, "LDA", "$12", 2)]
+    [InlineData(new byte[] { 0xB5, 0x12 }, "LDA", "$12,X", 2)]
+    [InlineData(new byte[] { 0xB6, 0x12 }, "LDX", "$12,Y", 2)]
+    [InlineData(new byte[] { 0xB2, 0x12 }, "LDA", "($12)", 2)]
+    [InlineData(new byte[] { 0xB1, 0x12 }, "LDA", "($12),Y", 2)]
+    [InlineData(new byte[] { 0xA1, 0x12 }, "LDA", "($12,X)", 2)]
+
+    // The long indirects. Square brackets are how every 65816 assembler tells them from the
+    // sixteen-bit indirects, and they are the only operands that use them.
+    [InlineData(new byte[] { 0xA7, 0x12 }, "LDA", "[$12]", 2)]
+    [InlineData(new byte[] { 0xB7, 0x12 }, "LDA", "[$12],Y", 2)]
+
+    // Stack-relative.
+    [InlineData(new byte[] { 0xA3, 0x12 }, "LDA", "$12,S", 2)]
+    [InlineData(new byte[] { 0xB3, 0x12 }, "LDA", "($12,S),Y", 2)]
+
+    // Absolute, and absolute long — three operand bytes, so six hex digits.
+    [InlineData(new byte[] { 0xAD, 0x12, 0x34 }, "LDA", "$3412", 3)]
+    [InlineData(new byte[] { 0xBD, 0x12, 0x34 }, "LDA", "$3412,X", 3)]
+    [InlineData(new byte[] { 0xB9, 0x12, 0x34 }, "LDA", "$3412,Y", 3)]
+    [InlineData(new byte[] { 0xAF, 0x12, 0x34, 0x56 }, "LDA", "$563412", 4)]
+    [InlineData(new byte[] { 0xBF, 0x12, 0x34, 0x56 }, "LDA", "$563412,X", 4)]
+
+    // The jumps and calls, including both opcodes this table spells JML.
+    [InlineData(new byte[] { 0x6C, 0x12, 0x34 }, "JMP", "($3412)", 3)]
+    [InlineData(new byte[] { 0x7C, 0x12, 0x34 }, "JMP", "($3412,X)", 3)]
+    [InlineData(new byte[] { 0xFC, 0x12, 0x34 }, "JSR", "($3412,X)", 3)]
+    [InlineData(new byte[] { 0xDC, 0x12, 0x34 }, "JML", "[$3412]", 3)]
+    [InlineData(new byte[] { 0x5C, 0x12, 0x34, 0x56 }, "JML", "$563412", 4)]
+    [InlineData(new byte[] { 0x22, 0x12, 0x34, 0x56 }, "JSL", "$563412", 4)]
+
+    // Both branch widths, shown as the address landed on. $C000 + 2 + $12 and
+    // $C000 + 3 + $3412 — the second is research §15.1's displacement rule run backwards.
+    [InlineData(new byte[] { 0xF0, 0x12 }, "BEQ", "$C014", 2)]
+    [InlineData(new byte[] { 0x82, 0x12, 0x34 }, "BRL", "$F415", 3)]
+
+    // AddrMode.Stack, which fixes no length: one byte for the pushes, pulls and RTL, two for
+    // BRK, COP and PEI, three for JMP, JSR, PEA and PER.
+    [InlineData(new byte[] { 0x8B }, "PHB", "", 1)]
+    [InlineData(new byte[] { 0x6B }, "RTL", "", 1)]
+    [InlineData(new byte[] { 0x00, 0x12 }, "BRK", "#$12", 2)]
+    [InlineData(new byte[] { 0x02, 0x12 }, "COP", "#$12", 2)]
+    [InlineData(new byte[] { 0xD4, 0x12 }, "PEI", "($12)", 2)]
+    [InlineData(new byte[] { 0x4C, 0x12, 0x34 }, "JMP", "$3412", 3)]
+    [InlineData(new byte[] { 0x20, 0x12, 0x34 }, "JSR", "$3412", 3)]
+    [InlineData(new byte[] { 0xF4, 0x12, 0x34 }, "PEA", "$3412", 3)]
+    [InlineData(new byte[] { 0x62, 0x12, 0x34 }, "PER", "$F415", 3)]
+    public void W65C816_EveryModeRendersInTheMeasuredNotation(
+        byte[] bytes, string mnemonic, string operand, int length)
+    {
+        var decoded = Decode816(0xC000, wideAccumulator: false, wideIndex: false, bytes);
+
+        Assert.Equal(mnemonic, decoded.Mnemonic);
+        Assert.Equal(operand, decoded.Operand);
+        Assert.Equal(length, decoded.Length);
+    }
+
+    /// <summary>
+    /// MVN and MVP reverse their operands. The byte stream is opcode, destination bank,
+    /// source bank (research document §14.3); assemblers write MVN source,destination.
+    /// Rendering them in byte order produces text that reassembles into a different
+    /// instruction — measured against 64tass: MVN $12,$34 assembles to 54 34 12.
+    /// </summary>
+    [Theory]
+    [InlineData(0x54, "MVN")]
+    [InlineData(0x44, "MVP")]
+    public void BlockMove_RendersSourceThenDestination(byte opcode, string mnemonic)
+    {
+        var ram = new BankedBus();
+        ram[0xC000] = opcode;
+        ram[0xC001] = 0x34;             // destination bank, first in the stream
+        ram[0xC002] = 0x12;             // source bank
+
+        var decoded = Disassembler.Decode<RefBus, W65C816Variant>(new RefBus(ram), 0xC000);
+
+        Assert.Equal(mnemonic, decoded.Mnemonic);
+        Assert.Equal("$12,$34", decoded.Operand);
+        Assert.Equal(3, decoded.Length);
+    }
+
+    /// <summary>
+    /// The immediate is the one mode whose length the byte stream does not encode, and the
+    /// two width flags are independent: <c>m</c> sizes the accumulator operations and
+    /// <c>x</c> the index ones.
+    /// </summary>
+    /// <remarks>
+    /// Every case passes <strong>opposed</strong> flags, which is the whole point of the test.
+    /// Setting both true would let an implementation that read <c>x</c> where it meant
+    /// <c>m</c> pass unmoved; the same blind spot produced a real hole in phase 7c's test
+    /// design. The membership under test is not a list written here — it is
+    /// <c>OpcodeInfo.Width</c>, which the opcode table declares per opcode.
+    /// </remarks>
+    [Theory]
+    // Width.M: widens on wideAccumulator, and is unmoved by wideIndex.
+    [InlineData(0xA9, "LDA", true, false, "#$3412", 3)]
+    [InlineData(0xA9, "LDA", false, true, "#$12", 2)]
+    [InlineData(0x09, "ORA", true, false, "#$3412", 3)]
+    [InlineData(0x09, "ORA", false, true, "#$12", 2)]
+    [InlineData(0x89, "BIT", true, false, "#$3412", 3)]
+    [InlineData(0x89, "BIT", false, true, "#$12", 2)]
+    [InlineData(0x69, "ADC", true, false, "#$3412", 3)]
+    [InlineData(0xE9, "SBC", false, true, "#$12", 2)]
+    // Width.X: the mirror image.
+    [InlineData(0xA2, "LDX", false, true, "#$3412", 3)]
+    [InlineData(0xA2, "LDX", true, false, "#$12", 2)]
+    [InlineData(0xA0, "LDY", false, true, "#$3412", 3)]
+    [InlineData(0xA0, "LDY", true, false, "#$12", 2)]
+    [InlineData(0xE0, "CPX", false, true, "#$3412", 3)]
+    [InlineData(0xE0, "CPX", true, false, "#$12", 2)]
+    [InlineData(0xC0, "CPY", false, true, "#$3412", 3)]
+    [InlineData(0xC0, "CPY", true, false, "#$12", 2)]
+    // ImmediateByte never widens, whichever flag is set.
+    [InlineData(0xC2, "REP", true, false, "#$12", 2)]
+    [InlineData(0xC2, "REP", false, true, "#$12", 2)]
+    [InlineData(0xE2, "SEP", true, false, "#$12", 2)]
+    [InlineData(0xE2, "SEP", false, true, "#$12", 2)]
+    [InlineData(0x42, "WDM", true, false, "#$12", 2)]
+    [InlineData(0x42, "WDM", false, true, "#$12", 2)]
+    public void W65C816_ImmediateTakesItsWidthFromTheOperationsOwnFlag(
+        byte opcode, string mnemonic, bool wideAccumulator, bool wideIndex,
+        string operand, int length)
+    {
+        var decoded = Decode816(0xC000, wideAccumulator, wideIndex, opcode, 0x12, 0x34);
+
+        Assert.Equal(mnemonic, decoded.Mnemonic);
+        Assert.Equal(operand, decoded.Operand);
+        Assert.Equal(length, decoded.Length);
+    }
+
+    /// <summary>
+    /// A branch's displacement add wraps within the program bank and never carries into
+    /// <c>PBR</c> (research document §14.5), so the target's bank is always the instruction's
+    /// own. Rendered as the full address when that bank is non-zero: a sixteen-bit rendering
+    /// would print <c>$C036</c> for a branch in bank <c>$12</c> and say nothing about which
+    /// bank it lands in.
+    /// </summary>
+    /// <remarks>
+    /// <strong>No round-trip can catch this.</strong> <c>RoundTripTests</c> lays every opcode
+    /// out in bank 0, where the bank is zero and the rendering is four digits either way, so
+    /// this is the only gate on the banked case.
+    /// </remarks>
+    [Theory]
+    [InlineData(0x12C000, 0x34, "$12C036")]         // forwards, inside the bank
+    [InlineData(0x12C000, 0x80, "$12BF82")]         // backwards, inside the bank
+    [InlineData(0x12FFFF, 0x00, "$120001")]         // over the top of the bank, and no carry into PBR
+    [InlineData(0x120001, 0xFC, "$12FFFF")]         // under the bottom of the bank, likewise
+    [InlineData(0x00C000, 0x34, "$C036")]           // bank 0 keeps §15.1's four-digit notation
+    public void W65C816_BranchTargetStaysInTheProgramBank(int at, byte displacement, string target)
+    {
+        var decoded = Decode816(at, wideAccumulator: false, wideIndex: false, 0x80, displacement);
+
+        Assert.Equal("BRA", decoded.Mnemonic);
+        Assert.Equal(target, decoded.Operand);
+    }
+
+    /// <summary>
+    /// BRL and PER encode sixteen-bit displacements and wrap the same way, which is worth its
+    /// own case because they are the only operands read as a signed <em>word</em>.
+    /// </summary>
+    [Theory]
+    [InlineData(0x82, "BRL")]
+    [InlineData(0x62, "PER")]
+    public void W65C816_SixteenBitDisplacementsWrapInTheProgramBank(byte opcode, string mnemonic)
+    {
+        // $12FFFE + 3 + $0004 = $130005 unwrapped; the bank must not carry.
+        var decoded = Decode816(0x12FFFE, false, false, opcode, 0x04, 0x00);
+
+        Assert.Equal(mnemonic, decoded.Mnemonic);
+        Assert.Equal("$120005", decoded.Operand);
+
+        // And backwards, with the sign bit set: $C000 + 3 - 2 = $C001.
+        Assert.Equal("$C001", Decode816(0xC000, false, false, opcode, 0xFE, 0xFF).Operand);
+    }
+
+    /// <summary>
+    /// Every 65816 opcode decodes, at every width combination, with a length a linear walk can
+    /// use. This is the gate on the phase's actual claim: no <see cref="NotSupportedException"/>
+    /// is reachable for any defined opcode of this variant.
+    /// </summary>
+    [Fact]
+    public void W65C816_EveryOpcodeDecodesAtEveryWidth()
+    {
+        foreach (var (wideAccumulator, wideIndex) in
+                 new[] { (false, false), (true, false), (false, true), (true, true) })
+        {
+            for (var opcode = 0; opcode < 256; opcode++)
+            {
+                var decoded = Decode816(
+                    0xC000, wideAccumulator, wideIndex, (byte)opcode, 0x12, 0x34, 0x56);
+
+                Assert.InRange(decoded.Length, 1, 4);
+                Assert.False(string.IsNullOrWhiteSpace(decoded.Mnemonic),
+                    $"${opcode:X2} decoded to an empty mnemonic on the 65816.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// The library renders dialect-neutral text. <c>@w</c> and <c>@l</c> are 64tass's spelling
+    /// of "this width, not the shorter one that also fits" (research §15.2, gap 2); ca65 writes
+    /// <c>a:</c>. They belong in <c>RoundTripTests.ForAssembler</c>, which is where this project
+    /// already puts an assembler's spelling — the <c>RMB0</c>/<c>rmb 0,</c> case — and putting
+    /// them here instead was tried in task 3 and reversed.
+    /// </summary>
+    [Fact]
+    public void W65C816_RendersNoAssemblerSpecificText()
+    {
+        for (var opcode = 0; opcode < 256; opcode++)
+        {
+            var decoded = Decode816(0xC000, true, true, (byte)opcode, 0x12, 0x34, 0x56);
+
+            Assert.DoesNotContain("@", decoded.Operand);
+        }
     }
 }
