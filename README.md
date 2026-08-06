@@ -82,7 +82,7 @@ all fifteen 65816 addressing modes, plus `XCE`, `REP` and `SEP` — 32 opcodes i
 certified per-cycle in both emulation and native mode against 640,000 SingleStepTests
 vectors, including the full eight-character bus-qualifier pin string asserted on every cycle.
 
-**This is not a complete core.** 228 of the 65816's 256 opcodes are implemented — phase 7b's 32,
+**This is not a complete core.** 230 of the 65816's 256 opcodes are implemented — phase 7b's 32,
 plus phase 7c's bulk work, which added `ORA`, `AND`, `EOR`, `CMP`, `ADC` and `SBC` in all fifteen
 addressing forms each, `CPX` and `CPY` in three each, `BIT` in five, `LDX` and `LDY` in five each,
 `STX` and `STY` in three each, and `STZ` in four, plus phase 7c′'s read-modify-writes: `ASL`,
@@ -100,7 +100,13 @@ one in emulation mode, high byte pushed first and low byte pulled first. Then `B
 `WDM`, and with them the part's own `IRQ` and `NMI` sequences: two vector sets, a program-bank
 push no eight-bit core has, and the first cycles in this repository to assert `VPB`. `IRQ` and
 `NMI` have no SingleStepTests vectors at all — the set carries no interrupt-line stimulus — so
-they are certified by unit test against WDC's Table 5-7 row 22a instead.
+they are certified by unit test against WDC's Table 5-7 row 22a instead. Then the two block
+moves, `MVN` and `MVP` — the only instructions in the engine that move `PC` backwards. A block
+move is one instruction per byte: seven cycles that read `SBA,X`, write `DBA,Y`, decrement the
+sixteen-bit accumulator whatever `m` says, and then rewind `PC` onto their own opcode unless the
+count has run out, so the next fetch re-executes them. That is also what lets an `IRQ` or an
+`NMI` land between iterations rather than being locked out for the tens of thousands of cycles a
+long move takes.
 `ADC` and `SBC` are cycle- and result-correct in decimal mode at both operand widths, including
 16-bit BCD, which no source documents — the correction algorithm was measured from the vectors.
 `BIT`'s immediate opcode is a genuinely different operation from its other four forms, not just

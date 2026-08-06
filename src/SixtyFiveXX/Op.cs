@@ -202,4 +202,15 @@ internal enum Op : byte
     /// them; only the 65816 reads them.
     /// </summary>
     Irq, Nmi,
+
+    /// <summary>
+    /// The two block moves, <c>$54</c> and <c>$44</c>. One instruction per byte moved: seven
+    /// cycles that read <c>SBA,X</c>, write <c>DBA,Y</c>, decrement the sixteen-bit accumulator
+    /// and then rewind <c>PC</c> onto the opcode unless the count has run out, so the next fetch
+    /// re-executes the same instruction. <see cref="Mvn"/> increments both index registers and
+    /// <see cref="Mvp"/> decrements them; that direction is the only thing either micro-op
+    /// sequence reads this member for. Research document §14.3. 65816 only — these appear in no
+    /// eight-bit table.
+    /// </summary>
+    Mvn, Mvp,
 }

@@ -970,6 +970,72 @@ internal enum MicroOp : byte
 
     /// <inheritdoc cref="VectorLo816"/>
     VectorHi816,
+
+    // The block moves, MVN and MVP. Research document §14.3, Table 5-7 rows 9a and 9b, whose
+    // seven cycles are the opcode fetch plus the six members below. One instruction per byte
+    // moved: no member here loops, and none holds a position of its own — the sequence runs to
+    // MicroOp.End every time and BlockMoveNext rewinds PC so the NEXT FETCH re-enters it. That
+    // is what lets an interrupt land between iterations (Clark §6.6, "they can only be
+    // interrupted every seventh cycle"), which an internal loop would make impossible.
+
+    /// <summary>
+    /// Cycle 2, <c>DBA</c>: the destination bank byte, fetched at <c>PBR,PC+1</c> and written
+    /// straight into <c>DBR</c>. Datasheet §7.18 — the register takes "the value of the second
+    /// byte of the instruction" — so the write happens here, on the fetch, and the following
+    /// write cycle reads <c>DBR</c> back rather than a latch. Row 9a/9b prints <c>VDA=0
+    /// VPA=1</c>, an ordinary operand fetch.
+    /// </summary>
+    BlockMoveDestBank,
+
+    /// <summary>
+    /// Cycle 3, <c>SBA</c>: the source bank byte, fetched at <c>PBR,PC+2</c> and kept only for
+    /// this iteration's own read — it goes into no register, which is why <c>MVN</c> re-fetches
+    /// both operand bytes on every one of its iterations rather than carrying them along. Same
+    /// pins as <see cref="BlockMoveDestBank"/>.
+    /// </summary>
+    BlockMoveSrcBank,
+
+    /// <summary>
+    /// Cycle 4: the read at <c>SBA,X</c>, with <c>X</c> as it stands before this iteration's
+    /// update. <c>VDA=1 VPA=0</c> — a data access in a bank that is neither <c>PBR</c> nor
+    /// <c>DBR</c>. The index is the operative width (<c>Cpu.IndexX</c>) and the address wraps
+    /// inside the source bank: Clark §5.1.2, "source,destination addressing … wraps at both the
+    /// source and destination bank boundaries".
+    /// </summary>
+    BlockMoveRead,
+
+    /// <summary>
+    /// Cycle 5: the write at <c>DBA,Y</c> — <c>DBR</c>, which
+    /// <see cref="BlockMoveDestBank"/> has already updated, and <c>Y</c> before this iteration's
+    /// update. Wraps inside the destination bank exactly as the read wraps inside the source.
+    /// </summary>
+    BlockMoveWrite,
+
+    /// <summary>
+    /// Cycle 6: the first of two internal cycles, both driving the address just written —
+    /// <c>DBA,Y</c>, not <c>PBR,PC</c>. Research document §14.3 calls this the one place in
+    /// this phase where an internal cycle's address is a data address rather than a program
+    /// one; every other <c>IO</c> row in §9, §13 and §14.1 drives a program-counter address.
+    /// </summary>
+    BlockMoveInternal,
+
+    /// <summary>
+    /// Cycle 7: the second internal cycle at the same <c>DBA,Y</c>, and the iteration's whole
+    /// register update — <c>A</c> down by one over a full sixteen bits whatever <c>m</c> says
+    /// (Clark §6.6, measured in §14.3), <c>X</c> and <c>Y</c> by one at the operative index
+    /// width in the opcode's own direction, and then the rewind: <c>PC</c> back by 3 unless the
+    /// decremented accumulator has reached <c>$FFFF</c>.
+    /// </summary>
+    /// <remarks>
+    /// This micro-op ends the instruction the same way on both paths — by being the last one
+    /// before <see cref="End"/> — and differs only in where <c>PC</c> points afterwards. It is
+    /// deliberately not written as a loop that holds its own sequence position: Clark §6.6 says
+    /// <c>MVN</c> and <c>MVP</c> "can be interrupted by IRQ and NMI before the move is complete
+    /// (unlike every other instruction …); however, they can only be interrupted every seventh
+    /// cycle", and a genuine instruction boundary here is what produces exactly that, through
+    /// the interrupt poll every instruction already gets and with no special case anywhere.
+    /// </remarks>
+    BlockMoveNext,
 }
 
 /// <summary>
@@ -1097,6 +1163,7 @@ internal static class MicroOps
                      MicroOp.RmwWrite816,
                      MicroOp.PushHigh816, MicroOp.PushLow816,
                      MicroOp.PushPbr816, MicroOp.PushPch816, MicroOp.PushPcl816, MicroOp.PushPInt816,
+                     MicroOp.BlockMoveWrite,
                  })
         {
             writes[(int)op] = true;
@@ -1151,6 +1218,10 @@ internal static class MicroOps
                      // — research document §14.2's row 22j prints VDA=0 VPA=1 on it, and every
                      // one of the 40,000 vectors' cycle 2 reads "-p-r…".
                      MicroOp.BrkPad816,
+                     // The block moves' two operand fetches: research document §14.3's rows
+                     // 9a/9b print VDA=0 VPA=1 on both, and every one of the 40,000 vectors
+                     // reads "-p-r…" on cycles 2 and 3.
+                     MicroOp.BlockMoveDestBank, MicroOp.BlockMoveSrcBank,
                  })
         {
             pins[(int)op] = BusPins.Vpa;
@@ -1187,6 +1258,10 @@ internal static class MicroOps
                      // one, exactly as the pushes above; VPB and MLB stay inactive until the
                      // vector reads.
                      MicroOp.PushPbr816, MicroOp.PushPch816, MicroOp.PushPcl816, MicroOp.PushPInt816,
+                     // The block moves' two real accesses, in banks that are neither PBR nor
+                     // the one the other one uses: rows 9a/9b print VDA=1 VPA=0 on each, and
+                     // the vectors read "d--r…" then "d--w…".
+                     MicroOp.BlockMoveRead, MicroOp.BlockMoveWrite,
                  })
         {
             pins[(int)op] = BusPins.Vda;
@@ -1273,6 +1348,12 @@ internal static class MicroOps
     /// cycle 2, research document §14.2's row 22a, an <c>IO</c> at <c>PBR,PC</c>. It does need a
     /// member of its own despite driving the address <see cref="MicroOp.ImpliedInternal816"/>
     /// would: it owns the emulation-mode skip of the program-bank push.
+    /// <see cref="MicroOp.BlockMoveInternal"/> and <see cref="MicroOp.BlockMoveNext"/> are phase
+    /// 7d task 4's two — cycles 6 and 7 of <c>MVN</c>/<c>MVP</c>, the only internal cycles in this
+    /// codebase whose address is a <em>data</em> address (<c>DBA,Y</c>, the byte just written)
+    /// rather than a program one; research document §14.3 flags exactly that. Two members rather
+    /// than one repeated, because the second also performs the iteration's register update and
+    /// the rewind.
     /// </summary>
     private static bool[] BuildInternalCycleTable()
     {
@@ -1288,6 +1369,7 @@ internal static class MicroOps
                      MicroOp.RmwModifyRead816, MicroOp.RmwModifyRead816Carry,
                      MicroOp.StackPushInternal816,
                      MicroOp.IntInternal816,
+                     MicroOp.BlockMoveInternal, MicroOp.BlockMoveNext,
                  })
         {
             internalCycles[(int)op] = true;

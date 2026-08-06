@@ -466,6 +466,21 @@ internal sealed class MicroOpTable
             return;
         }
 
+        // The block moves. Research document §14.3, Table 5-7 rows 9a/9b: seven cycles per byte
+        // moved, of which the fetch is the first and these six are the rest. One instruction per
+        // byte — BlockMoveNext rewinds PC rather than looping, so the sequence below runs to
+        // MicroOp.End on every iteration and the next fetch re-enters it. Its own mode rather
+        // than an operation test, since nothing else on the part has this shape.
+        if (info.Mode == AddrMode.BlockMove)
+        {
+            ops.AddRange([
+                MicroOp.BlockMoveDestBank, MicroOp.BlockMoveSrcBank,
+                MicroOp.BlockMoveRead, MicroOp.BlockMoveWrite,
+                MicroOp.BlockMoveInternal, MicroOp.BlockMoveNext,
+            ]);
+            return;
+        }
+
         // Everything else on the 65816 forms an effective address and then reads or writes it.
         // Routed by mode and access rather than by an ever-growing list of operations: the
         // emitter's own `default:` throw is the tripwire for a mode with no sequence, and

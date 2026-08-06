@@ -174,6 +174,23 @@ internal enum AddrMode : byte
     /// </summary>
     StackRelativeIndirectY,
 
+    /// <summary>
+    /// <c>MVN</c>/<c>MVP</c> — two operand bytes, each a bank: the destination bank first in
+    /// the instruction stream, then the source bank. The instruction re-executes itself once
+    /// per byte moved by rewinding <c>PC</c>, so a single fetch can run for tens of thousands
+    /// of cycles. 65816 only.
+    /// </summary>
+    /// <remarks>
+    /// The operand order is confirmed rather than assumed: research document §14.3 quotes
+    /// datasheet §7.18 ("the Data Bank Register [becomes] the value of the second byte of the
+    /// instruction (destination bank address)") and Clark §5.19's <c>MVN #$12,#$34</c>
+    /// assembling to <c>$54 $34 $12</c>, and then measures it — <c>54 n 1</c>'s byte at
+    /// <c>PC+1</c> is <c>$3D</c> and its final <c>DBR</c> is <c>$3D</c>, while the byte at
+    /// <c>PC+2</c> is the bank of the source read. That is the reverse of the assembler
+    /// syntax's operand order.
+    /// </remarks>
+    BlockMove,
+
     /// <summary>Not implemented by this variant.</summary>
     Undefined,
 }

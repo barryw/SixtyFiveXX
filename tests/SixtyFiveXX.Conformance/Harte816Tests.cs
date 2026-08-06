@@ -15,7 +15,7 @@ namespace SixtyFiveXX.Conformance;
 /// eight-character per-cycle pin string the 8-bit sets have nothing like — see
 /// <see cref="Harte816Case"/> and <see cref="Harte816Bus"/>.
 /// <para>
-/// Unlike <see cref="HarteTests{TVariant}"/>, this does not loop over all 256 opcodes. Only 228
+/// Unlike <see cref="HarteTests{TVariant}"/>, this does not loop over all 256 opcodes. Only 230
 /// of the 65816's opcodes are defined at all yet (<c>Opcodes65C816.Table</c>) — every one of
 /// them has a real sequence: <c>XCE</c>, <c>REP</c>, <c>SEP</c>, all fifteen addressing forms
 /// of <c>LDA</c>, <c>ORA</c>, <c>AND</c>, <c>EOR</c>, <c>CMP</c>, <c>ADC</c> and <c>SBC</c> plus
@@ -25,7 +25,8 @@ namespace SixtyFiveXX.Conformance;
 /// memory, two each of <c>TSB</c> and <c>TRB</c>, one each of <c>ASL</c>, <c>LSR</c>,
 /// <c>ROL</c>, <c>ROR</c>, <c>INC</c> and <c>DEC</c> on the accumulator, the twelve transfers,
 /// <c>XBA</c>, the seven flag instructions, <c>INX</c>/<c>INY</c>/<c>DEX</c>/<c>DEY</c>,
-/// <c>NOP</c>, the seven pushes and six pulls, and <c>BRK</c>/<c>COP</c>/<c>WDM</c>. Looping over
+/// <c>NOP</c>, the seven pushes and six pulls, <c>BRK</c>/<c>COP</c>/<c>WDM</c>, and the two block
+/// moves <c>MVN</c>/<c>MVP</c>. Looping over
 /// the full opcode space the way the 8-bit harness does would still require declaring the
 /// remaining "not yet covered" opcodes as a matter of routine, which is what the 8-bit harness's
 /// <c>OpcodesWithoutVectors</c> mechanism exists to flag as an exception, not a norm.
@@ -91,9 +92,31 @@ public class Harte816Tests(ITestOutputHelper output)
     /// because <c>$42</c> sits between the two interrupts in every table that lists them.
     /// The task's other two sequences — <c>IRQ</c> and <c>NMI</c> — have <b>no vectors at
     /// all</b> and are certified by <c>W65C816InterruptTests</c> instead; §14.2's gap 1
-    /// records why.
+    /// records why. Phase 7d task 4 adds the two block moves, <c>MVN</c> (<c>$54</c>) and
+    /// <c>MVP</c> (<c>$44</c>) — 228 + 2 = 230 — the only instructions in this engine that move
+    /// <c>PC</c> backwards, and the only ones whose vectors are truncated mid-instruction; see
+    /// <see cref="VectorsTruncatedMidInstruction"/>.
     /// </summary>
-    private static readonly int ExpectedImplementedOpcodes = 228;
+    private static readonly int ExpectedImplementedOpcodes = 230;
+
+    /// <summary>
+    /// The block moves, whose vectors are truncated at 100 cycles with a final state part-way
+    /// through the move — research document §14.3, measured from the files rather than inferred.
+    /// A block move runs seven cycles per byte and moves up to 65,536 bytes, so no fixed-length
+    /// vector could contain a whole one. <c>$54</c>'s cycle arrays are 9,999 of exactly 100
+    /// entries and one of 98; <c>$44</c>'s are 9,997 of 100 plus one each of 63, 28 and 14.
+    /// <c>54 n 1</c> begins with <c>A = $EF9B</c> — 61,340 bytes to move — and its recorded final
+    /// state is fourteen bytes in.
+    /// </summary>
+    /// <remarks>
+    /// ONLY the instruction-boundary assertion is skipped. Every cycle's address, value and
+    /// eight-character pin string is still compared, and so are the final registers and memory —
+    /// against the mid-instruction state the vector actually records. For $54 that is a hundred
+    /// arbitrated cycles of a real block move per vector, rewind included, across 10,000 vectors:
+    /// stronger coverage than most opcodes in this core get, not weaker. No vector file is
+    /// excluded and no vector is skipped.
+    /// </remarks>
+    private static readonly HashSet<int> VectorsTruncatedMidInstruction = [0x54, 0x44];
 
     /// <summary>
     /// Opcode bytes this phase has emitted a real <c>MicroOpTable.Emit816</c> sequence for —
@@ -162,6 +185,18 @@ public class Harte816Tests(ITestOutputHelper output)
 
             foreach (var entry in test.Initial.Ram) ram[entry[0]] = (byte)entry[1];
 
+            // A vector every other opcode runs leaves the core at an instruction boundary, so
+            // the same core serves the whole file. The two block moves do not: their cycle
+            // arrays stop part-way through a sequence (see VectorsTruncatedMidInstruction), and
+            // `cpu.State` assigns the architectural registers but NOT the micro-op position — so
+            // without this the next vector would resume the previous vector's half-finished
+            // block move instead of fetching its own opcode, and diverge in the fifth cycle.
+            // Measured, not theorised: it is what $54.n vector 2 did. A fresh core is the only
+            // way back to a boundary that neither adds public API nor spends cycles on the bus,
+            // and it costs an allocation on 40,000 of the suite's 4.6 million vectors.
+            if (!cpu.AtInstructionBoundary)
+                cpu = new Cpu<Harte816Bus, W65C816Variant>(new Harte816Bus(ram, log));
+
             cpu.State = new CpuState
             {
                 PC = test.Initial.Pc,
@@ -191,9 +226,12 @@ public class Harte816Tests(ITestOutputHelper output)
                 pins[i] = cpu.LastPins;
             }
 
-            Assert.True(cpu.AtInstructionBoundary,
-                $"{test.Name}: instruction did not finish within the vector's " +
-                $"{test.Cycles.Length} cycles.");
+            if (!VectorsTruncatedMidInstruction.Contains(opcode))
+            {
+                Assert.True(cpu.AtInstructionBoundary,
+                    $"{test.Name}: instruction did not finish within the vector's " +
+                    $"{test.Cycles.Length} cycles.");
+            }
 
             AssertRegisters(test, cpu.State);
             AssertMemory(test, ram);

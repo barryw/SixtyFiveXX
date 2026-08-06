@@ -1167,6 +1167,73 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
         _ => throw new InvalidOperationException($"{_op} is not a branch."),
     };
 
+    /// <summary>
+    /// One block-move iteration's register update, and the rewind — the whole of
+    /// <c>MVN</c>/<c>MVP</c>'s operation, run on the last of the seven cycles. Research document
+    /// §14.3.
+    /// </summary>
+    /// <remarks>
+    /// Three rules, each from a source and each measured there:
+    /// <list type="bullet">
+    /// <item><description>
+    /// <b>The count is the accumulator, is bytes-minus-one, and is sixteen bits regardless of
+    /// <c>m</c>.</b> Clark §6.6 writes "(16-bit)" three times in two sentences and never
+    /// qualifies it by <c>m</c>; §14.3 measured <c>54 n 1</c>, which has <c>m = 1</c> and takes
+    /// <c>A</c> from <c>$EF9B</c> to <c>$EF8D</c> — a sixteen-bit <c>-14</c>. The <c>B</c>
+    /// accumulator is clobbered, and that is correct.
+    /// </description></item>
+    /// <item><description>
+    /// <b>The index registers move at the operative index width</b>, up for <c>MVN</c> and down
+    /// for <c>MVP</c> (Table 5-7's own annotations "x,y Increment" and "x,y Decrement"). With
+    /// <c>x = 1</c> they wrap inside the low byte: <c>54 n 63</c> reads <c>…$B300FF</c> then
+    /// <c>$B30000</c> and ends with <c>X = $01</c> from <c>$F3</c>. <see cref="X8"/>'s setter
+    /// zeroes the high byte, which agrees with hardware holding <c>XH</c>/<c>YH</c> at <c>$00</c>
+    /// whenever <c>x</c> is set — the same rule <c>Op.Inx</c> already relies on. No vector in
+    /// either file has <c>x = 1</c> with a nonzero index high byte, so nothing arbitrates that
+    /// case; this follows the part rather than inventing a preserving formula for it.
+    /// </description></item>
+    /// <item><description>
+    /// <b><c>PC</c> is rewound onto the opcode unless the count has run out.</b> Clark §6.6: "the
+    /// program counter will be the address of the next instruction … if the accumulator is
+    /// $FFFF, and the program counter will be the address of the the MVN or MVP if the
+    /// accumulator is not $FFFF (i.e. the instruction jumps to itself if the accumulator is not
+    /// $FFFF)." The test is on the decremented value, so a move with <c>A = $0000</c> — one byte
+    /// — never rewinds at all. <c>PC</c> is sixteen bits and wraps within the bank without
+    /// touching <c>PBR</c>, exactly as it does when advancing.
+    /// </description></item>
+    /// </list>
+    /// No flag is written. <c>P</c> is identical in the initial and final state of all 20,000
+    /// <c>$54</c>/<c>$44</c> native vectors.
+    /// <para>
+    /// 65816 only: reached from <see cref="MicroOp.BlockMoveNext"/>, which appears in no
+    /// eight-bit sequence, so the reads of <c>_s.XFlag</c> here need no variant guard — the same
+    /// position <see cref="StackIsWide"/> and <see cref="IndexX"/> are in.
+    /// </para>
+    /// </remarks>
+    private void BlockMoveStep()
+    {
+        var delta = _op switch
+        {
+            Op.Mvn => +1,
+            Op.Mvp => -1,
+            _ => throw new InvalidOperationException($"{_op} is not a block move."),
+        };
+
+        if (_s.XFlag)
+        {
+            X8 = (byte)(X8 + delta);
+            Y8 = (byte)(Y8 + delta);
+        }
+        else
+        {
+            _s.X = (ushort)(_s.X + delta);
+            _s.Y = (ushort)(_s.Y + delta);
+        }
+
+        _s.A--;
+        if (_s.A != 0xFFFF) _s.PC -= 3;
+    }
+
     /// <summary>The value an unstable store will write, before the address fold-in.</summary>
     private byte UnstableStoreValue() => _op switch
     {
@@ -1345,6 +1412,68 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 // formula is right because it is right, not because another invariant holds.
                 ReadBus(StackAddress816());
                 if (_s.E) S8--; else _s.S--;
+                break;
+
+            // Phase 7d task 4: the block moves. Research document §14.3, Table 5-7 rows 9a and
+            // 9b — seven cycles per byte moved, the fetch plus these six, and one whole
+            // instruction per byte. Every cycle below drives exactly _addr at the moment it
+            // runs, which is why _addr is re-pointed at the destination on the read cycle: it
+            // makes the RDY halt path in Tick() re-drive the right address on all four
+            // non-fetch cycles, rather than the stale-address approximation that path notes as
+            // a limitation for the rest of the core.
+
+            case MicroOp.BlockMoveDestBank:
+                // Cycle 2, DBA. Datasheet §7.18, verbatim in §14.3: "The MVN and MVP
+                // instructions change the Data Bank Register to the value of the second byte of
+                // the instruction (destination bank address)." The second byte of the
+                // instruction is the one at PC+1 — the opcode is the first — so the register is
+                // written here, on the fetch, and the write cycle reads it back from DBR.
+                _s.DBR = ReadBus(PcAddress());
+                _s.PC++;
+                break;
+
+            case MicroOp.BlockMoveSrcBank:
+                // Cycle 3, SBA — into no register at all, only into this iteration's own source
+                // address, which is why both operand bytes are re-fetched every iteration. The
+                // index is folded in here rather than on the read cycle: X cannot change in
+                // between (nothing but BlockMoveNext touches it), and it leaves _addr holding
+                // the exact address cycle 4 will drive.
+                _addr = (ReadBus(PcAddress()) << 16) | IndexX();
+                _s.PC++;
+                break;
+
+            case MicroOp.BlockMoveRead:
+                // Cycle 4, at SBA,X. _addr then becomes DBA,Y for the three cycles that follow:
+                // DBR is already the destination bank (cycle 2) and Y is still this iteration's,
+                // since BlockMoveNext has not run yet. Both addresses wrap inside their own
+                // bank — Clark §5.1.2, "source,destination addressing … wraps at both the source
+                // and destination bank boundaries" — which is what the 16-bit IndexX()/IndexY()
+                // ORed under a bank byte gives, with no carry out of the low sixteen bits.
+                _data = ReadBus(_addr);
+                _addr = (_s.DBR << 16) | IndexY();
+                break;
+
+            case MicroOp.BlockMoveWrite:
+                // Cycle 5, at DBA,Y.
+                WriteBus(_addr, _data);
+                break;
+
+            case MicroOp.BlockMoveInternal:
+                // Cycle 6: an internal cycle at the address just written, not at PBR,PC. See
+                // MicroOp.BlockMoveInternal — the only internal cycles on this part whose
+                // address is a data address.
+                InternalCycle(_addr);
+                break;
+
+            case MicroOp.BlockMoveNext:
+                // Cycle 7: the same internal cycle again, then the whole iteration's register
+                // update and the rewind. The instruction ends here either way; only where PC
+                // points differs, so a move that is not finished is re-entered by the next
+                // fetch and an interrupt latched during this cycle is serviced first. Clark
+                // §6.6: MVN/MVP "can be interrupted by IRQ and NMI before the move is complete
+                // … however, they can only be interrupted every seventh cycle."
+                InternalCycle(_addr);
+                BlockMoveStep();
                 break;
 
             case MicroOp.RepSepOperand:
