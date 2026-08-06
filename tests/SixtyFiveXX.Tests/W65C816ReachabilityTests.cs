@@ -29,9 +29,22 @@ public class W65C816ReachabilityTests
     /// here after a review caught the first two but not these four. Members the grep hits but
     /// that compute neither kind of address are deliberately absent: <c>ImpliedDummy</c> and
     /// <c>ImmExec</c> already call <c>PcAddress()</c> and are bank-aware; <c>JmpIndLo</c>,
-    /// <c>JmpIndHi</c>, <c>JmpIndBugDummy</c>, <c>PtrJmpHi</c>, <c>BitBranchDummy</c> and
-    /// <c>BitBranchFixup</c> read <c>_ptr</c> or <c>_addr</c>; and <c>JamHold</c> drives the
-    /// literal <c>$FFFF</c>/<c>$FFFE</c> jam pattern.
+    /// <c>BitBranchDummy</c> and <c>BitBranchFixup</c> read <c>_ptr</c> or <c>_addr</c>; and
+    /// <c>JamHold</c> drives the literal <c>$FFFF</c>/<c>$FFFE</c> jam pattern.
+    /// </para>
+    /// <para>
+    /// <b>The four indirect-<c>JMP</c> micro-ops are on the list for a second reason, and it is
+    /// not the address they compute.</b> <c>JmpIndLo</c>, <c>JmpIndHi</c>, <c>JmpIndBugDummy</c>
+    /// and <c>PtrJmpHi</c> read <c>_ptr</c>, so by the criterion above they would be exempt — and
+    /// <c>JmpIndLo</c>/<c>PtrJmpHi</c> would in fact compute the right addresses for a 65816
+    /// <c>JMP (abs)</c>. <c>JmpIndHi</c> and <c>JmpIndBugDummy</c> would not: they carry the NMOS
+    /// page-wrap bug, which Clark §5.4 states outright this part does not have. Phase 7d task 7
+    /// put all four here rather than the two, because the pair that is correct today is correct
+    /// only by coincidence — it is the NMOS sequence's pointer read, maintained for the NMOS
+    /// sequence — and because a family split across two emitters is how a later reader ends up
+    /// reintroducing the bug on the one arm nobody was looking at. The 65816 has its own four:
+    /// <c>MicroOp.JmpIndLo816</c>, <c>JmpIndHi816</c>, <c>JmlIndBank816</c> and the
+    /// <c>JmpAbsX*816</c> trio.
     /// </para>
     /// <para>
     /// This list is now the <b>only</b> loud tripwire on a 65816 sequence reaching one of these
@@ -49,6 +62,7 @@ public class W65C816ReachabilityTests
         MicroOp.BranchFetch, MicroOp.BranchTaken, MicroOp.BranchFixup,
         MicroOp.BitBranchFetch,
         MicroOp.JmpAbs, MicroOp.JsrFinish, MicroOp.RtsFinish,
+        MicroOp.JmpIndLo, MicroOp.JmpIndHi, MicroOp.JmpIndBugDummy, MicroOp.PtrJmpHi,
         MicroOp.NopAbsExtraRead, MicroOp.JmpAbsXDummy,
         MicroOp.ReadPageCrossCmosArith, MicroOp.IndexFixupCmos,
         MicroOp.ReadPageCrossCmos, MicroOp.RmwPageCrossCmos,

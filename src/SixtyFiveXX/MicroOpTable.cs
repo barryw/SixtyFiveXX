@@ -493,10 +493,26 @@ internal sealed class MicroOpTable
             return;
         }
 
+        // The two long control transfers, ahead of every mode test below. $5C (JML long) and
+        // $22 (JSL long) both take AddrMode.AbsoluteLong, which EmitAddressed816 also handles
+        // for LDA long and thirteen other addressed opcodes — so routing on the mode first would
+        // hand a long jump a long LOAD's addressing sequence and an access tail, silently. The
+        // operation is what distinguishes them, and it is tested here rather than inside
+        // EmitAddressed816 so that method keeps reading info.Mode and info.Access alone.
+        if (info.Operation is Op.Jml or Op.Jsl)
+        {
+            EmitControlFlow816(ops, info);
+            return;
+        }
+
         // Control flow, the stack and the interrupts do not decompose into an addressing phase
         // plus an access phase — the same reason EmitStack exists for the five 8-bit cores.
-        // Routed by mode here and switched by operation there.
-        if (info.Mode == AddrMode.Stack)
+        // Routed by mode here and switched by operation there. AddrMode.Indirect,
+        // AbsoluteIndexedIndirect and AbsoluteIndirectLong join AddrMode.Stack because the
+        // disassembler formats an operand from them (Disassembler.Decode's own arms) while the
+        // sequence they need is hand-written like every other jump's.
+        if (info.Mode is AddrMode.Stack or AddrMode.Indirect
+            or AddrMode.AbsoluteIndexedIndirect or AddrMode.AbsoluteIndirectLong)
         {
             EmitControlFlow816(ops, info);
             return;
@@ -570,6 +586,111 @@ internal sealed class MicroOpTable
                     MicroOp.BrkPad816, MicroOp.PushPbr816,
                     MicroOp.PushPch816, MicroOp.PushPcl816, MicroOp.PushPInt816,
                     MicroOp.VectorLo816, MicroOp.VectorHi816,
+                ]);
+                break;
+
+            // ---- Phase 7d task 7: the jumps, the calls and the returns. Research document
+            // §14.6. Four operations here address memory more than one way, so these arms read
+            // info.Mode as well as info.Operation — JMP has three forms, JSR and JML two each,
+            // and only the mode tells them apart.
+
+            // Row 1b: three cycles, the destination assembled from two operand fetches.
+            case Op.Jmp when info.Mode == AddrMode.Stack:
+                ops.AddRange([MicroOp.FetchAddrLo, MicroOp.JmpAbs816]);
+                break;
+
+            // Row 3b: five cycles, a two-byte pointer in bank 0. NOT the eight-bit
+            // JmpIndLo/JmpIndHi pair — that one reproduces the NMOS page-wrap bug, which Clark
+            // §5.4 states this part does not have.
+            case Op.Jmp when info.Mode == AddrMode.Indirect:
+                ops.AddRange([
+                    MicroOp.FetchAddrLo, MicroOp.FetchAddrHi,
+                    MicroOp.JmpIndLo816, MicroOp.JmpIndHi816,
+                ]);
+                break;
+
+            // Row 3a: row 3b plus the pointer's third byte, which becomes the program bank.
+            case Op.Jml when info.Mode == AddrMode.AbsoluteIndirectLong:
+                ops.AddRange([
+                    MicroOp.FetchAddrLo, MicroOp.FetchAddrHi,
+                    MicroOp.JmpIndLo816, MicroOp.JmpIndHi816, MicroOp.JmlIndBank816,
+                ]);
+                break;
+
+            // Row 4b: row 1b's two fetches, then the bank byte. Reached through Emit816's
+            // operation test, ahead of AddrMode.AbsoluteLong's addressed sequence.
+            case Op.Jml:
+                ops.AddRange([MicroOp.FetchAddrLo, MicroOp.FetchAddrHi, MicroOp.JmpLong816]);
+                break;
+
+            // Row 2a: six cycles, an unconditional indexing cycle, and a pointer in bank K.
+            case Op.Jmp:
+                ops.AddRange([
+                    MicroOp.FetchAddrLo, MicroOp.FetchAddrHi, MicroOp.JmpAbsXInternal816,
+                    MicroOp.JmpAbsXLo816, MicroOp.JmpAbsXHi816,
+                ]);
+                break;
+
+            // Row 1c: six cycles. JsrFetchHi816 leaves PC on the last operand byte, which is
+            // both the address the internal cycle drives and the value the two pushes take —
+            // Clark §6.2.2.1's "one less than the address of the next instruction".
+            case Op.Jsr when info.Mode == AddrMode.Stack:
+                ops.AddRange([
+                    MicroOp.FetchAddrLo, MicroOp.JsrFetchHi816, MicroOp.ImpliedInternal816,
+                    MicroOp.PushPch816, MicroOp.JsrPushPcl816,
+                ]);
+                break;
+
+            // Row 2b, and the one sequence in this task whose SHAPE is the finding: the two
+            // pushes are cycles 3 and 4, before cycle 5 fetches AAH (§14.6 answer 3). Nothing
+            // else on the part interleaves a push into the middle of operand fetching. The
+            // pushed value is PC after the AAL fetch alone, which is already the instruction's
+            // own address plus 2, so no adjustment is needed anywhere.
+            case Op.Jsr:
+                ops.AddRange([
+                    MicroOp.FetchAddrLo, MicroOp.PushPch816, MicroOp.PushPcl816,
+                    MicroOp.FetchAddrHi, MicroOp.JmpAbsXInternal816,
+                    MicroOp.JmpAbsXLo816, MicroOp.JmpAbsXHi816,
+                ]);
+                break;
+
+            // Row 4c: eight cycles, and the second place a sequence's order is the finding. The
+            // OLD program bank is pushed at cycle 4, before cycle 6 reads the new one; cycle 5
+            // is an internal cycle at a stack address, which no other instruction but RTS has.
+            case Op.Jsl:
+                ops.AddRange([
+                    MicroOp.FetchAddrLo, MicroOp.FetchAddrHi,
+                    MicroOp.PushPbr816, MicroOp.StackInternal816, MicroOp.JslBank816,
+                    MicroOp.PushPch816, MicroOp.JsrPushPcl816,
+                ]);
+                break;
+
+            // Row 22g: seven cycles native, six in emulation, where RtiPullPch816 skips the
+            // program-bank pull (note 7). P comes FIRST — §14.6 answer 6 — and is restored
+            // without the shared PullP's ~Flag.B mask, which is the index-width bit here.
+            case Op.Rti:
+                ops.AddRange([
+                    MicroOp.ImpliedInternal816, MicroOp.ImpliedInternal816,
+                    MicroOp.PullP816, MicroOp.PullPcl816, MicroOp.RtiPullPch816,
+                    MicroOp.RtiPullPbr816,
+                ]);
+                break;
+
+            // Row 22h: six cycles, the last an internal cycle at the stack byte just pulled.
+            case Op.Rts:
+                ops.AddRange([
+                    MicroOp.ImpliedInternal816, MicroOp.ImpliedInternal816,
+                    MicroOp.PullPcl816, MicroOp.ReturnPullPch816, MicroOp.StackInternal816,
+                ]);
+                break;
+
+            // Row 22i: also six cycles, but for a different reason — the sixth is the bank pull,
+            // not RTS's internal cycle, and RTL is three bytes in BOTH modes (no note 7 on the
+            // row, and Clark gives a flat 6).
+            case Op.Rtl:
+                ops.AddRange([
+                    MicroOp.ImpliedInternal816, MicroOp.ImpliedInternal816,
+                    MicroOp.PullPcl816, MicroOp.ReturnPullPch816, MicroOp.PullPbr816,
                 ]);
                 break;
 

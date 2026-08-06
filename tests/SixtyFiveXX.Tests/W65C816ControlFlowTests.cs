@@ -361,4 +361,559 @@ public class W65C816ControlFlowTests
         Assert.Equal(taken ? 3 : 2, cpu.Step());
         Assert.Equal(taken ? 0x2012 : 0x2002, cpu.State.PC);
     }
+
+    // ================================================================ task 7: jumps, calls, returns
+    //
+    // Research document §14.6, which transcribes WDC datasheet Table 5-7 rows 1b, 1c, 2a, 2b,
+    // 3a, 3b, 4b, 4c, 22g, 22h and 22i, and Bruce Clark's §5.1.2, §5.4, §5.5, §6.2.2.1,
+    // §6.2.2.2 and §6.3.2.
+
+    private const byte JmpAbs = 0x4C;
+    private const byte JmpInd = 0x6C;
+    private const byte JmpIndX = 0x7C;
+    private const byte JmlLong = 0x5C;
+    private const byte JmlInd = 0xDC;
+    private const byte Jsr = 0x20;
+    private const byte JsrIndX = 0xFC;
+    private const byte Jsl = 0x22;
+    private const byte Rti = 0x40;
+    private const byte Rts = 0x60;
+    private const byte Rtl = 0x6B;
+
+    // ---------------------------------------------------------------- cycle counts
+
+    /// <summary>
+    /// §14.8's cycle column for all eleven, and §14.6's row headers: <c>3</c>, <c>5</c>,
+    /// <c>6</c>, <c>4</c>, <c>6</c> for the jumps; <c>6</c>, <c>8</c>, <c>8</c> for the calls;
+    /// <c>7-e</c>, <c>6</c>, <c>6</c> for the returns. <c>RTI</c> is the only one of the eleven
+    /// whose count depends on <c>e</c> at all — the program bank is pulled in native mode only.
+    /// </summary>
+    [Theory]
+    [InlineData(JmpAbs, false, 3)]
+    [InlineData(JmpAbs, true, 3)]
+    [InlineData(JmpInd, false, 5)]
+    [InlineData(JmpInd, true, 5)]
+    [InlineData(JmpIndX, false, 6)]
+    [InlineData(JmpIndX, true, 6)]
+    [InlineData(JmlLong, false, 4)]
+    [InlineData(JmlLong, true, 4)]
+    [InlineData(JmlInd, false, 6)]
+    [InlineData(JmlInd, true, 6)]
+    [InlineData(Jsr, false, 6)]
+    [InlineData(Jsr, true, 6)]
+    [InlineData(JsrIndX, false, 8)]
+    [InlineData(JsrIndX, true, 8)]
+    [InlineData(Jsl, false, 8)]
+    [InlineData(Jsl, true, 8)]
+    [InlineData(Rti, false, 7)]
+    [InlineData(Rti, true, 6)]
+    [InlineData(Rts, false, 6)]
+    [InlineData(Rts, true, 6)]
+    [InlineData(Rtl, false, 6)]
+    [InlineData(Rtl, true, 6)]
+    public void EachControlTransfer_CostsItsDocumentedCycles(byte opcode, bool emulation, int cycles)
+    {
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x12, 0x2000, emulation, opcode, 0x34, 0x56, 0x78);
+
+        Assert.Equal(cycles, cpu.Step());
+    }
+
+    // ---------------------------------------------------------------- the jumps
+
+    /// <summary>Row 1b: three cycles, and the destination is the operand within the same bank.</summary>
+    [Fact]
+    public void JmpAbsolute_StaysInTheProgramBank()
+    {
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x12, 0x2000, emulation: false, JmpAbs, 0xCD, 0xAB);
+
+        Assert.Equal(3, cpu.Step());
+        Assert.Equal(0xABCD, cpu.State.PC);
+        Assert.Equal(0x12, cpu.State.PBR);
+    }
+
+    /// <summary>
+    /// <b>The assertion that catches a copy of the eight-bit <c>JmpIndHi</c>.</b> Clark §5.4,
+    /// verbatim: "on the 65C816, as on the 65C02, (absolute) addressing does not wrap at a page
+    /// boundary, i.e. for a JMP ($12FF) the low byte of the destination address is taken from
+    /// $12FF and the high byte of the destination address is taken from $1300." The NMOS core
+    /// takes it from <c>$1200</c>; this one must not.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void JmpIndirect_DoesNotReproduceTheNmosPageWrapBug(bool emulation)
+    {
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x7E, 0x2000, emulation, JmpInd, 0xFF, 0x12);
+        ram[0x0012FF] = 0xCD;        // the low byte
+        ram[0x001300] = 0xAB;        // the high byte, one past — NOT $001200
+        ram[0x001200] = 0xFF;        // what the NMOS bug would read instead
+
+        Assert.Equal(5, cpu.Step());
+        Assert.Equal(0xABCD, cpu.State.PC);
+    }
+
+    /// <summary>
+    /// Clark §5.4's own worked example, which shows what <em>does</em> wrap: "If the K register
+    /// is $12 and $000000 contains $34, $00FFFF contains $56, then JMP ($FFFF) jumps to
+    /// $123456". The pointer wraps at the bank 0 boundary and nowhere else — and the program
+    /// bank is untouched by an indirect <c>JMP</c>.
+    /// </summary>
+    [Fact]
+    public void JmpIndirect_WrapsAtTheBankZeroBoundaryAndKeepsTheProgramBank()
+    {
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x12, 0x2000, emulation: false, JmpInd, 0xFF, 0xFF);
+        ram[0x00FFFF] = 0x56;
+        ram[0x000000] = 0x34;
+
+        cpu.Step();
+
+        Assert.Equal(0x3456, cpu.State.PC);
+        Assert.Equal(0x12, cpu.State.PBR);
+    }
+
+    /// <summary>
+    /// §14.6 answer 1: <c>$6C</c> takes its pointer from <b>bank 0 regardless of <c>PBR</c></b>
+    /// (Clark §5.1.2). A pointer read through the program bank would find the decoy here.
+    /// </summary>
+    [Fact]
+    public void JmpIndirect_ReadsItsPointerFromBankZero()
+    {
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x7E, 0x2000, emulation: false, JmpInd, 0x00, 0x30);
+        ram[0x003000] = 0xCD;
+        ram[0x003001] = 0xAB;
+        ram[0x7E3000] = 0x11;        // the decoy, in the program bank
+        ram[0x7E3001] = 0x22;
+
+        cpu.Step();
+
+        Assert.Equal(0xABCD, cpu.State.PC);
+    }
+
+    /// <summary>
+    /// §14.6 answer 1: <c>$7C</c> is the other way round — its pointer comes from <b>bank K</b>
+    /// (Clark §5.5, "K | $HHLL+X"). Both this and the test above must be present: one alone
+    /// passes against a core that reads every jump pointer from the same bank.
+    /// </summary>
+    [Fact]
+    public void JmpAbsoluteIndexedIndirect_ReadsItsPointerFromTheProgramBank()
+    {
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x7E, 0x2000, emulation: false, JmpIndX, 0x00, 0x30);
+        cpu.State.XFlag = false;
+        cpu.State.X = 0x0004;
+        ram[0x7E3004] = 0xCD;
+        ram[0x7E3005] = 0xAB;
+        ram[0x003004] = 0x11;        // the decoy, in bank 0
+        ram[0x003005] = 0x22;
+
+        Assert.Equal(6, cpu.Step());
+        Assert.Equal(0xABCD, cpu.State.PC);
+        Assert.Equal(0x7E, cpu.State.PBR);
+    }
+
+    /// <summary>
+    /// Clark §5.5's worked example: <c>X = $000A</c>, <c>JMP ($FFFE,X)</c> reads <c>$120008</c>
+    /// — the indexed pointer truncated to sixteen bits, staying inside bank K.
+    /// </summary>
+    [Fact]
+    public void JmpAbsoluteIndexedIndirect_WrapsInsideTheProgramBank()
+    {
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x12, 0x2000, emulation: false, JmpIndX, 0xFE, 0xFF);
+        cpu.State.XFlag = false;
+        cpu.State.X = 0x000A;
+        ram[0x120008] = 0xCD;
+        ram[0x120009] = 0xAB;
+
+        cpu.Step();
+
+        Assert.Equal(0xABCD, cpu.State.PC);
+        Assert.Equal(0x12, cpu.State.PBR);
+    }
+
+    /// <summary>
+    /// <c>JML $llhhbb</c> — row 4b. Four cycles, and the fourth operand byte becomes the
+    /// program bank: the only jump whose destination bank comes from the instruction stream.
+    /// </summary>
+    [Fact]
+    public void JmlLong_LoadsTheProgramBankFromItsOperand()
+    {
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x12, 0x2000, emulation: false, JmlLong, 0xCD, 0xAB, 0x7E);
+
+        Assert.Equal(4, cpu.Step());
+        Assert.Equal(0xABCD, cpu.State.PC);
+        Assert.Equal(0x7E, cpu.State.PBR);
+    }
+
+    /// <summary>
+    /// <c>JML [$nnnn]</c> — row 3a. Six cycles, a three-byte pointer in bank 0, and the
+    /// destination bank comes from the pointer's own third byte, not from <c>PBR</c>: the row's
+    /// next-opcode cell reads <c>NEW PBR,PC</c>.
+    /// </summary>
+    [Fact]
+    public void JmlIndirectLong_LoadsTheProgramBankFromThePointer()
+    {
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x12, 0x2000, emulation: false, JmlInd, 0x00, 0x30);
+        ram[0x003000] = 0xCD;
+        ram[0x003001] = 0xAB;
+        ram[0x003002] = 0x7E;
+        ram[0x123000] = 0x11;        // the decoy, in the program bank
+        ram[0x123001] = 0x22;
+        ram[0x123002] = 0x33;
+
+        Assert.Equal(6, cpu.Step());
+        Assert.Equal(0xABCD, cpu.State.PC);
+        Assert.Equal(0x7E, cpu.State.PBR);
+    }
+
+    // ---------------------------------------------------------------- the calls
+
+    /// <summary>
+    /// Clark §6.2.2.1's own worked example, verbatim: with <c>S = $01FF</c>, a <c>JSR $ABCD</c>
+    /// at <c>$123456</c> "stores $34 at $0001FF and $58 at $0001FE, then jumps to $12ABCD,
+    /// leaving S = $01FD". Two bytes pushed, high first, and the address pushed is the
+    /// instruction's own plus 2 — one less than the next instruction. <c>PBR</c> is untouched.
+    /// </summary>
+    [Fact]
+    public void Jsr_PushesTwoBytesOfTheLastByteAddressAndLeavesTheProgramBankAlone()
+    {
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x12, 0x3456, emulation: false, Jsr, 0xCD, 0xAB);
+        cpu.State.S = 0x01FF;
+
+        Assert.Equal(6, cpu.Step());
+        Assert.Equal(0x34, ram[0x0001FF]);
+        Assert.Equal(0x58, ram[0x0001FE]);
+        Assert.Equal(0xABCD, cpu.State.PC);
+        Assert.Equal(0x12, cpu.State.PBR);
+        Assert.Equal(0x01FD, cpu.State.S);
+    }
+
+    /// <summary>
+    /// Clark §6.2.2.1 for <c>JSL</c>, verbatim: "if the JSL instruction (i.e. the $22 opcode) is
+    /// at $12FFFD, then the bytes pushed are (in order): $12, $00, and $00, rather than $13,
+    /// $00, and $00." Three bytes — the <b>old</b> program bank first, then the address plus 3,
+    /// which wraps inside that bank rather than carrying into the pushed one.
+    /// </summary>
+    [Fact]
+    public void Jsl_PushesTheOldProgramBankThenTheWrappedReturnAddress()
+    {
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x12, 0xFFFD, emulation: false, Jsl, 0xCD, 0xAB, 0x7E);
+        cpu.State.S = 0x01FF;
+
+        Assert.Equal(8, cpu.Step());
+        Assert.Equal(0x12, ram[0x0001FF]);
+        Assert.Equal(0x00, ram[0x0001FE]);
+        Assert.Equal(0x00, ram[0x0001FD]);
+        Assert.Equal(0xABCD, cpu.State.PC);
+        Assert.Equal(0x7E, cpu.State.PBR);
+        Assert.Equal(0x01FC, cpu.State.S);
+    }
+
+    /// <summary>
+    /// §14.6 answer 3, and the shape the whole sequence hangs on: row 2b puts <c>JSR (abs,X)</c>'s
+    /// two pushes at cycles <b>3 and 4</b>, before cycle 5 fetches <c>AAH</c>. No other
+    /// instruction in this phase interleaves a push into the middle of operand fetching.
+    /// §14.9's gap 8 records that the datasheet row is the only source for the ordering — Clark
+    /// gives the cycle count and says nothing about the order — which is why it is pinned here
+    /// cycle by cycle rather than only through the final state.
+    /// </summary>
+    [Fact]
+    public void JsrAbsoluteIndexedIndirect_PushesBeforeItFetchesTheHighOperandByte()
+    {
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x7E, 0x2000, emulation: false, JsrIndX, 0x00, 0x30);
+        cpu.State.S = 0x01FF;
+        cpu.State.XFlag = false;
+        cpu.State.X = 0x0004;
+        ram[0x7E3004] = 0xCD;
+        ram[0x7E3005] = 0xAB;
+
+        cpu.Tick();                                       // 1: opcode
+        Assert.Equal(0x7E2000, cpu.LastAddress);
+
+        cpu.Tick();                                       // 2: AAL
+        Assert.Equal(0x7E2001, cpu.LastAddress);
+
+        cpu.Tick();                                       // 3: PCH pushed, BEFORE AAH is read
+        Assert.Equal(0x0001FF, cpu.LastAddress);
+        Assert.Equal(0x20, ram[0x0001FF]);
+
+        cpu.Tick();                                       // 4: PCL
+        Assert.Equal(0x0001FE, cpu.LastAddress);
+        Assert.Equal(0x02, ram[0x0001FE]);
+
+        cpu.Tick();                                       // 5: AAH, only now
+        Assert.Equal(0x7E2002, cpu.LastAddress);
+
+        cpu.Tick();                                       // 6: the indexing internal cycle
+        Assert.Equal(BusPins.None, cpu.LastPins);
+        Assert.Equal(0x7E2002, cpu.LastAddress);
+
+        cpu.Tick();                                       // 7: pointer low, in bank K
+        Assert.Equal(0x7E3004, cpu.LastAddress);
+
+        cpu.Tick();                                       // 8: pointer high
+        Assert.Equal(0x7E3005, cpu.LastAddress);
+
+        Assert.Equal(0xABCD, cpu.State.PC);
+        Assert.Equal(0x01FD, cpu.State.S);
+    }
+
+    /// <summary>
+    /// <c>JSL</c>'s cycle 5 is an internal cycle at a <b>stack</b> address — <c>0,S</c>, the byte
+    /// it has just pushed — not at <c>PBR,PC</c> like every other internal cycle in this phase
+    /// bar the block moves'. Row 4c, and measured: <c>22 e 61</c>'s fifth entry is
+    /// <c>$000100</c> with the pin string <c>---r</c>.
+    /// </summary>
+    [Fact]
+    public void Jsl_SpendsItsFifthCycleAtTheStackAddressItJustWrote()
+    {
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x12, 0x2000, emulation: false, Jsl, 0xCD, 0xAB, 0x7E);
+        cpu.State.S = 0x01FF;
+
+        for (var i = 0; i < 4; i++) cpu.Tick();
+        Assert.Equal(0x0001FF, cpu.LastAddress);          // 4: the program-bank push
+
+        cpu.Tick();                                       // 5: an IO at the same address
+        Assert.Equal(BusPins.None, cpu.LastPins);
+        Assert.Equal(0x0001FF, cpu.LastAddress);
+    }
+
+    // ---------------------------------------------------------------- the returns
+
+    /// <summary>
+    /// §14.6 answer 5, Clark §6.2.2.2: <c>RTS</c> "pulls the low byte, then the high byte of the
+    /// program counter from the stack, then increments the program counter". Two bytes, plus
+    /// one, and the program bank is not touched.
+    /// </summary>
+    [Fact]
+    public void Rts_PullsTwoBytesAndAddsOne()
+    {
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x12, 0x2000, emulation: false, Rts);
+        cpu.State.S = 0x01FD;
+        ram[0x0001FE] = 0xCD;
+        ram[0x0001FF] = 0xAB;
+
+        Assert.Equal(6, cpu.Step());
+        Assert.Equal(0xABCE, cpu.State.PC);
+        Assert.Equal(0x12, cpu.State.PBR);
+        Assert.Equal(0x01FF, cpu.State.S);
+    }
+
+    /// <summary>
+    /// <c>RTL</c> pulls three: <c>PCL</c>, <c>PCH</c>, then the program bank — and adds one to
+    /// the program counter only. Clark §6.2.2.2, verbatim: "RTL … pulls the low byte, then the
+    /// high byte of the program counter from the stack, then increments the program counter,
+    /// then pulls the K register."
+    /// </summary>
+    [Fact]
+    public void Rtl_PullsThreeBytesAndAddsOneToTheProgramCounterOnly()
+    {
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x12, 0x2000, emulation: false, Rtl);
+        cpu.State.S = 0x01FC;
+        ram[0x0001FD] = 0xCD;
+        ram[0x0001FE] = 0xAB;
+        ram[0x0001FF] = 0x7E;
+
+        Assert.Equal(6, cpu.Step());
+        Assert.Equal(0xABCE, cpu.State.PC);
+        Assert.Equal(0x7E, cpu.State.PBR);
+        Assert.Equal(0x01FF, cpu.State.S);
+    }
+
+    /// <summary>
+    /// <b><c>RTL</c>'s increment does not carry into the bank.</b> Clark §6.2.2.2, verbatim: "if
+    /// $FF, $FF, and $12 are pulled from the stack, the instruction at $120000 (rather than
+    /// $130000) will be executed next." Zero vector coverage — no <c>6b</c> vector in either
+    /// mode pulls <c>$FFFF</c> — so this test is the only thing that certifies it.
+    /// </summary>
+    [Fact]
+    public void Rtl_IncrementWrapsInsideThePulledBank()
+    {
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x33, 0x2000, emulation: false, Rtl);
+        cpu.State.S = 0x01FC;
+        ram[0x0001FD] = 0xFF;
+        ram[0x0001FE] = 0xFF;
+        ram[0x0001FF] = 0x12;
+
+        cpu.Step();
+
+        Assert.Equal(0x0000, cpu.State.PC);
+        Assert.Equal(0x12, cpu.State.PBR);
+    }
+
+    /// <summary>
+    /// Clark §6.3.2's own worked example, verbatim: "S = $01FB, e = 0, $0001FC..FF = $08 $12 $34
+    /// $56 → jumps to $563412, S = $01FF, P = $08". Four bytes in native mode — <c>P</c>, then
+    /// the program counter low and high, then the program bank (§14.6 answer 6, <b>yes</b>, and
+    /// <b>before</b> the return address) — and, unlike <c>RTS</c> and <c>RTL</c>, <b>no</b> "+1":
+    /// "Note that unlike RTS (and RTL), the program counter is not incremented after it is
+    /// pulled from the stack."
+    /// </summary>
+    [Fact]
+    public void RtiNative_PullsFourBytesRestoresTheProgramBankAndAddsNothing()
+    {
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x33, 0x2000, emulation: false, Rti);
+        cpu.State.S = 0x01FB;
+        ram[0x0001FC] = 0x08;
+        ram[0x0001FD] = 0x12;
+        ram[0x0001FE] = 0x34;
+        ram[0x0001FF] = 0x56;
+
+        Assert.Equal(7, cpu.Step());
+        Assert.Equal(0x3412, cpu.State.PC);
+        Assert.Equal(0x56, cpu.State.PBR);
+        Assert.Equal(0x08, cpu.State.P);
+        Assert.Equal(0x01FF, cpu.State.S);
+    }
+
+    /// <summary>
+    /// Emulation mode pulls three, not four, and leaves <c>PBR</c> alone — datasheet note 7 on
+    /// row 22g's seventh cycle, Clark §6.3.2's "In emulation mode, the P register is pulled,
+    /// then the 16-bit program counter is pulled."
+    /// </summary>
+    [Fact]
+    public void RtiEmulation_PullsThreeBytesAndLeavesTheProgramBankAlone()
+    {
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x33, 0x2000, emulation: true, Rti);
+        cpu.State.S = 0x01FC;
+        ram[0x0001FD] = 0x08;
+        ram[0x0001FE] = 0x34;
+        ram[0x0001FF] = 0x12;
+        ram[0x000100] = 0x99;        // what a fourth pull would take the bank from
+
+        Assert.Equal(6, cpu.Step());
+        Assert.Equal(0x1234, cpu.State.PC);
+        Assert.Equal(0x33, cpu.State.PBR);
+        Assert.Equal(0x01FF, cpu.State.S);
+    }
+
+    /// <summary>
+    /// <b>Defect 1, on the second instruction that can hit it.</b> The shared
+    /// <c>MicroOp.PullP</c> masks <c>~Flag.B</c>, which is the same bit as <c>~Flag.X</c> — on a
+    /// native 65816 that silently clears the index-width flag. <c>RTI</c> restores <c>P</c>
+    /// verbatim instead: measured in §14.6's terms, all 10,000 <c>40.n</c> vectors' final
+    /// <c>P</c> equals the pulled byte exactly.
+    /// <para>
+    /// The pulled byte sets <c>x</c> (bit 4) and clears <c>m</c> (bit 5) — opposed, because a
+    /// core that confused the two flags would pass a test that set both the same way — and the
+    /// core starts with the opposite pair.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void RtiNative_RestoresTheIndexWidthFlagRatherThanClearingIt()
+    {
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x33, 0x2000, emulation: false, Rti);
+        cpu.State.S = 0x01FB;
+        cpu.State.M = true;                 // m set, x clear: the opposite of what is pulled
+        cpu.State.XFlag = false;
+        cpu.State.X = 0x1234;
+        cpu.State.Y = 0x5678;
+        ram[0x0001FC] = 0x10;               // x = 1, m = 0
+        ram[0x0001FD] = 0x00;
+        ram[0x0001FE] = 0x40;
+        ram[0x0001FF] = 0x00;
+
+        cpu.Step();
+
+        Assert.Equal(0x10, cpu.State.P);
+        Assert.True(cpu.State.XFlag);
+        Assert.False(cpu.State.M);
+
+        // Setting x forces XH = YH = $00 the same instant SEP does — the rule §14.1 measured
+        // for PLP, applied here because RTI writes the same flag the same way.
+        Assert.Equal(0x0034, cpu.State.X);
+        Assert.Equal(0x0078, cpu.State.Y);
+    }
+
+    // ---------------------------------------------------------------- the emulation-mode wrap
+
+    /// <summary>
+    /// Clark §5.22: "For all interrupts and 'old' instructions, when the e flag is 1, the
+    /// address of the data for an 8-bit push is <c>0,1,SL</c> … Otherwise … <c>0,S</c>."
+    /// <c>JSR</c> is an old instruction and wraps inside page one: from <c>S = $0100</c> the
+    /// second push lands at <c>$0001FF</c>, not <c>$0000FF</c>. Measured — <c>20 e 1023</c>.
+    /// <para>
+    /// <c>JSR (abs,X)</c> wraps too, which the old/new reading alone does not predict: the
+    /// addressing mode is new to the 65816 but the instruction is not. Measured — <c>fc e 458</c>
+    /// starts at <c>SL = $00</c> and writes <c>$000100</c> then <c>$0001FF</c>.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData(Jsr)]
+    [InlineData(JsrIndX)]
+    public void JsrInEmulationMode_WrapsItsPushesInsidePageOne(byte opcode)
+    {
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x12, 0x2000, emulation: true, opcode, 0x00, 0x30);
+        cpu.State.S = 0x0100;
+
+        cpu.Step();
+
+        Assert.Equal(0x20, ram[0x000100]);
+        Assert.Equal(0x02, ram[0x0001FF]);
+        Assert.Equal(0x00, ram[0x0000FF]);
+        Assert.Equal(0x01FE, cpu.State.S);
+    }
+
+    /// <summary>
+    /// <c>JSL</c> is new to the 65816 and does <b>not</b> wrap: from <c>S = $0100</c> its second
+    /// and third pushes land below page one entirely. Clark §5.22's "Otherwise … <c>0,S</c>",
+    /// and measured — <c>22 e 61</c> writes <c>$000100</c>, <c>$0000FF</c>, <c>$0000FE</c> and
+    /// still ends with <c>S = $01FD</c>, because emulation mode has no storage for <c>SH</c>.
+    /// </summary>
+    [Fact]
+    public void JslInEmulationMode_PushesBelowPageOneAndStillSettlesS()
+    {
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x12, 0x2000, emulation: true, Jsl, 0xCD, 0xAB, 0x7E);
+        cpu.State.S = 0x0100;
+
+        cpu.Step();
+
+        Assert.Equal(0x12, ram[0x000100]);
+        Assert.Equal(0x20, ram[0x0000FF]);
+        Assert.Equal(0x03, ram[0x0000FE]);   // JSL pushes its own address plus 3, not plus 2
+        Assert.Equal(0x01FD, cpu.State.S);
+    }
+
+    /// <summary>
+    /// The pull side of the same rule. <c>RTS</c> and <c>RTI</c> are old and wrap — from
+    /// <c>S = $01FF</c> the first pull is at <c>$000100</c> (measured, <c>60 e 121</c> and
+    /// <c>40 e 50</c>) — while <c>RTL</c> is new and reads straight on into page two (measured,
+    /// <c>6b e 104</c>).
+    /// </summary>
+    [Theory]
+    [InlineData(Rts, 0x000100)]
+    [InlineData(Rti, 0x000100)]
+    [InlineData(Rtl, 0x000200)]
+    public void ReturnsInEmulationMode_WrapOnlyIfTheyAreOldInstructions(byte opcode, int firstPull)
+    {
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x12, 0x2000, emulation: true, opcode);
+        cpu.State.S = 0x01FF;
+
+        cpu.Tick();
+        cpu.Tick();
+        cpu.Tick();
+        cpu.Tick();                          // cycle 4: the first stack read
+
+        Assert.Equal(firstPull, cpu.LastAddress);
+    }
 }

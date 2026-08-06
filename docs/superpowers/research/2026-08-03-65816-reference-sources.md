@@ -2882,6 +2882,50 @@ the same as the NMOS 6502's, so what is different is the trailing `PBR`, not the
 three. Clark's example is a single-point check: `S = $01FB`, `e = 0`, `$0001FC..FF` = `$08 $12 $34 $56`
 → jumps to `$563412`, `S = $01FF`, `P = $08`.
 
+**Amended 2026-08-06, phase 7d task 7 — three things this section got wrong or left open, all measured.**
+
+**(a) Rows 2a and 2b's pointer-read pins are wrong.** Both rows print `VDA=0 VPA=1` on `(abs,X)`'s two
+pointer cycles — row 2a's 5 and 6, row 2b's 7 and 8 — which would make them program-stream reads. All
+40,000 `$7C`/`$FC` vectors read **`d--r`**: `VDA` asserted, `VPA` clear, exactly like every other pointer
+read on the part. The implementation follows the vectors. Failing evidence, from the run that caught it:
+`7c e 1: cycle 4 expected [$72CB6A, $11, "d--remx-"], got [$72CB6A, $11, "-p-remx-"]`, and the same on
+`7c n 1`, `fc e 1` and `fc n 1`. Rows 3a and 3b print `VDA=1 VPA=0` on the bank-0 pointer reads and *are*
+right; the error is confined to the two indexed-indirect rows. Same shape as §13.1's row 16b and §14.1's
+rows 22a/22c — a Table 5-7 cell the vectors overrule.
+
+**(b) `JSR (abs,X)` wraps inside page one in emulation mode, and the old/new rule alone does not predict
+it.** Clark §5.1.1 scopes the wrap to *"instructions and addressing modes … available on the 65C02"*, and
+`(abs,X)` as a `JSR` mode is new to the 65816 — but §5.22 states the same rule over instructions alone
+(*"for all interrupts and 'old' instructions"*), and that reading is the correct one. Measured across all
+six stack-touching opcodes of this section, emulation mode: `$20` 0 out-of-page-one accesses, `$FC` 0,
+`$40` 0, `$60` 0, `$22` 103, `$6B` 196. Discriminating vectors, each starting *at* the boundary rather
+than merely near it: `20 e 1023` and `fc e 458` (`SL = $00`, second push at `$0001FF`), `22 e 61`
+(`SL = $00`, pushes at `$000100`, `$0000FF`, `$0000FE`), `60 e 121` and `40 e 50` (`SL = $FF`, first pull
+at `$000100`), `6b e 104` (`SL = $FF`, pulls at `$000200` onward). So `Cpu.StackWrapsInPageOne` gains
+`Op.Jsr` — covering both `$20` and `$FC` — plus `Op.Rts` and `Op.Rti`, and `Op.Jsl`/`Op.Rtl` stay off.
+
+**(c) `RTI`'s pulled `m` and `x` are not visible for the rest of the instruction.** Row 22g loads `P` at
+cycle 4, and `RTI` is the only instruction on the part that restores `P` with cycles still to run —
+`PLP`'s pull *is* its last cycle, which is why §14.1 never met this. The vectors show the two width bits
+unchanged through the end of the instruction: `40 n 3` starts with `x = 1`, pulls a status byte whose `x`
+is 0, and still prints `x` in the pin string of cycles 5, 6 and 7; `40 n 2` does the same for `m`. The
+other six bits are unconstrained by the pin string and are applied at cycle 4, which keeps `I` restored in
+time for this instruction's own last-cycle interrupt poll — the behaviour the five certified eight-bit
+cores have. Nothing `RTI` does after cycle 4 is width-dependent, so where the two bits land is
+unobservable except in the pin string. The final `P` is the pulled byte verbatim in native mode (all
+10,000 `40.n` vectors, XOR `$00`) and differs from it by `$00`/`$10`/`$20`/`$30` and nothing else in
+emulation (all 10,000 `40.e`) — the same two forced bits §14.1 measured for `PLP`, and the same defect-1
+rule: no `~Flag.B` mask anywhere.
+
+**Coverage notes for the eleven, measured from the files.** `$6C` has **35 vectors per mode** whose
+pointer low byte is `$FF`, so the absence of the NMOS page-wrap bug is directly arbitrated; it has **no**
+vector whose pointer crosses the bank 0 boundary, and `$DC` has exactly one, so Clark §5.4's
+`$00FFFF → $000000` wrap rests almost entirely on the citation. `$7C` has 2,512 vectors per mode whose
+indexed pointer wraps inside bank K. `$6B` has **no** vector that pulls `$FFFF`, so Clark §6.2.2.2's *"if
+$FF, $FF, and $12 are pulled from the stack, the instruction at $120000 (rather than $130000) will be
+executed next"* — that `RTL`'s `+1` does not carry into the pulled bank — has **zero vector coverage** and
+is certified by unit test alone.
+
 ### 14.7 `PEA`, `PEI`, `PER`
 
 Transcribed from Table 5-7 rows 22d, 22e and 22f (p. 41).
@@ -3041,7 +3085,7 @@ as §12.6 and §13.6.
 | 5 | **What `PHP` pushes into bits 4 and 5.** Clark §6.8.3 describes `PHP` as pushing "the P register" and says nothing about the two mode bits; the datasheet's Table 5-5 gives `P → Ms` with no qualification | **CLOSED 2026-08-05, measured.** `P` verbatim, all eight bits, both modes, 20,000 of 20,000. See §14.1's measured block — including the caveat that in emulation mode this is observationally identical to forcing `$30` |
 | 6 | **Whether `PLP` setting `x = 1` forces `XH = YH = $00`.** Clark §4 states the rule as a property of the *flag* and illustrates it with `SEP` only; no source names `PLP` | **CLOSED 2026-08-05, measured.** It does, immediately. 2,494 non-vacuous `28 n` vectors, all with final `XH = YH = $00`. See §14.1's measured block |
 | 7 | **What emulation-mode `COP` pushes in bit 4.** Note 11 and Table 8-1 enumerate `IRQ`, `NMI` and `ABORT`; Clark §6.3.1's "the b flag will be set" is scoped to `BRK`. **The sources are silent on `COP`** | **CLOSED 2026-08-05, measured.** `1`, the same as emulation `BRK` — because the push is `P` verbatim and emulation `P` always has bit 4 set. Same observational caveat as gap 5 |
-| 8 | **`JSR (abs,X)`'s push-before-`AAH` ordering has one source, not two.** Table 5-7 row 2b states it; **Clark is silent on the ordering**, giving only the cycle count | **Recorded, single-sourced.** Not a disagreement — no source contradicts the row. Noted so that if a vector disagrees, the row is known to be the only thing behind it |
+| 8 | **`JSR (abs,X)`'s push-before-`AAH` ordering has one source, not two.** Table 5-7 row 2b states it; **Clark is silent on the ordering**, giving only the cycle count | **CLOSED 2026-08-06, phase 7d task 7.** The vectors agree with the row: all 20,000 `$FC` vectors put the two writes at cycles 3 and 4 and the `AAH` fetch at cycle 5. The row was the only thing behind it and the row is right. (The same two rows' *pin* cells are not — see §14.6's amendment (a)) |
 | 9 | **The stack's bank-0 wrap at `S == $0000` is cited but not measured.** Clark §5.1.2 and §5.22 state it plainly and Table 5-7 writes the bank as a literal `0` on every stack cycle. But the `08.n` and `28.n` vector sets contain **no vector with `S <= $0001` or `S >= $FFFE`** | **Recorded, cited only.** The emulation-mode page-one wrap *is* measured (`02 e 1`). Noted so a later reader knows a green `PHP`/`PLP` run does not prove the native wrap |
 | 10 | **Table 5-7's note column is misaligned on rows 22a and 22c**, verified against 400 dpi renderings: row 22a prints note `(7)` beside cycle 2 rather than the `PBR` push at cycle 3, and row 22c prints note `(1)` beside cycle 2 rather than the conditional push at `3a` | **Resolved, not open.** Both resolved by cross-row comparison (22j and 22b put the same notes unambiguously) and by §7.11/Clark. Recorded in the form §13.1 uses for row 16b, because the extracted text and the rendered page show the same offset and a reader checking either alone would see it |
 | 11 | **`WAI` and `STP` cannot be fully certified by vectors.** The files model the three executed cycles and then a `[null, null, "--------"]` sentinel; the hold, the wake, `WAI`'s `i`-flag special case and `STP`'s reset-only exit are absent | **CLOSED, 2026-08-05, phase 7d task 5.** Measured, §14.4. The three cycles are arbitrated by all 40,000 vectors; everything else is `WaiStpTests`. The harness needed **no** null-address cycle kind in the end — the sentinel means "no address, no access", the core's hold performs none, and `AssertCycles` compares the three access entries against three logged accesses, which makes the sentinel an assertion rather than an exemption. `$CB`/`$DB` join `$54`/`$44` on `VectorsTruncatedMidInstruction` for the boundary assertion. Probed: a halt that ends the instruction and only sets a flag passes **all 40,000** and fails 14 of 17 unit cases — see §14.4's resolution note |

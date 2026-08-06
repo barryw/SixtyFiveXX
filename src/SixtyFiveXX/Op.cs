@@ -224,4 +224,31 @@ internal enum Op : byte
     /// only.
     /// </summary>
     Brl,
+
+    /// <summary>
+    /// The long jump, <c>$5C</c> (<c>JML $llhhbb</c>) and <c>$DC</c> (<c>JML [$nnnn]</c>). A
+    /// <see cref="Jmp"/> that also loads <c>PBR</c> — from the instruction's fourth byte for
+    /// <c>$5C</c>, and from a three-byte bank-0 pointer's own third byte for <c>$DC</c>
+    /// (research document §14.6, Table 5-7 rows 4b and 3a). A separate member from
+    /// <see cref="Jmp"/> so <c>MicroOpTable.Emit816</c> can route <c>$5C</c> away from
+    /// <see cref="AddrMode.AbsoluteLong"/>'s load sequence on the operation alone. 65816 only.
+    /// </summary>
+    Jml,
+
+    /// <summary>
+    /// The long call, <c>$22</c>. <see cref="Jsr"/> plus a bank: it pushes the <em>old</em>
+    /// program bank first, then the sixteen-bit address of its own last byte, and jumps to a
+    /// 24-bit destination (Clark §6.2.2.1, Table 5-7 row 4c). New to the 65816, so its pushes
+    /// do <b>not</b> wrap inside page one in emulation mode — see
+    /// <c>Cpu.StackWrapsInPageOne</c>. 65816 only.
+    /// </summary>
+    Jsl,
+
+    /// <summary>
+    /// The long return, <c>$6B</c>. <see cref="Rts"/> plus a bank: three bytes pulled in both
+    /// modes — <c>PCL</c>, <c>PCH</c>, then <c>PBR</c> — with the <c>+1</c> applied to the
+    /// program counter alone, wrapping inside the pulled bank (Clark §6.2.2.2). New to the
+    /// 65816, so it does not wrap inside page one either. 65816 only.
+    /// </summary>
+    Rtl,
 }

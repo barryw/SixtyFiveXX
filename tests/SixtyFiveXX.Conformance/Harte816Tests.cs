@@ -114,9 +114,18 @@ public class Harte816Tests(ITestOutputHelper output)
     /// — 101 <c>rel8</c> and 4,977 <c>rel16</c> — have a destination outside
     /// <c>$0000</c>-<c>$FFFF</c> before the wrap, and every one records the wrapped <c>PC</c>
     /// with <c>PBR</c> unchanged. <c>W65C816ControlFlowTests</c> pins the same rule at the
-    /// specific addresses Clark §4 works through.
+    /// specific addresses Clark §4 works through. Phase 7d task 7, the last structural task of
+    /// the phase, adds the five jumps (<c>$4C</c>, <c>$6C</c>, <c>$7C</c>, <c>$5C</c>,
+    /// <c>$DC</c>), the three calls (<c>$20</c>, <c>$FC</c>, <c>$22</c>) and the three returns
+    /// (<c>$40</c>, <c>$60</c>, <c>$6B</c>) — 242 + 11 = 253. Research document §14.6, Table 5-7
+    /// rows 1b, 3b, 2a, 4b, 3a, 1c, 2b, 4c, 22g, 22h and 22i. Their 220,000 vectors arbitrate
+    /// three shapes no cycle count would have caught: <c>JSR (abs,X)</c> pushes at cycles 3 and
+    /// 4, before it has finished fetching its operand; <c>JSL</c> pushes the <em>old</em> program
+    /// bank at cycle 4, two cycles before it reads the new one; and <c>RTI</c> pulls <c>P</c>
+    /// first and the program bank last, the latter in native mode only — the one opcode of the
+    /// eleven whose cycle count depends on <c>e</c>.
     /// </summary>
-    private static readonly int ExpectedImplementedOpcodes = 242;
+    private static readonly int ExpectedImplementedOpcodes = 253;
 
     /// <summary>
     /// Opcodes whose vectors' final entry is not an instruction boundary, for either of the two

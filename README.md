@@ -82,7 +82,7 @@ all fifteen 65816 addressing modes, plus `XCE`, `REP` and `SEP` — 32 opcodes i
 certified per-cycle in both emulation and native mode against 640,000 SingleStepTests
 vectors, including the full eight-character bus-qualifier pin string asserted on every cycle.
 
-**This is not a complete core.** 242 of the 65816's 256 opcodes are implemented — phase 7b's 32,
+**This is not a complete core.** 253 of the 65816's 256 opcodes are implemented — phase 7b's 32,
 plus phase 7c's bulk work, which added `ORA`, `AND`, `EOR`, `CMP`, `ADC` and `SBC` in all fifteen
 addressing forms each, `CPX` and `CPY` in three each, `BIT` in five, `LDX` and `LDY` in five each,
 `STX` and `STY` in three each, and `STZ` in four, plus phase 7c′'s read-modify-writes: `ASL`,
@@ -117,7 +117,14 @@ and *not* in native mode, where a taken branch is a flat three cycles wherever i
 behaviour here that differs from all five eight-bit cores. `BRL` reaches the whole bank with a
 signed sixteen-bit displacement and is a flat four cycles in both modes. Every branch's
 displacement add wraps inside the program bank and never carries into `PBR`, which 5,078 of the
-200,000 branch vectors exercise directly.
+200,000 branch vectors exercise directly. Then the eleven jumps, calls and returns — `JMP` in its
+three forms, `JML` in two, `JSR` in two, `JSL`, `RTI`, `RTS` and `RTL`. `JMP ($nnnn)` reads its
+pointer from bank 0 and does *not* reproduce the NMOS page-wrap bug the 6502 cores here do; `JMP
+($nnnn,X)` reads its pointer from the program bank instead. `JSR (abs,X)` pushes its return
+address at cycles 3 and 4, before it has finished fetching its own operand, and `JSL` pushes the
+*old* program bank two cycles before it reads the new one. `RTI` pulls the status register first
+and the program bank last, in native mode only, and — unlike `RTS` and `RTL` — adds nothing to the
+address it pulled.
 `ADC` and `SBC` are cycle- and result-correct in decimal mode at both operand widths, including
 16-bit BCD, which no source documents — the correction algorithm was measured from the vectors.
 `BIT`'s immediate opcode is a genuinely different operation from its other four forms, not just

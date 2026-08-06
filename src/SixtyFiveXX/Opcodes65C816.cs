@@ -69,20 +69,25 @@ namespace SixtyFiveXX;
 /// cores but emitted to micro-ops of this part's own; <c>BRL</c> brings in the one addressing mode
 /// this task adds, <see cref="AddrMode.RelativeLong"/>. <see cref="Access.None"/> and no
 /// <see cref="Width"/> on all ten: a displacement is not an operand fetched at a width the flags
-/// select, and <c>BRL</c>'s is sixteen bits whatever <c>m</c> and <c>x</c> say.
+/// select, and <c>BRL</c>'s is sixteen bits whatever <c>m</c> and <c>x</c> say; and phase 7d task
+/// 7's eleven: the five jumps (<c>$4C</c>, <c>$6C</c>, <c>$7C</c>, <c>$5C</c>, <c>$DC</c>), the
+/// three calls (<c>$20</c>, <c>$FC</c>, <c>$22</c>) and the three returns (<c>$40</c>, <c>$60</c>,
+/// <c>$6B</c>) — 242 + 11 = 253. Research document §14.6. They bring in the last addressing mode
+/// this phase adds, <see cref="AddrMode.AbsoluteIndirectLong"/>, and the two entries that make
+/// <c>MicroOpTable.Emit816</c>'s routing order load-bearing: <c>$5C</c> and <c>$22</c> take
+/// <see cref="AddrMode.AbsoluteLong"/>, the mode <c>LDA long</c> uses, so they are routed on
+/// their <em>operation</em> before any mode test runs.
 /// <para>
-/// The remaining 14 entries are <see cref="OpcodeInfo.Undefined"/> and throw
-/// <see cref="UndefinedOpcodeException"/> on fetch. Phase 7d's later tasks fill them in: the five
-/// jumps (<c>$4C</c>, <c>$6C</c>, <c>$7C</c>, <c>$5C</c>, <c>$DC</c>), the three calls
-/// (<c>JSR abs</c>, <c>JSR (abs,X)</c>, <c>JSL</c>), the three returns (<c>RTI</c>, <c>RTS</c>,
-/// <c>RTL</c>) and the three stack-addressing pushes (<c>PEA</c>, <c>PEI</c>, <c>PER</c>) —
-/// research document §14.8's table of all 44, less this task's ten and the four tasks 4 and 5
+/// The remaining 3 entries are <see cref="OpcodeInfo.Undefined"/> and throw
+/// <see cref="UndefinedOpcodeException"/> on fetch: the three stack-addressing pushes
+/// <c>PEA</c> (<c>$F4</c>), <c>PEI</c> (<c>$D4</c>) and <c>PER</c> (<c>$62</c>) — research
+/// document §14.8's table of all 44, less this task's eleven and the thirty-three tasks 2 to 6
 /// landed.
 /// </para>
 /// </remarks>
 internal static class Opcodes65C816
 {
-    /// <summary>Opcode byte to descriptor. 242 entries defined, 14 undefined.</summary>
+    /// <summary>Opcode byte to descriptor. 253 entries defined, 3 undefined.</summary>
     public static readonly OpcodeInfo[] Table = BuildTable();
 
     private static OpcodeInfo[] BuildTable()
@@ -435,6 +440,25 @@ internal static class Opcodes65C816
         Set(0x80, "BRA", AddrMode.Relative, Op.Bra, Access.None);
 
         Set(0x82, "BRL", AddrMode.RelativeLong, Op.Brl, Access.None);
+
+        // Jumps. JMP abs is AddrMode.Stack by this codebase's convention for hand-written
+        // sequences; the indirect forms keep their own modes because the disassembler
+        // formats an operand from them.
+        Set(0x4C, "JMP", AddrMode.Stack,                   Op.Jmp, Access.None);
+        Set(0x6C, "JMP", AddrMode.Indirect,                Op.Jmp, Access.None);
+        Set(0x7C, "JMP", AddrMode.AbsoluteIndexedIndirect, Op.Jmp, Access.None);
+        Set(0x5C, "JML", AddrMode.AbsoluteLong,            Op.Jml, Access.None);
+        Set(0xDC, "JML", AddrMode.AbsoluteIndirectLong,    Op.Jml, Access.None);
+
+        // Calls.
+        Set(0x20, "JSR", AddrMode.Stack,                   Op.Jsr, Access.None);
+        Set(0xFC, "JSR", AddrMode.AbsoluteIndexedIndirect, Op.Jsr, Access.None);
+        Set(0x22, "JSL", AddrMode.AbsoluteLong,            Op.Jsl, Access.None);
+
+        // Returns.
+        Set(0x40, "RTI", AddrMode.Stack, Op.Rti, Access.None);
+        Set(0x60, "RTS", AddrMode.Stack, Op.Rts, Access.None);
+        Set(0x6B, "RTL", AddrMode.Stack, Op.Rtl, Access.None);
 
         return t;
     }

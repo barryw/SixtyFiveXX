@@ -30,7 +30,11 @@ internal enum AddrMode : byte
     /// <summary>Absolute, indexed by Y. Reads may cost an extra cycle on a page cross.</summary>
     AbsoluteY,
 
-    /// <summary>Indirect, used only by JMP. Reproduces the NMOS page-wrap bug.</summary>
+    /// <summary>
+    /// Indirect, used only by JMP. Reproduces the NMOS page-wrap bug on the NMOS cores; the
+    /// 65816 shares the notation and not the bug, because the sequence is emitted per variant
+    /// (research document §14.6, Clark §5.4).
+    /// </summary>
     Indirect,
 
     /// <summary>
@@ -197,6 +201,13 @@ internal enum AddrMode : byte
     /// <c>BRL</c>. 65816 only.
     /// </summary>
     RelativeLong,
+
+    /// <summary>
+    /// <c>[abs]</c> — a three-byte pointer fetched from bank 0 at the sixteen-bit operand
+    /// address. Used only by <c>JML</c>, and the only jump that takes its destination bank
+    /// from memory rather than from the instruction stream. 65816 only.
+    /// </summary>
+    AbsoluteIndirectLong,
 
     /// <summary>Not implemented by this variant.</summary>
     Undefined,
