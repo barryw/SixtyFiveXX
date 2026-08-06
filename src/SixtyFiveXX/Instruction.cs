@@ -19,6 +19,13 @@ namespace SixtyFiveXX;
 /// Everything after the mnemonic, in the usual 6502 notation — <c>#$0F</c>, <c>$1234,X</c>,
 /// <c>($12),Y</c>, <c>A</c> — and empty for an implied instruction. Branches are shown as
 /// the address they land on rather than the displacement they encode.
+/// <para>
+/// The text does not say which width was encoded; <see cref="Length"/> does, and it is the
+/// only place that does. <c>$0012</c> reads the same whether it came from a two-byte
+/// direct-page instruction or a three-byte absolute one, so anything reassembling this text
+/// must honour <see cref="Length"/> — assemblers pick the shortest encoding that fits and
+/// need telling otherwise, in whatever their own dialect spells it.
+/// </para>
 /// </param>
 /// <param name="Length">
 /// Bytes consumed, 1 to 4. This is what the <em>processor</em> consumes, which is why

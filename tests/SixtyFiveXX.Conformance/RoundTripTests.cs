@@ -251,19 +251,85 @@ public class RoundTripTests(ITestOutputHelper output)
     /// mnemonic in this project's tables and in every 65xx datasheet — <c>RMB0</c>,
     /// <c>BBS7</c> — but 64tass takes it as a leading operand and rejects the fused form
     /// outright. The encodings are identical, so this is a spelling, and it belongs here
-    /// rather than in the library.
+    /// rather than in the library. <see cref="WidthPrefix"/> is here for the same reason.
     /// </summary>
     private static string ForAssembler(Instruction instruction)
     {
         var mnemonic = instruction.Mnemonic;
+        var operand = WidthPrefix(instruction) + instruction.Operand;
 
         if (mnemonic.Length == 4 && char.IsAsciiDigit(mnemonic[3]) &&
             mnemonic[..3] is "RMB" or "SMB" or "BBR" or "BBS")
         {
-            return $"{mnemonic[..3].ToLowerInvariant()} {mnemonic[3]},{instruction.Operand}";
+            return $"{mnemonic[..3].ToLowerInvariant()} {mnemonic[3]},{operand}";
         }
 
-        return instruction.ToString();
+        return operand.Length == 0 ? mnemonic : $"{mnemonic} {operand}";
+    }
+
+    /// <summary>
+    /// The width 64tass has to be told, or the empty string when the shortest encoding it
+    /// would pick is already the one that was decoded.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 64tass emits the shortest encoding that fits the value, so a three-byte
+    /// <c>LDA $0012</c> comes back as the two-byte direct-page <c>a5 12</c> — a different
+    /// instruction, and on a linear listing every byte after it shifts. Research §15.4
+    /// counted 53 such opcodes on each NMOS part and 42 on each 65C02. <c>@w</c> and
+    /// <c>@l</c> say "this width, not the shorter one that also fits". They are 64tass's
+    /// spelling of it — ca65 writes <c>a:</c> — which is exactly why they live in this
+    /// harness and not in <see cref="Instruction.Operand"/>.
+    /// </para>
+    /// <para>
+    /// Decided from the rendered text rather than from an addressing mode, which is what
+    /// makes it cheap and what makes it total: an absolute operand always renders as exactly
+    /// four hex digits and a long one as six, so a leading <c>$00</c> is precisely the case
+    /// that collapses. Every instruction the disassembler emits passes through here,
+    /// including the 65C02's three-byte <c>NOP</c> shapes, which a mode-aware rule inside
+    /// the library had missed. Direct-page and immediate operands are two digits and
+    /// branches are two bytes, so neither can match; <c>BBR0 $00,$1234</c> cannot either,
+    /// because the four characters after its <c>$</c> are not all hex.
+    /// </para>
+    /// <para>
+    /// §15.2 measured that 64tass also decides by mnemonic — <c>LDX $0012,Y</c> collapses
+    /// where <c>LDA $0012,Y</c> does not, and the jumps never collapse — so this over-forces
+    /// on a few opcodes. That was measured to be a no-op: a redundant prefix assembles to
+    /// the same bytes, and the alternative is a second opcode-shaped table to keep in step.
+    /// </para>
+    /// </remarks>
+    private static string WidthPrefix(Instruction instruction) => instruction.Length switch
+    {
+        3 when TopByteIsZero(instruction.Operand, 4) => "@w ",
+
+        // ponytail: nothing decodes to four bytes yet — task 5's 65816 long modes are the
+        // first caller. Written now because it is the same rule one width up, and splitting
+        // it would only mean rediscovering it.
+        4 when TopByteIsZero(instruction.Operand, 6) => "@l ",
+        _ => "",
+    };
+
+    /// <summary>
+    /// True when the operand's address is <c>$</c> followed by exactly <paramref name="digits"/>
+    /// hex digits of which the top two are zero. Skips one opening parenthesis so the
+    /// indirect forms — <c>($0012)</c>, <c>($0012,X)</c> — read the same as the plain ones;
+    /// the <c>,X</c> and <c>,Y</c> suffixes fall out of the exact digit count.
+    /// </summary>
+    private static bool TopByteIsZero(string operand, int digits)
+    {
+        var text = operand.AsSpan(operand.StartsWith('(') ? 1 : 0);
+
+        // `$` then exactly this many hex digits. One more would be a longer operand entirely,
+        // and one fewer a shorter one — either way not the width this prefix is about.
+        if (text.Length < digits + 1 || text[0] != '$') return false;
+        if (text.Length > digits + 1 && char.IsAsciiHexDigit(text[digits + 1])) return false;
+
+        for (var i = 1; i <= digits; i++)
+        {
+            if (!char.IsAsciiHexDigit(text[i])) return false;
+        }
+
+        return text[1] == '0' && text[2] == '0';
     }
 
     /// <summary>Assembles source text and returns the raw bytes, with no load address.</summary>

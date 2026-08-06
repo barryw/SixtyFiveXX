@@ -83,14 +83,12 @@ public static class Disassembler
             AddrMode.ZeroPageY =>
                 new Instruction(info.Mnemonic, $"${Operand8<TBus, TVariant>(bus, address, 1):X2},Y", 2),
 
-            // Width-forced: see WidthPrefix. An absolute operand under $100 that is not marked
-            // as a word reassembles as the shorter direct-page opcode, on every one of the six.
             AddrMode.Absolute =>
-                new Instruction(info.Mnemonic, AbsoluteOperand<TBus, TVariant>(bus, address, ""), 3),
+                new Instruction(info.Mnemonic, $"${Operand16<TBus, TVariant>(bus, address):X4}", 3),
             AddrMode.AbsoluteX =>
-                new Instruction(info.Mnemonic, AbsoluteOperand<TBus, TVariant>(bus, address, ",X"), 3),
+                new Instruction(info.Mnemonic, $"${Operand16<TBus, TVariant>(bus, address):X4},X", 3),
             AddrMode.AbsoluteY =>
-                new Instruction(info.Mnemonic, AbsoluteOperand<TBus, TVariant>(bus, address, ",Y"), 3),
+                new Instruction(info.Mnemonic, $"${Operand16<TBus, TVariant>(bus, address):X4},Y", 3),
 
             // The NMOS page-wrap bug and its CMOS fix are the same three bytes and the same
             // notation; they differ only in where the second vector byte is fetched from.
@@ -168,45 +166,6 @@ public static class Disassembler
 
             _ => new Instruction(info.Mnemonic, "", 1),
         };
-
-    /// <summary>
-    /// An absolute operand with its index suffix, marked with the width an assembler has to be
-    /// told about. Reads the operand word once, because <see cref="Operand16{TBus, TVariant}"/>
-    /// touches the bus and the class contract above is that a decode reads its own bytes and
-    /// no others — twice would be twice the reads on a side-effecting bus.
-    /// </summary>
-    private static string AbsoluteOperand<TBus, TVariant>(in TBus bus, int address, string index)
-        where TBus : struct, IBus
-        where TVariant : struct, ICpuVariant
-    {
-        var value = Operand16<TBus, TVariant>(bus, address);
-        return $"{WidthPrefix(value, 2)}${value:X4}{index}";
-    }
-
-    /// <summary>
-    /// The width prefix an operand needs so an assembler reproduces the instruction that was
-    /// decoded, or the empty string when it needs none.
-    /// </summary>
-    /// <remarks>
-    /// 64tass — and every other 65xx assembler worth round-tripping against — emits the
-    /// shortest encoding that fits the value, so a three-byte <c>LDA $0012</c> assembles back
-    /// as the two-byte direct-page form and a four-byte <c>LDA $001234</c> as the three-byte
-    /// absolute one. The prefix says "this width, not the shorter one that also fits".
-    /// <para>
-    /// Research document §15.2 measured that 64tass decides by mnemonic <em>and</em> value —
-    /// <c>LDX $0012,Y</c> collapses where <c>LDA $0012,Y</c> does not, and the jumps never
-    /// collapse at all — so this predicate over-forces for some opcodes. That was measured to
-    /// be a no-op: the complete 256-opcode listing assembles byte-identically with forcing on
-    /// and off. A mnemonic-aware rule would produce tidier text for a handful of jumps and
-    /// nothing else, at the cost of a second opcode-shaped table to keep in step.
-    /// </para>
-    /// </remarks>
-    private static string WidthPrefix(int operand, int operandBytes) => operandBytes switch
-    {
-        2 when operand < 0x100 => "@w ",
-        3 when operand < 0x10000 => "@l ",
-        _ => "",
-    };
 
     /// <summary>Reads an operand byte, wrapping where <see cref="OperandAddress{TVariant}"/> says.</summary>
     private static int Operand8<TBus, TVariant>(in TBus bus, int address, int offset)

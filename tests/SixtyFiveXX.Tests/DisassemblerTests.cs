@@ -297,59 +297,6 @@ public class DisassemblerTests
         Assert.Equal(3, instruction.Length);
     }
 
-    /// <summary>
-    /// An absolute operand under $100 must force a word, on EVERY core. 64tass assembles
-    /// LDA $0012 as direct page — a5 12 — so the unforced text reassembles to two bytes where
-    /// the instruction is three. Research §15.4 measured 53 such opcodes on each NMOS part and
-    /// 42 on each 65C02, latent since phase 6a.
-    /// </summary>
-    [Fact]
-    public void Absolute_UnderOneHundred_ForcesAWord()
-    {
-        AssertForcesAWord<Mos6502Variant>();
-        AssertForcesAWord<Mos6510Variant>();
-        AssertForcesAWord<Synertek65C02Variant>();
-        AssertForcesAWord<Rockwell65C02Variant>();
-        AssertForcesAWord<Wdc65C02Variant>();
-        AssertForcesAWord<W65C816Variant>();
-    }
-
-    /// <summary>$AD is LDA absolute on every one of the six.</summary>
-    private static void AssertForcesAWord<TVariant>() where TVariant : struct, ICpuVariant
-    {
-        Assert.Equal("@w $0012", Decode<TVariant>(0x1000, 0xAD, 0x12, 0x00).Operand);
-    }
-
-    /// <summary>
-    /// The indexed forms too, and the top of the range that still collapses: $00FF is the
-    /// last value 64tass encodes as direct page, $0100 the first it does not.
-    /// </summary>
-    [Theory]
-    [InlineData(new byte[] { 0xBD, 0x12, 0x00 }, "@w $0012,X")]
-    [InlineData(new byte[] { 0xB9, 0x12, 0x00 }, "@w $0012,Y")]
-    [InlineData(new byte[] { 0xAD, 0xFF, 0x00 }, "@w $00FF")]
-    [InlineData(new byte[] { 0xAD, 0x00, 0x01 }, "$0100")]
-    public void Absolute_ForcesUpToTheCollapseBoundary(byte[] bytes, string operand)
-    {
-        Assert.Equal(operand, Decode(bytes).Operand);
-    }
-
-    /// <summary>
-    /// And an operand that cannot collapse must NOT be forced, or every listing grows noise.
-    /// </summary>
-    [Fact]
-    public void Absolute_AtOrAboveOneHundred_IsNotForced()
-    {
-        var ram = new byte[0x10000];
-        ram[0x1000] = 0xAD;
-        ram[0x1001] = 0x34;
-        ram[0x1002] = 0x12;
-
-        var decoded = Disassembler.Decode<FlatBus, Mos6502Variant>(new FlatBus(ram), 0x1000);
-
-        Assert.Equal("$1234", decoded.Operand);
-    }
-
     [Fact]
     public void ToString_JoinsTheMnemonicAndOperand()
     {
