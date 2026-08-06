@@ -27,6 +27,39 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// <summary>Address of the IRQ and BRK vector.</summary>
     public const int IrqVector = 0xFFFE;
 
+    /// <summary>
+    /// The four 65816 native-mode interrupt vectors, plus the one emulation-mode vector the
+    /// eight-bit cores have no counterpart for. Research document §14.2, transcribed from
+    /// datasheet Tables 5-2 and 5-3, which Clark §6.3.1.1 corroborates cell for cell — and
+    /// measured: 10,000 of 10,000 vectors each for <c>$00</c>/<c>$02</c> in both modes.
+    /// <para>
+    /// There is no native <c>RESET</c> vector. Clark, verbatim: <em>"A RESET interrupt puts the
+    /// 65C816 into emulation mode, thus there is no native mode RESET vector"</em>, and Table
+    /// 5-3 has no row for it — so <see cref="ResetVector"/> serves both modes.
+    /// <c>ABORT</c>'s pair (<c>$00FFE8</c> native, <c>$00FFF8</c> emulation) is deliberately
+    /// absent: this core has no <c>ABORTB</c> pin and nothing can raise one.
+    /// </para>
+    /// <para>
+    /// Private, unlike the three above: this phase adds no public API, and
+    /// <see cref="Vector816"/> is the only reader. Emulation-mode <c>BRK</c> and <c>IRQ</c>
+    /// share <see cref="IrqVector"/> and emulation-mode <c>NMI</c> is <see cref="NmiVector"/>,
+    /// so only <c>COP</c> needs an emulation constant of its own.
+    /// </para>
+    /// </summary>
+    private const int CopVector816 = 0xFFE4;
+
+    /// <inheritdoc cref="CopVector816"/>
+    private const int BrkVector816 = 0xFFE6;
+
+    /// <inheritdoc cref="CopVector816"/>
+    private const int NmiVector816 = 0xFFEA;
+
+    /// <inheritdoc cref="CopVector816"/>
+    private const int IrqVector816 = 0xFFEE;
+
+    /// <inheritdoc cref="CopVector816"/>
+    private const int CopVectorEmulation = 0xFFF4;
+
     private TBus _bus;
     private readonly MicroOpTable _table;
     private readonly MicroOp[] _ops;
@@ -423,15 +456,17 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             // was left holding by the instruction that just finished (see below), the
             // same instant real hardware samples during phase 2 of the penultimate cycle.
             //
-            // KNOWN GAP, 65816 only: when _intPoll is set, FetchOpcode() below diverts into
-            // the interrupt-entry sequence instead of fetching an opcode, and that cycle is
-            // actually a discarded read at PC — VDA and VPA should not both be asserted
-            // there, unlike a real opcode fetch. Research document §9 covers only phase 7b's
-            // addressing-mode slice and has no interrupt rows, so the correct pin pair cannot
-            // be established from it today. Left as OpcodeFetchPins until phase 7d implements
-            // 65816 interrupts and can pin the right value down. The five 8-bit cores are
-            // unaffected: VDA/VPA do not exist there, and their opcode-fetch-vs-interrupt-entry
-            // pin behaviour has no equivalent gap.
+            // GAP CLOSED, phase 7d task 3: when _intPoll is set, FetchOpcode() below diverts
+            // into the interrupt-entry sequence instead of fetching an opcode, and this comment
+            // used to record that the resulting cycle's pins were unknown — research document
+            // §9 has no interrupt rows. §14.2 supplies them: Table 5-7 row 22a's cycle 1 prints
+            // VDA=1 VPA=1 at PBR,PC, which is OpcodeFetchPins exactly. The datasheet labels its
+            // data bus "IO", meaning the byte is discarded, not that the address is invalid —
+            // both address-valid pins really are asserted, so this needed no change beyond the
+            // reading. Row 22a's cycle 2 is the internal cycle, and that one is a real IO with
+            // neither pin: MicroOp.IntInternal816. Not vector-covered — the SingleStepTests set
+            // carries no interrupt-line stimulus at all (§14.2's gap 1) — so this rests on the
+            // row. The five 8-bit cores are unaffected: VDA/VPA do not exist there.
             _lastPins = OpcodeFetchPins;
             FetchOpcode();
             return;
@@ -599,13 +634,53 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// <c>$0000FF</c> from <c>S = $0100</c>. All new, all non-wrapping; all old or interrupt, all
     /// wrapping. The list below is that same predicate written as opcodes rather than as an
     /// <see cref="AddrMode"/> flag, because it is cheap and needs no addressing-mode plumbing: when
-    /// a later task adds the interrupts and the remaining old instructions, this list gains
-    /// <c>Op.Brk</c>, <c>Op.Cop</c>, <c>Op.Jsr</c>, <c>Op.Rts</c> and <c>Op.Rti</c>, and leaves
-    /// <c>Op.Jsl</c>, <c>Op.Rtl</c>, <c>Op.Per</c>, <c>Op.Pea</c> and <c>Op.Pei</c> off.
+    /// a later task adds the remaining old instructions, this list gains <c>Op.Jsr</c>,
+    /// <c>Op.Rts</c> and <c>Op.Rti</c>, and leaves <c>Op.Jsl</c>, <c>Op.Rtl</c>, <c>Op.Per</c>,
+    /// <c>Op.Pea</c> and <c>Op.Pei</c> off.
+    /// </para>
+    /// <para>
+    /// Phase 7d task 3 added the four interrupts — <c>Op.Brk</c> and <c>Op.Cop</c>, which are
+    /// opcodes, and <c>Op.Irq</c> and <c>Op.Nmi</c>, which are not: <see cref="FetchOpcode"/>
+    /// assigns those two when it diverts into the interrupt sequence, precisely so this predicate
+    /// and <see cref="MicroOp.PushPInt816"/> can see them. Clark §5.22 names interrupts in the
+    /// same clause as "old" instructions and draws no distinction among them, so all four are on
+    /// the list; the two opcodes are measured at zero out-of-page-one accesses across their
+    /// 20,000 emulation-mode vectors, and the two hardware interrupts have no vectors at all
+    /// (§14.2's gap 1) and rest on the citation alone.
     /// </para>
     /// </remarks>
     private bool StackWrapsInPageOne() => _op is Op.Pha or Op.Php or Op.Phx or Op.Phy
-                                                or Op.Pla or Op.Plp or Op.Plx or Op.Ply;
+                                                or Op.Pla or Op.Plp or Op.Plx or Op.Ply
+                                                or Op.Brk or Op.Cop or Op.Irq or Op.Nmi;
+
+    /// <summary>
+    /// The vector an interrupt reads, on the 65816. Native mode has its own four addresses;
+    /// emulation mode reuses the eight-bit cores' — except <c>COP</c>, which the eight-bit
+    /// cores do not have. Research document §14.2 — every address here is transcribed from
+    /// that table, not derived from the 6502's.
+    /// </summary>
+    /// <remarks>
+    /// One selector rather than a test inside each interrupt micro-op: the choice depends only
+    /// on <c>E</c> and on which interrupt is being taken, both of which are known before the
+    /// sequence starts, and keeping it in one place is what makes the five constants above
+    /// reviewable against §14.2 as a block.
+    /// <para>
+    /// Reached from exactly two places, one per kind of interrupt:
+    /// <see cref="FetchOpcode"/> for a hardware interrupt, whose reason only the dispatcher
+    /// knows, and <see cref="MicroOp.BrkPad816"/> for <c>BRK</c>/<c>COP</c>, whose reason is
+    /// their opcode. <b>Which cycle commits the vector is unobservable on this part</b>, unlike
+    /// on the NMOS cores where the P-push cycle commits it and a latched NMI may hijack it
+    /// there — see <see cref="MicroOp.PushPInt816"/> for why there is no hijack here.
+    /// </para>
+    /// </remarks>
+    private int Vector816(Op reason) => reason switch
+    {
+        Op.Cop => _s.E ? CopVectorEmulation : CopVector816,
+        Op.Brk => _s.E ? IrqVector : BrkVector816,
+        Op.Nmi => _s.E ? NmiVector : NmiVector816,
+        Op.Irq => _s.E ? IrqVector : IrqVector816,
+        _ => throw new InvalidOperationException($"{reason} is not an interrupt."),
+    };
 
     /// <summary>Writes one byte at <see cref="StackAddress816"/>, then moves <c>S</c> down.</summary>
     private void PushStack816(byte value)
@@ -1004,12 +1079,25 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             if (_nmiPending)
             {
                 _nmiPending = false;
-                _vector = NmiVector;
+                _op = Op.Nmi;
             }
             else
             {
-                _vector = IrqVector;
+                _op = Op.Irq;
             }
+
+            // _op is assigned on every core but read only by the 65816, whose interrupt
+            // sequence shares StackWrapsInPageOne, PushPInt816 and Vector816 with BRK and COP
+            // and can tell them apart only by this. The five 8-bit cores' sequence reads none
+            // of the three; nothing else in an interrupt sequence reads _op on any core.
+            //
+            // The vector likewise: the 65816 has two sets of four (research document §14.2),
+            // so it goes through Vector816. The guard is a compile-time constant per closed
+            // generic type, so for those five cores this folds back to exactly the
+            // NmiVector/IrqVector choice that was here before.
+            _vector = TVariant.Variant == CpuVariant.W65C816
+                ? Vector816(_op)
+                : _op == Op.Nmi ? NmiVector : IrqVector;
             _mpc = _table.IrqEntry;
             return;
         }
@@ -1147,6 +1235,102 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 _data16 |= (ushort)(PullStack816() << 8);
                 StackSettle816();
                 Exec();
+                break;
+
+            // Phase 7d task 3: the interrupts. Research document §14.2, Table 5-7 rows 22j
+            // (BRK/COP) and 22a (IRQ/NMI/RESET/ABORT). The two rows share cycles 3 to 8
+            // exactly, so the five micro-ops from PushPbr816 on are shared too; only the two
+            // leading cycles differ, and each of those owns the emulation-mode skip of the
+            // program-bank push.
+
+            case MicroOp.BrkPad816:
+                // Row 22j cycle 2. The signature byte IS fetched — VPA=1 with a real value on
+                // the row, and every one of the 40,000 BRK/COP vectors shows a non-null value
+                // with pin string "-p-r…" here. Read and discarded; PC advances past it, which
+                // is why the pushed address is the instruction's own plus 2.
+                ReadBus(PcAddress());
+                _s.PC++;
+                // The vector is chosen here rather than on the P push, where the eight-bit
+                // cores commit it: that commit point exists to bound the NMI hijack, and this
+                // part has none (see PushPInt816), so nothing between here and VectorLo816 can
+                // change the answer. E cannot change mid-instruction either.
+                _vector = Vector816(_op);
+                if (_s.E) _mpc++;           // emulation pushes no program bank: skip PushPbr816
+                break;
+
+            case MicroOp.IntInternal816:
+                // Row 22a cycle 2: an internal cycle at PBR,PC — VDA=0 VPA=0, no memory access.
+                // PC is NOT advanced: a hardware interrupt consumes no opcode, so both of its
+                // leading cycles drive the same address. Cycle 1 is FetchOpcode's own discarded
+                // read, which the row prints as VDA=1 VPA=1.
+                InternalCycle(PcAddress());
+                if (_s.E) _mpc++;           // as BrkPad816: no program-bank push in emulation
+                break;
+
+            case MicroOp.PushPbr816:
+                // Native only, both rows: "omitted when e = 1", datasheet §7.11.2 ("previous
+                // contents of the PBR are not automatically saved") and Clark §6.3.1.1, which
+                // lists no K push in the emulation sequence. Datasheet note 7 — "subtract 1
+                // cycle for 6502 emulation mode" — is the same fact from the cycle-count side;
+                // research document §14.2 records that row 22a prints that marker one line too
+                // high and resolves it against row 22j, where it is unambiguous.
+                PushStack816(_s.PBR);
+                break;
+
+            case MicroOp.PushPch816:
+                PushStack816((byte)(_s.PC >> 8));
+                break;
+
+            case MicroOp.PushPcl816:
+                PushStack816((byte)_s.PC);
+                break;
+
+            case MicroOp.PushPInt816:
+                // The P push, then I set and D cleared — in that order. Clark §6.3.1: "The i
+                // flag is set after pushing the P register; furthermore … the d flag is cleared
+                // after pushing the P register", and measured: the pushed byte XORed against
+                // the initial P is $00 across all 40,000 BRK/COP vectors, so both flag writes
+                // land strictly after the push, while the final P has d = 0 and i = 1 in all
+                // 40,000.
+                //
+                // Bit 4 is the one place the two rows differ. BRK and COP push P verbatim in
+                // both modes (measured, above). A hardware interrupt pushes it verbatim in
+                // native mode too — Table 8-1, "X=X on stack always", bit 4 simply being the x
+                // flag — but forces it to 0 in emulation mode: datasheet note 11, "BRK bit 4
+                // equals 0 in Emulation mode", printed on row 22a and NOT on row 22j, which is
+                // the 6502's rule and the opposite of what the note's wording reads like on its
+                // own. Flag.B and Flag.X are the same bit; the name used here is Flag.B because
+                // what is being cleared is the break flag, not the index-width flag — and in
+                // emulation mode x is forced to 1 anyway, so the two readings differ only in
+                // what they mean, never in what they do.
+                //
+                // No NMI hijack, deliberately. The NMOS cores in this repository let a latched
+                // NMI steal a BRK's vector on this very cycle; research document §14.2 records
+                // that no 65816 source mentions the case at all and that no vector can settle
+                // it, and §14.9's gap 2 says outright not to carry the NMOS behaviour over by
+                // inference. It is not carried over. The general 6502-family sampling rule —
+                // recognise at an instruction boundary — is what runs here instead, and it
+                // needs no unsourced claim; the NMOS anomaly is a property of that die's ~VEC
+                // transistor chain, which no source places on this one. Same reasoning applies
+                // to the recognition blackout Tick performs on MicroOp.VectorHi: VectorHi816 is
+                // deliberately NOT in it. See the task 3 report.
+                PushStack816((_op is Op.Irq or Op.Nmi) && _s.E ? (byte)(_s.P & ~Flag.B) : _s.P);
+                _s.I = true;
+                _s.D = false;
+                break;
+
+            case MicroOp.VectorLo816:
+                _tmp = ReadBus(_vector);
+                break;
+
+            case MicroOp.VectorHi816:
+                // Both vector bytes come from bank 0 — both rows print "0,VA" and "0,VA+1" —
+                // and _vector is already a bank-0 address, so no PBR is folded in. PBR itself
+                // is cleared here, in both modes: datasheet §7.11.1 and §7.11.2 say so
+                // separately for native and emulation, the rows' own "0,AAV" next-opcode cell
+                // says it from the bus side, and the final PBR is $00 in all 40,000 vectors.
+                _s.PC = (ushort)((ReadBus(_vector + 1) << 8) | _tmp);
+                _s.PBR = 0;
                 break;
 
             case MicroOp.StackDummyReadDec816:

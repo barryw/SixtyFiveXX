@@ -2316,6 +2316,41 @@ labelled as confirmation, not as the source — or closes a stated silence.
 > cycles**, one opcode fetch and one internal cycle at `PBR,PC+1` — the same shape as §9's row 19a implied
 > form except that `PC` advances by two instead of one. See §3.4.
 
+#### Implemented, and the two choices this section forced — phase 7d task 3
+
+Added 2026-08-05. Everything transcribed above went in unchanged and all 60,000 `$00`/`$02`/`$42` vectors
+passed on the first run, so nothing here is a correction to the table. Two things are recorded because they
+are **decisions**, not findings, and §14.9's gap 2 required whichever was taken to be written down.
+
+**1. There is no NMI hijack on the 65816, and this is a choice.** Gap 2 stands open: no source mentions an
+`NMI` asserted mid-`BRK`, and no vector can settle it. The NMOS cores in this repository implement one —
+`MicroOp.PushPBrk` lets a latched `NMI` steal `BRK`'s vector on the P-push cycle, and `HijackTests.cs`
+covers it — and it was **not** carried over. The reasoning, stated so a later reader can overturn it with a
+source rather than by preference: the general 6502-family rule is that an interrupt is recognised at an
+instruction boundary, and that rule alone produces no hijack; the NMOS anomaly is an *exception* to it,
+attributed in this repository's own `PushPBrk` comment to that die's `~VEC`/`pipe~VEC`/1578/1368 transistor
+chain, and no source places that chain on this part. The 65C02 removed the anomaly outright (see
+`PushPBrkCmos`), and the 65816's interrupt logic descends from the 65C02's. Adding the exception needs a
+source; declining to needs none. Consequence, unit-tested in `W65C816InterruptTests`: `BRK` reads its own
+vector and the pending `NMI` is taken afterwards.
+
+**2. The recognition blackout is not extended to the 65816's vector-high cycle either, same reasoning.**
+`Cpu.Tick` forces `_intPoll` false on `MicroOp.VectorHi`, which is what guarantees the five 8-bit cores
+execute at least one handler instruction before another interrupt is serviced. `MicroOp.VectorHi816` is
+deliberately absent from that test. This is the same class of unsourced NMOS die behaviour as the hijack —
+the same node 1368 — and it is left out for the same reason. **Consequence, and it is visible:** an `NMI`
+latched during a `BRK`, `COP`, `IRQ` or `NMI` sequence is serviced at the very next instruction boundary,
+so the first handler instruction does not run. Bounded and non-looping: `IRQ` cannot re-enter because `I`
+is set two cycles before the boundary, and the `NMI` latch is consumed on dispatch. If a source is ever
+found, the fix is one clause in `Cpu.Tick`.
+
+**3. One gap closed as a side effect.** `Cpu.Tick` carried a "KNOWN GAP, 65816 only" comment since phase
+7b: the pins of the interrupt-entry cycle that `FetchOpcode` performs in place of an opcode fetch were
+unknown, because §9 has no interrupt rows. Row 22a's cycle 1 supplies them — `VDA=1 VPA=1` at `PBR,PC`,
+which is exactly the `OpcodeFetchPins` that were already there. The datasheet's `IO` in that row's data-bus
+column means the byte is discarded, not that the address is invalid. Not vector-covered (gap 1); it rests
+on the row.
+
 ### 14.3 `MVN` and `MVP` — from the datasheet, and from `$54.n.json` read directly
 
 Transcribed from Table 5-7 rows 9a and 9b (p. 38). `DBA` is the datasheet's destination bank address and
@@ -2897,8 +2932,8 @@ as §12.6 and §13.6.
 
 | # | Gap | Status |
 | --- | --- | --- |
-| 1 | **`IRQ` and `NMI` cannot be certified against the vector set at all.** `SingleStepTests/65816` is 512 files, one per opcode per mode (§2.3); there is no interrupt-line stimulus in any of them. Table 5-7 row 22a specifies the sequence fully and §14.2 transcribes it, but **nothing in the arbiter can check it** | **Open, structural.** Not a documentation gap — a coverage gap. `BRK` and `COP` share cycles 3–8 with row 22a and *are* vector-covered, so the shared sequence is arbitrated; what is not covered is the two leading `IO` cycles at `PBR,PC`, the recognition timing, and the `NMI`/`IRQ`/`ABORT` vector selection. Unit tests only |
-| 2 | **The `NMI`-hijack anomaly.** Whether an `NMI` asserted during a `BRK` sequence causes the `BRK` to fetch the `NMI` vector, as it does on the NMOS parts this repository has certified. **The sources are silent**: neither Clark nor the datasheet mentions the case. Clark §6.3.1.1's *"the instruction is completed before pushing anything"* is about a different case and does not cover it | **Open, and not measurable.** Follows from gap 1. Do **not** carry the NMOS behaviour over by inference; if phase 7d implements interrupt delivery at all, the hijack must be either left out or written down explicitly as an unsourced choice |
+| 1 | **`IRQ` and `NMI` cannot be certified against the vector set at all.** (Discharged as coverage 2026-08-05: `W65C816InterruptTests` unit-tests both, per this row's own "unit tests only".) `SingleStepTests/65816` is 512 files, one per opcode per mode (§2.3); there is no interrupt-line stimulus in any of them. Table 5-7 row 22a specifies the sequence fully and §14.2 transcribes it, but **nothing in the arbiter can check it** | **Open, structural.** Not a documentation gap — a coverage gap. `BRK` and `COP` share cycles 3–8 with row 22a and *are* vector-covered, so the shared sequence is arbitrated; what is not covered is the two leading `IO` cycles at `PBR,PC`, the recognition timing, and the `NMI`/`IRQ`/`ABORT` vector selection. Unit tests only |
+| 2 | **The `NMI`-hijack anomaly.** Whether an `NMI` asserted during a `BRK` sequence causes the `BRK` to fetch the `NMI` vector, as it does on the NMOS parts this repository has certified. **The sources are silent**: neither Clark nor the datasheet mentions the case. Clark §6.3.1.1's *"the instruction is completed before pushing anything"* is about a different case and does not cover it | **Still open as a question; CLOSED as a decision, 2026-08-05, phase 7d task 3.** The question is unanswerable and follows from gap 1. The implementation has **no hijack**, and, for the same reason, does **not** extend `Cpu.Tick`'s `VectorHi` recognition blackout to the 65816 — both are NMOS die behaviour that no 65816 source states. Written down in §14.2's "Implemented" block with the reasoning and the visible consequence, as this row required |
 | 3 | **Note 9's two-cycle wait** — *"Wait at cycle 2 for 2 cycles after NMIB or IRQB active input."* §8 deferred this note to phase 7d. It is transcribed in §14.2, but what it specifies is a hardware recognition handshake, not a cycle any vector records | **Recorded, not actionable.** Discharges §8's deferral. Follows from gap 1: nothing can check it |
 | 4 | **Note 16, "COP Latches."** §8 deferred this note to phase 7d too. That five-character sentence is the entire note, and it is attached to an address-bus cell, not to a behaviour | **Recorded, not actionable.** Discharges §8's deferral. The note carries no content; the `COP` sequence is fully specified by row 22j without it |
 | 5 | **What `PHP` pushes into bits 4 and 5.** Clark §6.8.3 describes `PHP` as pushing "the P register" and says nothing about the two mode bits; the datasheet's Table 5-5 gives `P → Ms` with no qualification | **CLOSED 2026-08-05, measured.** `P` verbatim, all eight bits, both modes, 20,000 of 20,000. See §14.1's measured block — including the caveat that in emulation mode this is observationally identical to forcing `$30` |

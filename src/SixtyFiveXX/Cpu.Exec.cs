@@ -16,6 +16,19 @@ public sealed partial class Cpu<TBus, TVariant>
             case Op.Nop: break;
             case Op.NopRead: break;   // the read already happened; the value is discarded
 
+            case Op.Wdm:
+                // $42 is two bytes and two cycles, and its second byte is never read at all —
+                // the cycle that would fetch it is an internal cycle, which is why WDM shares
+                // MicroOp.ImpliedExec816 with every other implied 65816 opcode instead of
+                // fetching an operand. Stepping PC over the byte the bus never saw is the whole
+                // of the operation. Research document §14.2/§3.4: all 20,000 vectors show cycle
+                // 2 with a null value, the pin string "---r…", and PC advancing by exactly 2;
+                // Clark §6.7's "The second byte is read, but ignored" is wrong and recorded as
+                // a source error. 65816 only — Op.Wdm appears in no eight-bit table, so this
+                // arm needs no variant guard.
+                _s.PC++;
+                break;
+
             // Loads. Lda is width-aware for the 65816: in 8-bit mode (true for every 8-bit
             // core as well as a native-mode 65816 with an 8-bit accumulator) it must touch
             // only the low byte, preserving whatever sits in the high byte — the "hidden B

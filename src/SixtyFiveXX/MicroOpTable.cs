@@ -89,9 +89,10 @@ internal sealed class MicroOpTable
         // in the constructor below, which was the last thing that read one (seq.IntPushP) on
         // its behalf. The arm exists only because this switch deliberately refuses a silent
         // default; the value returned is arbitrary, and Nmos is the arbitrary value that is
-        // already here. It replaced a NotYet816 placeholder built from six copies of
-        // MicroOp.Unimplemented816, which existed purely to keep the then-shared IrqEntry
-        // section from running NMOS pushes on this part.
+        // already here. It replaced a NotYet816 placeholder built from six copies of a
+        // throwing Unimplemented816 micro-op, which existed purely to keep the then-shared
+        // IrqEntry section from running NMOS pushes on this part; phase 7d task 3 gave the part
+        // its real interrupt sequence and deleted that micro-op outright.
         CpuVariant.W65C816 => Nmos,
 
         _ => throw new NotSupportedException($"No micro-op sequences for {variant} yet."),
@@ -131,11 +132,13 @@ internal sealed class MicroOpTable
 
     /// <summary>
     /// Index of the hardware interrupt sequence in <see cref="Ops"/>. The dispatcher sets
-    /// the CPU's vector field to <c>NmiVector</c> or <c>IrqVector</c> before entering this
-    /// sequence. The sequence's own <c>PushPInt</c> micro-op may still redirect it once
-    /// more, from <c>IrqVector</c> to <c>NmiVector</c>, if an NMI is latched before that
-    /// cycle — a hijack of the IRQ dispatch already in progress. BRK's own sequence does
-    /// the same in <c>PushPBrk</c>.
+    /// the CPU's vector field before entering this sequence — to <c>NmiVector</c> or
+    /// <c>IrqVector</c> on the five eight-bit cores, and through <c>Cpu.Vector816</c> on the
+    /// 65816, which has two sets of four (research document §14.2). On the NMOS cores the
+    /// sequence's own <c>PushPInt</c> micro-op may still redirect it once more, from
+    /// <c>IrqVector</c> to <c>NmiVector</c>, if an NMI is latched before that cycle — a hijack
+    /// of the IRQ dispatch already in progress, which <c>PushPBrk</c> also performs for BRK.
+    /// Neither the CMOS cores nor the 65816 has it: see <c>MicroOp.PushPInt816</c>.
     /// </summary>
     public readonly ushort IrqEntry;
 
@@ -160,14 +163,23 @@ internal sealed class MicroOpTable
         IrqEntry = (ushort)ops.Count;
         if (variant == CpuVariant.W65C816)
         {
-            // Phase 7d task 3 replaces this with the real sequence — two vector sets, a PBR
-            // push and VPB. Until then it throws on its FIRST cycle, before touching S or
-            // memory: the shared section below pushed three bytes and moved S three times
-            // before reaching seq.IntPushP's Unimplemented816, which meant a 65816 IRQ
-            // corrupted the stack on the way to reporting that it was not implemented. Every
-            // micro-op in that shared section drives a bare 16-bit PC or a bare 0x0100 + SL
-            // as well, which is what W65C816ReachabilityTests asserts against.
-            ops.Add(MicroOp.Unimplemented816);
+            // Research document §14.2, Table 5-7 row 22a: eight cycles native, seven in
+            // emulation (note 7). Cycle 1 is Cpu.FetchOpcode's own discarded read at PBR,PC —
+            // the same free read every core's interrupt entry gets — and IntInternal816 is
+            // cycle 2, the row's IO at the same address. It also skips PushPbr816 when e = 1,
+            // which is the one cycle emulation mode omits. Cycles 3 to 8 are shared verbatim
+            // with row 22j, which is why EmitControlFlow816's BRK/COP arm lists the same five
+            // micro-ops from PushPbr816 down; the two rows differ only in their leading pair.
+            //
+            // Which vector is read is decided before this sequence starts, by FetchOpcode
+            // through Cpu.Vector816 — only the dispatcher knows an IRQ from an NMI, and on
+            // this part nothing in the sequence can change the answer afterwards (no NMI
+            // hijack: MicroOp.PushPInt816).
+            ops.AddRange([
+                MicroOp.IntInternal816, MicroOp.PushPbr816,
+                MicroOp.PushPch816, MicroOp.PushPcl816, MicroOp.PushPInt816,
+                MicroOp.VectorLo816, MicroOp.VectorHi816,
+            ]);
         }
         else
         {
@@ -405,6 +417,24 @@ internal sealed class MicroOpTable
             return;
         }
 
+        // WDM ($42) is two bytes and two cycles, and its second byte is NEVER read: the cycle
+        // that would fetch it is an internal cycle. Research document §14.2/§3.4, measured —
+        // all 20,000 vectors show cycle 2 with a null value and the pin string "---r…", and PC
+        // advancing by exactly 2. Clark §6.7's "The second byte is read, but ignored" is the
+        // one claim on the point in any source and it is wrong; the vectors win, and §3.4
+        // records it as a source error.
+        //
+        // So the cycle is row 19a's implied IO unchanged — ImpliedExec816 — and the whole of
+        // Op.Wdm's operation is the second PC increment. Ahead of the implied/accumulator
+        // branch below, which would otherwise emit the same micro-op and stop PC one byte
+        // short; WDM's own AddrMode.ImmediateByte would fall through to EmitAddressed816 and
+        // throw, so this branch is what gives the mode its meaning here.
+        if (info.Operation == Op.Wdm)
+        {
+            ops.Add(MicroOp.ImpliedExec816);
+            return;
+        }
+
         // XBA is implied, but 3 cycles rather than the implied block's 2: research document
         // §13.5, datasheet Table 5-7 row 19b, which XBA has to itself. Its cycles 2 and 3 are
         // both row 19a's IO cycle at PBR,PC+1, so the sequence is that cycle twice over, with
@@ -475,6 +505,20 @@ internal sealed class MicroOpTable
                 ops.AddRange([
                     MicroOp.ImpliedInternal816, MicroOp.ImpliedInternal816,
                     MicroOp.PullLow816, MicroOp.PullHigh816,
+                ]);
+                break;
+
+            // BRK and COP: research document §14.2, Table 5-7 row 22j — eight cycles native,
+            // seven in emulation, where BrkPad816 skips the program-bank push (note 7). The two
+            // differ in nothing but the vector Cpu.Vector816 picks from Op.Brk versus Op.Cop,
+            // which is why one arm serves both. Cycles 3 to 8 are row 22a's verbatim, so the
+            // five micro-ops from PushPbr816 down are the hardware interrupt sequence's own —
+            // see the constructor's IrqEntry section.
+            case Op.Brk or Op.Cop:
+                ops.AddRange([
+                    MicroOp.BrkPad816, MicroOp.PushPbr816,
+                    MicroOp.PushPch816, MicroOp.PushPcl816, MicroOp.PushPInt816,
+                    MicroOp.VectorLo816, MicroOp.VectorHi816,
                 ]);
                 break;
 

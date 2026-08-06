@@ -173,4 +173,33 @@ internal enum Op : byte
     /// and <c>PLD</c>'s <c>N</c> and <c>Z</c> come from all sixteen. 65816 only.
     /// </summary>
     Phd, Pld,
+
+    /// <summary>
+    /// The co-processor software interrupt, <c>$02</c>. Two bytes and <c>8-e</c> cycles, exactly
+    /// as <see cref="Brk"/> is: it shares Table 5-7's row 22j with it and differs only in which
+    /// vector it reads (research document §14.2). 65816 only.
+    /// </summary>
+    Cop,
+
+    /// <summary>
+    /// The reserved no-operation, <c>$42</c>. Two bytes and two cycles, and its second byte is
+    /// never read — the cycle that would fetch it is an internal cycle (research document
+    /// §14.2/§3.4, measured against all 20,000 vectors; Clark §6.7's "The second byte is read,
+    /// but ignored" is wrong). WDC guarantees the opcode will never be given a meaning on this
+    /// part. 65816 only.
+    /// </summary>
+    Wdm,
+
+    /// <summary>
+    /// The two hardware interrupts, as operations. Neither is an opcode: <c>FetchOpcode</c>
+    /// assigns one of them when it diverts into the interrupt sequence instead of fetching, so
+    /// that the sequence's shared micro-ops can tell an <c>IRQ</c> from an <c>NMI</c> from a
+    /// <c>BRK</c>. Three separate things depend on knowing which: which vector
+    /// <c>Cpu.Vector816</c> selects, whether the pushed <c>P</c> has bit 4 forced clear in
+    /// emulation mode (datasheet note 11 — hardware interrupts only, not <see cref="Brk"/> or
+    /// <see cref="Cop"/>), and whether the pushes wrap inside page one (Clark §5.22 —
+    /// <em>all</em> interrupts do, see <c>Cpu.StackWrapsInPageOne</c>). Every core assigns
+    /// them; only the 65816 reads them.
+    /// </summary>
+    Irq, Nmi,
 }

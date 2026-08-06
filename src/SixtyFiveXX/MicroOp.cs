@@ -323,17 +323,6 @@ internal enum MicroOp : byte
     JamHold,
 
     /// <summary>
-    /// Placeholder for every 65816 sequence slot no task has filled in yet — see
-    /// <c>MicroOpTable</c>'s 65816 <c>IrqEntry</c> section, the only place this is used.
-    /// Deliberately has no <c>case</c> in <c>Cpu.Execute</c>'s switch, so reaching one falls
-    /// into that switch's own <c>default</c> arm and throws
-    /// <see cref="NotImplementedException"/> naming this member, instead of silently
-    /// running whichever NMOS or CMOS micro-op happened to occupy the slot. Phase 7d's
-    /// interrupt work is what finally replaces every use of it.
-    /// </summary>
-    Unimplemented816,
-
-    /// <summary>
     /// The 65816's implied-mode second cycle: an internal cycle at <c>PBR,PC</c> — no memory
     /// access at all — then run the operation. Research document §9, row 19a: cycle 2 of
     /// <c>XCE</c> (and every other implied 65816 instruction) drives <c>VDA=0 VPA=0</c>, which
@@ -900,6 +889,87 @@ internal enum MicroOp : byte
     /// the 8-bit form.
     /// </summary>
     StackDummyReadDec816,
+
+    // Phase 7d task 3: the 65816's interrupts. Research document §14.2, Table 5-7 rows 22j
+    // (BRK/COP) and 22a (IRQ/NMI/RESET/ABORT). The two rows are identical from cycle 3 on, so
+    // the five members from PushPbr816 down are shared by both sequences; only the two leading
+    // cycles differ, and each of those owns the emulation-mode skip of the program-bank push.
+    // These are also the first micro-ops in this repository to assert VPB.
+
+    /// <summary>
+    /// <c>BRK</c>/<c>COP</c>'s cycle 2 — row 22j's <c>Signature</c> read at <c>PBR,PC+1</c>,
+    /// <c>VDA=0 VPA=1</c>. The byte is fetched and discarded, and <c>PC</c> advances past it,
+    /// which is why both instructions push their own address plus 2 (Clark §6.3.1, measured
+    /// across all 40,000 vectors). Also chooses the vector — <c>Cpu.Vector816</c> — and skips
+    /// <see cref="PushPbr816"/> when <c>e = 1</c>, the same conditional-slot idiom
+    /// <see cref="FetchDpOffset"/> uses for <see cref="DirectPagePenalty"/>.
+    /// </summary>
+    BrkPad816,
+
+    /// <summary>
+    /// A hardware interrupt's cycle 2 — row 22a's <c>IO</c> at <c>PBR,PC</c>, <c>VDA=0
+    /// VPA=0</c>, no memory access. Cycle 1 is <c>Cpu.FetchOpcode</c>'s own discarded read at
+    /// the same address, which the row prints as <c>VDA=1 VPA=1</c>; nothing advances <c>PC</c>
+    /// here, since a hardware interrupt consumes no opcode. Skips <see cref="PushPbr816"/> when
+    /// <c>e = 1</c>, exactly as <see cref="BrkPad816"/> does.
+    /// <para>
+    /// Not <see cref="ImpliedInternal816"/>, whose address happens to coincide but which owns
+    /// no skip and which every push, pull and <c>XBA</c> already shares.
+    /// </para>
+    /// </summary>
+    IntInternal816,
+
+    /// <summary>
+    /// The program-bank push, at <c>0,S</c> — cycle 3 of both rows, and the cycle emulation
+    /// mode omits. No eight-bit core has it. Datasheet §7.11.1: <em>"In the Native mode,
+    /// previous PBR contents are automatically saved on Stack"</em>; §7.11.2: in emulation mode
+    /// they <em>"are not automatically saved"</em>.
+    /// </summary>
+    PushPbr816,
+
+    /// <summary>
+    /// The return address, high byte then low — cycles 4 and 5 of both rows, at <c>0,S-1</c>
+    /// and <c>0,S-2</c>. The 65816 forms of <see cref="PushPch"/> and <see cref="PushPcl"/>:
+    /// they drive <c>Cpu.StackAddress816</c>, the full sixteen bits of <c>S</c> in bank 0,
+    /// rather than a hard-coded <c>$0100 + SL</c>, and they wrap inside page one in emulation
+    /// mode only because an interrupt is on <c>Cpu.StackWrapsInPageOne</c>'s list (Clark §5.22).
+    /// </summary>
+    PushPch816,
+
+    /// <inheritdoc cref="PushPch816"/>
+    PushPcl816,
+
+    /// <summary>
+    /// The status push — cycle 6 of both rows — then <c>I</c> set and <c>D</c> cleared, in that
+    /// order (Clark §6.3.1, measured). Serves all four interrupts: <c>BRK</c> and <c>COP</c>
+    /// push <c>P</c> verbatim in both modes, and a hardware interrupt does too except in
+    /// emulation mode, where bit 4 is forced to <c>0</c> — datasheet note 11, printed on row
+    /// 22a and not on 22j. <b>No NMI hijack</b>, unlike <see cref="PushPBrk"/> and
+    /// <see cref="PushPInt"/>: research document §14.2/§14.9 gap 2 records that no 65816 source
+    /// mentions the case and that no vector can settle it, so the NMOS anomaly is deliberately
+    /// not carried over. See <c>Cpu.Execute</c>'s arm for the full reasoning.
+    /// </summary>
+    PushPInt816,
+
+    /// <summary>
+    /// The two vector reads — cycles 7 and 8 of both rows, at <c>0,VA</c> and <c>0,VA+1</c>,
+    /// bank 0. The only cycles in this repository that assert <see cref="BusPins.Vpb"/>
+    /// alongside <see cref="BusPins.Vda"/>: both rows print <c>VPB=0 VDA=1 VPA=0</c>, and the
+    /// datasheet says it again in prose on p. 30 — <em>"The VP output is low during the two
+    /// cycles used for vector location access"</em>. Confirmed character for character by the
+    /// vectors, whose last two cycles read <c>d-vr…</c>.
+    /// <para>
+    /// <see cref="VectorHi816"/> also clears <c>PBR</c>, in both modes (datasheet §7.11.1 and
+    /// §7.11.2), which is what puts the handler in bank 0 — the rows' own <c>0,AAV</c>
+    /// next-opcode cell. Distinct from <see cref="VectorLo"/>/<see cref="VectorHi"/>, which the
+    /// 65816's reset sequence still shares: those clear no bank register, and reset has
+    /// <c>Cpu.Reset</c> to do it instead.
+    /// </para>
+    /// </summary>
+    VectorLo816,
+
+    /// <inheritdoc cref="VectorLo816"/>
+    VectorHi816,
 }
 
 /// <summary>
@@ -1026,6 +1096,7 @@ internal static class MicroOps
                      MicroOp.RmwModifyWrite816, MicroOp.RmwWriteHigh816, MicroOp.RmwWriteHigh816Carry,
                      MicroOp.RmwWrite816,
                      MicroOp.PushHigh816, MicroOp.PushLow816,
+                     MicroOp.PushPbr816, MicroOp.PushPch816, MicroOp.PushPcl816, MicroOp.PushPInt816,
                  })
         {
             writes[(int)op] = true;
@@ -1076,6 +1147,10 @@ internal static class MicroOps
                      MicroOp.AbsHi, MicroOp.AbsHiIndexedX, MicroOp.AbsHiIndexedXWrite,
                      MicroOp.AbsHiIndexedY, MicroOp.AbsHiIndexedYWrite,
                      MicroOp.FetchAddrBank, MicroOp.FetchAddrBankX, MicroOp.FetchSrOffset,
+                     // BRK/COP's signature byte is a live-PC read like any other operand fetch
+                     // — research document §14.2's row 22j prints VDA=0 VPA=1 on it, and every
+                     // one of the 40,000 vectors' cycle 2 reads "-p-r…".
+                     MicroOp.BrkPad816,
                  })
         {
             pins[(int)op] = BusPins.Vpa;
@@ -1108,6 +1183,10 @@ internal static class MicroOps
                      MicroOp.PushHigh816, MicroOp.PushLow816,
                      MicroOp.PullLow816, MicroOp.PullHigh816,
                      MicroOp.StackDummyReadDec816,
+                     // The interrupts' four pushes. Rows 22a and 22j print VDA=1 VPA=0 on every
+                     // one, exactly as the pushes above; VPB and MLB stay inactive until the
+                     // vector reads.
+                     MicroOp.PushPbr816, MicroOp.PushPch816, MicroOp.PushPcl816, MicroOp.PushPInt816,
                  })
         {
             pins[(int)op] = BusPins.Vda;
@@ -1142,9 +1221,15 @@ internal static class MicroOps
         pins[(int)MicroOp.RmwModifyRead816Carry] = BusPins.Mlb;
         pins[(int)MicroOp.RmwModifyWrite816] = BusPins.Mlb;
 
-        // Vector pulls. See BusPins.Vpb.
+        // Vector pulls. See BusPins.Vpb. The 65816's own pair carries the identical
+        // combination: research document §14.2's rows 22a and 22j both print VPB=0 VDA=1
+        // VPA=0, and the vectors' last two cycles read "d-vr…" — VDA set, VPA clear, VPB set,
+        // read. That VDA is asserted on a cycle whose whole purpose is fetching an address is
+        // §14.2's own warning: no amount of reasoning about the cycle's purpose gives it.
         pins[(int)MicroOp.VectorLo] = BusPins.Vda | BusPins.Vpb;
         pins[(int)MicroOp.VectorHi] = BusPins.Vda | BusPins.Vpb;
+        pins[(int)MicroOp.VectorLo816] = BusPins.Vda | BusPins.Vpb;
+        pins[(int)MicroOp.VectorHi816] = BusPins.Vda | BusPins.Vpb;
 
         return pins;
     }
@@ -1152,10 +1237,9 @@ internal static class MicroOps
     /// <summary>
     /// The micro-ops <see cref="PinsFor"/> legitimately classifies <see cref="BusPins.None"/>.
     /// <see cref="MicroOp.End"/> consumes no cycle and is never dispatched to <c>Cpu.Execute</c>
-    /// at all. <see cref="MicroOp.Unimplemented816"/> is a placeholder that throws
-    /// <see cref="NotImplementedException"/> the moment it is reached, before driving any pin —
-    /// <c>None</c> is therefore the honest recording of what it asserts (nothing, because it
-    /// never gets that far), not a guess about what a future opcode in its slot will assert.
+    /// at all. It was joined here until phase 7d task 3 by <c>Unimplemented816</c>, a
+    /// placeholder that threw the moment it was reached; the 65816 interrupt sequence was its
+    /// last emitter and it is now deleted.
     /// <see cref="MicroOp.ImpliedExec816"/> is the first micro-op that is <c>None</c> because
     /// it genuinely drives neither pin — a real 65816 internal cycle, per research document §9.
     /// <see cref="MicroOp.ImpliedInternal816"/> is that same cycle without the <c>Exec()</c>,
@@ -1185,6 +1269,10 @@ internal static class MicroOps
     /// 65816 push, an <c>IO</c> row at <c>PBR,PC+1</c> in research document §14.1's row 22c. The
     /// pulls' two internal cycles are <see cref="MicroOp.ImpliedInternal816"/>, already here:
     /// row 22b drives the identical address on both of them, so they need no member of their own.
+    /// <see cref="MicroOp.IntInternal816"/> is phase 7d task 3's one — a hardware interrupt's
+    /// cycle 2, research document §14.2's row 22a, an <c>IO</c> at <c>PBR,PC</c>. It does need a
+    /// member of its own despite driving the address <see cref="MicroOp.ImpliedInternal816"/>
+    /// would: it owns the emulation-mode skip of the program-bank push.
     /// </summary>
     private static bool[] BuildInternalCycleTable()
     {
@@ -1192,13 +1280,14 @@ internal static class MicroOps
 
         foreach (var op in new[]
                  {
-                     MicroOp.End, MicroOp.Unimplemented816, MicroOp.ImpliedExec816,
+                     MicroOp.End, MicroOp.ImpliedExec816,
                      MicroOp.ImpliedInternal816, MicroOp.RepSepExec,
                      MicroOp.DirectPagePenalty, MicroOp.DirectPageIndexX, MicroOp.DirectPageIndexY,
                      MicroOp.IndexDirectPageIndirectY,
                      MicroOp.AbsIndexFixup, MicroOp.StackRelativePenalty, MicroOp.IndexStackRelativeIndirectY,
                      MicroOp.RmwModifyRead816, MicroOp.RmwModifyRead816Carry,
                      MicroOp.StackPushInternal816,
+                     MicroOp.IntInternal816,
                  })
         {
             internalCycles[(int)op] = true;

@@ -373,6 +373,21 @@ internal static class Opcodes65C816
         Set(0xAB, "PLB", AddrMode.Stack, Op.Plb, Access.None);
         Set(0x2B, "PLD", AddrMode.Stack, Op.Pld, Access.None);
 
+        // Interrupts. BRK and COP are two-byte instructions whose second byte is fetched and
+        // discarded; WDM is a reserved two-byte no-operation that WDC guarantees will never be
+        // given a meaning on this part.
+        //
+        // WDM takes AddrMode.ImmediateByte, not AddrMode.Implied: it is two bytes long, and
+        // ImmediateByte already means exactly "one operand byte, always eight bits" — the mode
+        // REP and SEP use. That the byte is never actually READ (research document §14.2/§3.4,
+        // measured) is a property of the cycle, not of the operand's existence: PC still steps
+        // over it, and a disassembler that called this one byte would decode the next
+        // instruction from the middle of this one. Access.None rather than REP/SEP's
+        // Access.Read for the same measurement: no bus access happens.
+        Set(0x00, "BRK", AddrMode.Stack,         Op.Brk, Access.None);
+        Set(0x02, "COP", AddrMode.Stack,         Op.Cop, Access.None);
+        Set(0x42, "WDM", AddrMode.ImmediateByte, Op.Wdm, Access.None);
+
         return t;
     }
 }

@@ -83,9 +83,17 @@ public class Harte816Tests(ITestOutputHelper output)
     /// 212 + 13 = 225 — the first opcodes here routed through
     /// <c>MicroOpTable.EmitControlFlow816</c> rather than <c>EmitAddressed816</c>, and the first
     /// to drive the 65816's own stack address (research document §14.1) instead of the eight-bit
-    /// cores' <c>$0100 + SL</c>.
+    /// cores' <c>$0100 + SL</c>. Phase 7d task 3 adds <c>BRK</c> (<c>$00</c>), <c>COP</c>
+    /// (<c>$02</c>) and <c>WDM</c> (<c>$42</c>) — 225 + 3 = 228 — the first opcodes here to
+    /// assert <c>VPB</c>, to push the program bank, and to choose between two vector sets
+    /// (research document §14.2). <c>WDM</c> is none of those: it is a reserved two-byte,
+    /// two-cycle no-operation whose second byte is never read, and it is in this task only
+    /// because <c>$42</c> sits between the two interrupts in every table that lists them.
+    /// The task's other two sequences — <c>IRQ</c> and <c>NMI</c> — have <b>no vectors at
+    /// all</b> and are certified by <c>W65C816InterruptTests</c> instead; §14.2's gap 1
+    /// records why.
     /// </summary>
-    private static readonly int ExpectedImplementedOpcodes = 225;
+    private static readonly int ExpectedImplementedOpcodes = 228;
 
     /// <summary>
     /// Opcode bytes this phase has emitted a real <c>MicroOpTable.Emit816</c> sequence for —
