@@ -53,22 +53,26 @@ namespace SixtyFiveXX;
 /// <c>MicroOpTable.EmitControlFlow816</c> rather than <c>EmitAddressed816</c>. They declare no
 /// <see cref="Width"/> despite four of them being sized by <c>m</c> and four by <c>x</c>: they
 /// fetch no operand from memory and reach no width-deciding micro-op, so each arm tests its own
-/// flag through <c>Cpu.StackIsWide</c> (research document §14.1).
+/// flag through <c>Cpu.StackIsWide</c> (research document §14.1); and phase 7d task 3's three:
+/// <c>BRK</c>, <c>COP</c> and <c>WDM</c> — 225 + 3 = 228. The first two share Table 5-7's row 22j
+/// with each other and cycles 3 to 8 with the hardware interrupts' row 22a, so they also bring in
+/// the part's own <c>IRQ</c> and <c>NMI</c> sequences, which have no opcodes and no vectors
+/// (research document §14.2). <c>WDM</c> is none of that — a reserved two-byte, two-cycle
+/// no-operation whose second byte is never read.
 /// <para>
-/// The remaining 31 entries are <see cref="OpcodeInfo.Undefined"/> and throw
+/// The remaining 28 entries are <see cref="OpcodeInfo.Undefined"/> and throw
 /// <see cref="UndefinedOpcodeException"/> on fetch. Phase 7d's later tasks fill them in: the ten
 /// branches (<c>BPL</c>, <c>BMI</c>, <c>BVC</c>, <c>BVS</c>, <c>BCC</c>, <c>BCS</c>, <c>BNE</c>,
 /// <c>BEQ</c>, <c>BRA</c>, <c>BRL</c>), the five jumps (<c>$4C</c>, <c>$6C</c>, <c>$7C</c>,
 /// <c>$5C</c>, <c>$DC</c>), the three calls (<c>JSR abs</c>, <c>JSR (abs,X)</c>, <c>JSL</c>), the
 /// three returns (<c>RTI</c>, <c>RTS</c>, <c>RTL</c>), the three stack-addressing pushes
-/// (<c>PEA</c>, <c>PEI</c>, <c>PER</c>), the three interrupts (<c>BRK</c>, <c>COP</c>,
-/// <c>WDM</c>), the two block moves (<c>MVN</c>, <c>MVP</c>) and the two halts (<c>WAI</c>,
-/// <c>STP</c>) — research document §14.8's table of all 44.
+/// (<c>PEA</c>, <c>PEI</c>, <c>PER</c>), the two block moves (<c>MVN</c>, <c>MVP</c>) and the two
+/// halts (<c>WAI</c>, <c>STP</c>) — research document §14.8's table of all 44.
 /// </para>
 /// </remarks>
 internal static class Opcodes65C816
 {
-    /// <summary>Opcode byte to descriptor. 225 entries defined, 31 undefined.</summary>
+    /// <summary>Opcode byte to descriptor. 228 entries defined, 28 undefined.</summary>
     public static readonly OpcodeInfo[] Table = BuildTable();
 
     private static OpcodeInfo[] BuildTable()
