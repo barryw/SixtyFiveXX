@@ -15,7 +15,8 @@
 
 ## Global Constraints
 
-- **The five 8-bit cores must not change.** 1,309 of the conformance tests are theirs and must stay at 1,309 passing on both TFMs. Their five round-trip tests must keep their pinned covered counts — 213, 213, 177, 210, 212 — unchanged.
+- **The five 8-bit cores must not change, with exactly one authorised exception.** 1,309 of the conformance tests are theirs and must stay at 1,309 passing on both TFMs, and their five round-trip tests must keep their pinned covered counts — 213, 213, 177, 210, 212 — unchanged.
+  - **The exception is task 3**, which fixes a defect research §15.4 measured in all six cores: an absolute operand under `$100` renders as text that reassembles to a shorter instruction. That changes the rendered output of 53 opcodes on each NMOS part and 42 on each 65C02. It is an owner decision, taken because the forcing logic is a single shared arm and fixing only the 65816 would special-case five cores into a known defect. **No other task may change 8-bit output**, and task 2's gate is still the absence of change.
 - **Baselines on this branch's fork point:** unit **718** with `--filter "Category!=Performance"`, conformance **1822**.
 - `src/SixtyFiveXX` keeps **zero** NuGet dependencies. `TreatWarningsAsErrors` is on with documentation generation, so **every public member needs an XML doc comment**.
 - Both target frameworks must pass. Iterate with `-f net10.0`; run both before declaring a task done.
@@ -33,7 +34,7 @@ Every one of these was measured with `64tass -a f.asm -o f.bin` and `xxd`, on 64
 - **`.as`/`.al` set the accumulator width and `.xs`/`.xl` the index width.** Under `.as`, `LDA #$34` is `a9 34`; under `.al`, `LDA #$1234` is `a9 34 12`. `REP #$30` and `SEP #$30` are `c2 30` and `e2 30` under both — they are `AddrMode.ImmediateByte` and never widen.
 - **64tass picks the shortest encoding that fits the value.** `LDA $0012` → `a5 12` (direct page), `LDA $001234` → `ad 34 12` (absolute). The forcing prefixes are `@b`, `@w`, `@l`: `LDA @w $0012` → `ad 12 00`, `LDA @l $001234` → `af 34 12 00`.
 - **`MVN $12,$34` assembles to `54 34 12`.** The assembly text is `src,dst`; the byte stream is `dst,src`. Research §14.3 established the destination bank byte comes first in the stream.
-- **`PER $1234` assembles to `62 0d 02`** — a displacement, so `PER` renders as a target address like a branch. `BRL $1234` → `82 0a 02`, likewise.
+- **`PER` and `BRL` encode a displacement, so they render as a target address like a branch — and their bytes depend on where they sit.** `PER $1234` is `62 0d 02` **only at `$1024`**; the rule research §15.1 states is `displacement = (target − (address + 3)) & $FFFF`, verified at five addresses. `BRL` is identical. Any byte string quoted for these two without its address is meaningless.
 - **`COP #$12` → `02 12`; `WDM #$12` → `42 12`.**
 - Confirmed syntax for the rest: `LDA [$12]` → `a7 12`, `LDA [$12],Y` → `b7 12`, `LDA $12,S` → `a3 12`, `LDA ($12,S),Y` → `b3 12`, `JML [$1234]` → `dc 34 12`, `JSL $123456` → `22 56 34 12`, `PEA $1234` → `f4 34 12`, `PEI ($12)` → `d4 12`, `JMP ($1234,X)` → `7c 34 12`.
 
@@ -55,8 +56,8 @@ Every one of these was measured with `64tass -a f.asm -o f.bin` and `xxd`, on 64
 | `src/SixtyFiveXX/Disassembler.cs` | Modify. The overload, the variant-masked address path, every 65816 arm. |
 | `src/SixtyFiveXX/Instruction.cs` | Modify (task 2). `Length` documented 1–4. |
 | `tests/SixtyFiveXX.Tests/DisassemblerTests.cs` | Modify. A case per 65816 mode. |
-| `tests/SixtyFiveXX.Conformance/RoundTripTests.cs` | Modify (task 4). The 65816 round-trip and its discriminator. |
-| `README.md` | Modify (task 5). |
+| `tests/SixtyFiveXX.Conformance/RoundTripTests.cs` | Modify (tasks 3 and 5). The boundary gate for all six cores, then the 65816 round-trip. |
+| `README.md` | Modify (task 6). |
 
 ## The modes this phase must render
 
@@ -78,7 +79,7 @@ Listed once, here, so every task can be checked against one place. **Notation co
 | `AbsoluteLongX` | `$123456,X` | 4 | `@l` when the value is under `$10000` |
 | `StackRelative` | `$12,S` | 2 | |
 | `StackRelativeIndirectY` | `($12,S),Y` | 2 | |
-| `RelativeLong` | `$1234` (target) | 3 | `BRL` |
+| `RelativeLong` | `$1234` (target) | 3 | `BRL`. **Address-dependent** — displacement is `(target − (address + 3)) & $FFFF` |
 | `BlockMove` | `$12,$34` | 3 | **Operands reversed** — text `src,dst`, bytes `dst,src` |
 | `AbsoluteIndirectLong` | `[$1234]` | 3 | `JML [abs]` |
 
@@ -96,7 +97,7 @@ Already rendered, but needing a 65816 change: **`Absolute`, `AbsoluteX`, `Absolu
 - Modify: `docs/superpowers/research/2026-08-03-65816-reference-sources.md` (append §15)
 
 **Interfaces:**
-- Produces: research §15, cited by section number from tasks 2–5. §15.1 the per-mode notation table, §15.2 the shortest-encoding rule and the forcing prefixes, §15.3 the ambiguity set and the pinned covered count, §15.4 the two open questions below.
+- Produces: research §15, cited by section number from tasks 2–6. §15.1 the per-mode notation table, §15.2 the shortest-encoding rule and the forcing prefixes, §15.3 the ambiguity set and the pinned covered count, §15.4 the two open questions below.
 
 - [ ] **Step 1: Read §9 and §14 so the new section matches their notation, and confirm the section number**
 
@@ -152,7 +153,7 @@ git commit -m "docs: research §15, the 64tass notation phase 7e is built on"
 - Modify: `tests/SixtyFiveXX.Tests/DisassemblerTests.cs`
 
 **Interfaces:**
-- Produces, and tasks 3–5 consume:
+- Produces, and tasks 3–6 consume:
   - `public static Instruction Decode<TBus, TVariant>(in TBus bus, int address)` — unchanged signature, delegates to the overload with both widths false.
   - `public static Instruction Decode<TBus, TVariant>(in TBus bus, int address, bool wideAccumulator, bool wideIndex)` — the new entry point.
   - `private static int OperandAddress<TVariant>(int address, int offset)` — variant-correct operand wrapping.
@@ -322,14 +323,147 @@ git commit -m "feat: variant-masked decode address and the width-carrying Decode
 
 ---
 
-### Task 3: Every 65816 operand format
+### Task 3: Force the encoding width — for all six cores
+
+**This task deliberately changes the rendered output of five certified cores.** It is the one place in this phase where "the 8-bit cores must not change" does not apply, and it exists because research §15.4 measured a live defect in them.
+
+**Files:**
+- Modify: `src/SixtyFiveXX/Disassembler.cs`
+- Modify: `tests/SixtyFiveXX.Tests/DisassemblerTests.cs`
+- Modify: `tests/SixtyFiveXX.Conformance/RoundTripTests.cs`
+
+**Interfaces:**
+- Consumes: `Operand8<TVariant>`, `Operand16<TVariant>` from task 2.
+- Produces: the forcing predicate every absolute-family and long-family arm calls. Task 4's new 65816 arms consume it.
+
+**Why this is not scope creep.** 64tass assembles to the **shortest encoding that fits the value**, so `LDA $0012` becomes `a5 12` — direct page, two bytes — not the three-byte absolute the disassembler meant. Research §15.4 measured the damage against the real `Disassembler`: **53 opcodes render wrongly on the 6502, 53 on the 6510, and 42 on each of the three 65C02s.** It has been latent since phase 6a, and 6a's round-trip cannot see it because its operand bytes are `$34`/`$12`, making every absolute operand `$1234` — never under `$100`. Fixing only the 65816 would leave one shared code path knowingly right for one core and wrong for five.
+
+- [ ] **Step 1: Read research §15.2, and note what it says about over-forcing**
+
+§15.2 records that 64tass collapses by **mnemonic and value together**, not by value alone: `LDX $0012,Y` collapses while `LDA $0012,Y` does not, and `JMP`, `JSR`, `PEA`, `JSL` and `JML` never collapse at any value. It also records that **over-forcing is a measured no-op** — the full 256-opcode listing assembled byte-identically with forcing on and off. So the simple value-only predicate below is safe, and is what to write; the finer mnemonic-aware rule buys nothing but complexity.
+
+- [ ] **Step 2: Write the failing tests**
+
+Append to `tests/SixtyFiveXX.Tests/DisassemblerTests.cs`:
+
+```csharp
+    /// <summary>
+    /// An absolute operand under $100 must force a word, on EVERY core. 64tass assembles
+    /// LDA $0012 as direct page — a5 12 — so the unforced text reassembles to two bytes where
+    /// the instruction is three. Research §15.4 measured 53 such opcodes on each NMOS part and
+    /// 42 on each 65C02, latent since phase 6a.
+    /// </summary>
+    [Theory]
+    [InlineData(typeof(Mos6502Variant))]
+    [InlineData(typeof(Mos6510Variant))]
+    [InlineData(typeof(Synertek65C02Variant))]
+    [InlineData(typeof(Rockwell65C02Variant))]
+    [InlineData(typeof(Wdc65C02Variant))]
+    [InlineData(typeof(W65C816Variant))]
+    public void Absolute_UnderOneHundred_ForcesAWord(Type variant)
+    {
+        // $AD is LDA absolute on every one of the six.
+        var ram = new byte[0x10000];
+        ram[0x1000] = 0xAD;
+        ram[0x1001] = 0x12;
+        ram[0x1002] = 0x00;
+
+        var operand = DecodeFor(variant, ram, 0x1000).Operand;
+
+        Assert.Equal("@w $0012", operand);
+    }
+
+    /// <summary>
+    /// And an operand that cannot collapse must NOT be forced, or every listing grows noise.
+    /// </summary>
+    [Fact]
+    public void Absolute_AtOrAboveOneHundred_IsNotForced()
+    {
+        var ram = new byte[0x10000];
+        ram[0x1000] = 0xAD;
+        ram[0x1001] = 0x34;
+        ram[0x1002] = 0x12;
+
+        var decoded = Disassembler.Decode<FlatBus, Mos6502Variant>(new FlatBus(ram), 0x1000);
+
+        Assert.Equal("$1234", decoded.Operand);
+    }
+```
+
+`DecodeFor(Type, byte[], int)` is a small reflection helper this test file needs because `TVariant` is a type parameter and `[InlineData]` cannot carry one. **Write it, or use six separate `[Fact]` methods instead** — six explicit facts are more readable than reflection and this file has no reflection today. Prefer the six facts unless the file already has a helper.
+
+- [ ] **Step 3: Run them and watch them fail**
+
+```bash
+dotnet test tests/SixtyFiveXX.Tests -f net10.0 --filter "FullyQualifiedName~DisassemblerTests"
+```
+
+Expected: **FAIL** on every forcing case, each showing `$0012` where `@w $0012` is wanted.
+
+- [ ] **Step 4: Add the predicate and route the absolute-family arms through it**
+
+```csharp
+    /// <summary>
+    /// The width prefix an operand needs so an assembler reproduces the instruction that was
+    /// decoded, or the empty string when it needs none.
+    /// </summary>
+    /// <remarks>
+    /// 64tass — and every other 65xx assembler worth round-tripping against — emits the
+    /// shortest encoding that fits the value, so a three-byte <c>LDA $0012</c> assembles back
+    /// as the two-byte direct-page form and a four-byte <c>LDA $001234</c> as the three-byte
+    /// absolute one. The prefix says "this width, not the shorter one that also fits".
+    /// <para>
+    /// Research document §15.2 measured that 64tass decides by mnemonic <em>and</em> value —
+    /// <c>LDX $0012,Y</c> collapses where <c>LDA $0012,Y</c> does not, and the jumps never
+    /// collapse at all — so this predicate over-forces for some opcodes. That was measured to
+    /// be a no-op: the complete 256-opcode listing assembles byte-identically with forcing on
+    /// and off. A mnemonic-aware rule would produce tidier text for a handful of jumps and
+    /// nothing else, at the cost of a second opcode-shaped table to keep in step.
+    /// </para>
+    /// </remarks>
+    private static string WidthPrefix(int operand, int operandBytes) => operandBytes switch
+    {
+        2 when operand < 0x100 => "@w ",
+        3 when operand < 0x10000 => "@l ",
+        _ => "",
+    };
+```
+
+Every `Absolute`, `AbsoluteX` and `AbsoluteY` arm prepends `WidthPrefix(value, 2)`. Task 4's long arms will pass 3.
+
+- [ ] **Step 5: Give the round-trip a boundary case that the old operand bytes hid**
+
+`RoundTripTests` lays every opcode out with `OperandLo = $34` and `OperandHi = $12`, so no absolute operand it produces is ever under `$100` — which is precisely why this defect survived. **Do not change those constants**: the five pinned covered counts depend on the current layout and re-pinning them is a bigger change than this fix warrants.
+
+Add a separate, small test instead that assembles a handful of hand-written absolute-under-`$100` instructions per variant and requires the bytes back. It needs the existing `Assemble` helper and nothing else.
+
+**Name in its doc comment that this is the case the main round-trip structurally cannot reach**, so the next person does not delete it as redundant.
+
+- [ ] **Step 6: Run everything, both TFMs, commit**
+
+```bash
+dotnet test tests/SixtyFiveXX.Tests --filter "Category!=Performance"
+dotnet test tests/SixtyFiveXX.Conformance
+```
+
+**The five existing round-trips must still pass at 213, 213, 177, 210, 212.** Their operand bytes never reach the boundary, so this fix is invisible to them — that is expected, and is the whole reason step 5's test exists.
+
+```bash
+git commit -m "fix: force the encoding width so absolute operands under \$100 round-trip"
+```
+
+**Gate:** the six forcing tests pass, the non-forcing test passes, step 5's boundary test passes, the five pinned round-trips are unmoved, conformance **1822** plus step 5's additions.
+
+---
+
+### Task 4: Every 65816 operand format
 
 **Files:**
 - Modify: `src/SixtyFiveXX/Disassembler.cs`
 - Modify: `tests/SixtyFiveXX.Tests/DisassemblerTests.cs`
 
 **Interfaces:**
-- Consumes: `OperandAddress<TVariant>`, `AddressMask<TVariant>`, and the two width parameters from task 2.
+- Consumes: `OperandAddress<TVariant>`, `AddressMask<TVariant>` and the two width parameters from task 2; `WidthPrefix(int operand, int operandBytes)` from task 3, which the `AbsoluteLong` and `AbsoluteLongX` arms call with `3`.
 
 - [ ] **Step 1: Read research §15.1 and §15.2 and check this plan's mode table against them**
 
@@ -419,17 +553,22 @@ git commit -m "feat: 65816 operand formats for every addressing mode"
 
 ---
 
-### Task 4: The 65816 round-trip
+### Task 5: The 65816 round-trip
 
 **Files:**
 - Modify: `tests/SixtyFiveXX.Conformance/RoundTripTests.cs`
 
 **Interfaces:**
-- Consumes: everything tasks 2 and 3 produced.
+- Consumes: everything tasks 2, 3 and 4 produced.
 
 - [ ] **Step 1: Read research §15.3 and take its ambiguity set and covered count**
 
-If §15.3 records that the set differs by width combination, the harness must carry a set per combination rather than one shared set. **Do not pin a count you have not read from §15.3.**
+**§15.3 records that the 65816's ambiguity set is empty: 256 of 256 opcodes are covered at every `m`/`x` combination**, proven by assembling all four complete listings byte-for-byte at 559, 563, 567 and 571 bytes. That is unlike all five 8-bit cores, which exclude opcodes (213, 213, 177, 210, 212). **Pin 256.** Confirm the figure against §15.3 before writing it; do not pin a count you have not read there.
+
+**Two traps §15 records that this task must respect:**
+
+- **Never emit `.autsiz`.** `.mansiz` is 64tass's default and is what the harness needs. The image contains `$C2` and `$E2` — `REP` and `SEP` — and under `.autsiz` 64tass tracks them, so `REP #$30` followed by `LDA #$34` assembles as `c2 30 a9 34 00` and the width of **everything after them** changes. That would corrupt the gate silently.
+- **The layout needs a third operand byte.** `RoundTripTests.Build` writes only `OperandLo` and `OperandHi` today. The 65816's four-byte long forms need a third — without it the bank byte is whatever follows, and the long forms' bank coverage is lost even though the round-trip still passes.
 
 - [ ] **Step 2: Write the failing test**
 
@@ -498,7 +637,7 @@ git commit -m "test: 65816 round-trip through 64tass under every width combinati
 
 ---
 
-### Task 5: Documentation
+### Task 6: Documentation
 
 **Files:**
 - Modify: `README.md`, `src/SixtyFiveXX/Disassembler.cs` (class remarks)
@@ -521,7 +660,7 @@ git commit -m "docs: the disassembler covers the 65816"
 
 ---
 
-### Task 6: Whole-branch review and the full gate
+### Task 7: Whole-branch review and the full gate
 
 **Files:** whatever the review finds, plus the spec's Phase 7e section.
 
@@ -571,5 +710,5 @@ Append a phase-7e section to `.superpowers/sdd/progress.md`: per-task commits, w
 ## What this phase does not close
 
 - **Research §12's four decimal-mode gaps and §14's open rows remain open.** Nothing here touches them.
-- **Whether the five 8-bit cores should also force their absolute operands** is task 1 question 1, and is deliberately left to the phase owner rather than decided inside a task.
+- **Whether the five 8-bit cores should also force their absolute operands was decided during the phase**, not left open: research §15.4 measured the defect, the owner chose to fix all six together, and task 3 does it. What remains open is that the shared round-trip's operand bytes still never reach the boundary — task 3 adds a separate test for it rather than re-pinning five covered counts, so the main gate stays blind to that case by construction.
 - **`PublicSurfaceTests` has no member-level assertion**, so a new public method on an existing type is invisible to it. Recorded in the spec; extending the gate is its own piece of work.
