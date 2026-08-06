@@ -565,6 +565,14 @@ git commit -m "feat: 65816 operand formats for every addressing mode"
 **Interfaces:**
 - Consumes: everything tasks 2, 3 and 4 produced.
 
+**Three debts earlier tasks left you, all in `RoundTripTests`:**
+
+1. **`ForAssembler`'s width-forcing strips `(` only.** Task 3's reviewer measured that `AbsoluteIndirectLong` renders `[$0012]`, which the strip misses. It is cosmetic — `JML [$0012]` and `JML @w [$0012]` both assemble to `dc 12 00` — but the rule's doc claims to be total and is not until `[` is handled. Either make it `is '(' or '['` or soften the claim; do not leave the doc overclaiming.
+2. **The `@l` arm has no caller and no test.** Task 3 wrote it from §15.2's measured `$010000` boundary for you to use. **You owe it a case** — the 65816's four-byte long forms are the only things that reach it.
+3. **`AbsoluteOperandsBelowTheCollapseBoundary_RoundTrip` does not pin the NOP shapes.** Its opcode list is `$AD $BD $B9 $BE $8D $EE`; nothing covers `$5C`/`$DC`/`$FC`, whose collapse was a real defect task 3 fixed. One extra opcode in that list closes it so a future rewrite cannot silently reopen the hole.
+
+**Task 4 already ran your gate once, informally.** It reports all 256 opcodes reassembling byte-for-byte at all four `m`/`x` combinations — 559 / 567 / 563 / 571 bytes — reproducing §15.3 exactly. If your harness disagrees with those four numbers, the harness is wrong, not the renderer.
+
 - [ ] **Step 1: Read research §15.3 and take its ambiguity set and covered count**
 
 **§15.3 records that the 65816's ambiguity set is empty: 256 of 256 opcodes are covered at every `m`/`x` combination**, proven by assembling all four complete listings byte-for-byte at 559, 563, 567 and 571 bytes. That is unlike all five 8-bit cores, which exclude opcodes (213, 213, 177, 210, 212). **Pin 256.** Confirm the figure against §15.3 before writing it; do not pin a count you have not read there.
