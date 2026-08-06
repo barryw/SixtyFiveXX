@@ -15,7 +15,7 @@ namespace SixtyFiveXX.Conformance;
 /// eight-character per-cycle pin string the 8-bit sets have nothing like — see
 /// <see cref="Harte816Case"/> and <see cref="Harte816Bus"/>.
 /// <para>
-/// Unlike <see cref="HarteTests{TVariant}"/>, this does not loop over all 256 opcodes. Only 232
+/// Unlike <see cref="HarteTests{TVariant}"/>, this does not loop over all 256 opcodes. Only 242
 /// of the 65816's opcodes are defined at all yet (<c>Opcodes65C816.Table</c>) — every one of
 /// them has a real sequence: <c>XCE</c>, <c>REP</c>, <c>SEP</c>, all fifteen addressing forms
 /// of <c>LDA</c>, <c>ORA</c>, <c>AND</c>, <c>EOR</c>, <c>CMP</c>, <c>ADC</c> and <c>SBC</c> plus
@@ -26,7 +26,9 @@ namespace SixtyFiveXX.Conformance;
 /// <c>ROL</c>, <c>ROR</c>, <c>INC</c> and <c>DEC</c> on the accumulator, the twelve transfers,
 /// <c>XBA</c>, the seven flag instructions, <c>INX</c>/<c>INY</c>/<c>DEX</c>/<c>DEY</c>,
 /// <c>NOP</c>, the seven pushes and six pulls, <c>BRK</c>/<c>COP</c>/<c>WDM</c>, the two block
-/// moves <c>MVN</c>/<c>MVP</c>, and the two halts <c>WAI</c>/<c>STP</c>. Looping over
+/// moves <c>MVN</c>/<c>MVP</c>, the two halts <c>WAI</c>/<c>STP</c>, and the ten branches
+/// <c>BPL</c>/<c>BMI</c>/<c>BVC</c>/<c>BVS</c>/<c>BCC</c>/<c>BCS</c>/<c>BNE</c>/<c>BEQ</c>,
+/// <c>BRA</c> and <c>BRL</c>. Looping over
 /// the full opcode space the way the 8-bit harness does would still require declaring the
 /// remaining "not yet covered" opcodes as a matter of routine, which is what the 8-bit harness's
 /// <c>OpcodesWithoutVectors</c> mechanism exists to flag as an exception, not a norm.
@@ -101,9 +103,20 @@ public class Harte816Tests(ITestOutputHelper output)
     /// ending in a <c>[null, null, "--------"]</c> sentinel, with the hold, the wake on
     /// <c>IRQB</c>/<c>NMIB</c>, <c>WAI</c>'s <c>i</c>-flag special case and <c>STP</c>'s
     /// reset-only exit absent from the vector set entirely. <c>WaiStpTests</c> is the only
-    /// certification those four rules get.
+    /// certification those four rules get. Phase 7d task 6 adds the ten branches — the eight
+    /// conditional ones, <c>BRA</c> (<c>$80</c>) and <c>BRL</c> (<c>$82</c>) — 232 + 10 = 242.
+    /// Research document §14.5, Table 5-7 rows 20 and 21. Their 200,000 vectors settle the
+    /// question the sequence hangs on: <c>10.n</c> contains only two- and three-cycle vectors and
+    /// <c>80.n</c> only three-cycle ones, while <c>10.e</c> and <c>80.e</c> both contain
+    /// four-cycle ones — the taken-branch page-cross cycle is emulation-mode-only, exactly as
+    /// datasheet Note 6 says. <c>82</c> is a flat four cycles in both modes. They also cover the
+    /// bank boundary, which was expected to be a gap and measured not to be: 5,076 of the 200,000
+    /// — 99 <c>rel8</c> and 4,977 <c>rel16</c> — have a destination outside
+    /// <c>$0000</c>-<c>$FFFF</c> before the wrap, and every one records the wrapped <c>PC</c>
+    /// with <c>PBR</c> unchanged. <c>W65C816ControlFlowTests</c> pins the same rule at the
+    /// specific addresses Clark §4 works through.
     /// </summary>
-    private static readonly int ExpectedImplementedOpcodes = 232;
+    private static readonly int ExpectedImplementedOpcodes = 242;
 
     /// <summary>
     /// Opcodes whose vectors' final entry is not an instruction boundary, for either of the two

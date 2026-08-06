@@ -472,6 +472,27 @@ internal sealed class MicroOpTable
             return;
         }
 
+        // The branches. Research document §14.5, Table 5-7 row 20: the displacement fetch, then
+        // one conditional internal cycle if the branch is taken (Note 5), then a second one if
+        // the taken branch crossed a page AND E is set (Note 6). Three micro-ops of its own
+        // rather than the eight-bit BranchFetch/BranchTaken/BranchFixup, which compute a bare
+        // sixteen-bit PC — W65C816ReachabilityTests asserts this core reaches none of them.
+        if (info.Mode == AddrMode.Relative)
+        {
+            ops.AddRange([MicroOp.BranchFetch816, MicroOp.BranchTaken816, MicroOp.BranchFixup816]);
+            return;
+        }
+
+        // BRL. Row 21: a flat four cycles with no conditional slot at all — no not-taken case
+        // and no page-cross penalty in either mode. Its two displacement bytes are an ordinary
+        // pair of PBR,PC operand fetches, so they reuse FetchAddrLo and FetchAddrHi and only the
+        // internal cycle that performs the sixteen-bit add is new.
+        if (info.Mode == AddrMode.RelativeLong)
+        {
+            ops.AddRange([MicroOp.FetchAddrLo, MicroOp.FetchAddrHi, MicroOp.BranchLong816]);
+            return;
+        }
+
         // Control flow, the stack and the interrupts do not decompose into an addressing phase
         // plus an access phase — the same reason EmitStack exists for the five 8-bit cores.
         // Routed by mode here and switched by operation there.

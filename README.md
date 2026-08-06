@@ -82,7 +82,7 @@ all fifteen 65816 addressing modes, plus `XCE`, `REP` and `SEP` — 32 opcodes i
 certified per-cycle in both emulation and native mode against 640,000 SingleStepTests
 vectors, including the full eight-character bus-qualifier pin string asserted on every cycle.
 
-**This is not a complete core.** 232 of the 65816's 256 opcodes are implemented — phase 7b's 32,
+**This is not a complete core.** 242 of the 65816's 256 opcodes are implemented — phase 7b's 32,
 plus phase 7c's bulk work, which added `ORA`, `AND`, `EOR`, `CMP`, `ADC` and `SBC` in all fifteen
 addressing forms each, `CPX` and `CPY` in three each, `BIT` in five, `LDX` and `LDY` in five each,
 `STX` and `STY` in three each, and `STZ` in four, plus phase 7c′'s read-modify-writes: `ASL`,
@@ -111,7 +111,13 @@ drives no address and performs no bus access at all. Their 40,000 vectors cover 
 cycles — every one ends in a `[null, null, "--------"]` sentinel, and the set models no hold, no
 wake and no reset anywhere — so the hold itself, the wake on `IRQB`/`NMIB`, `WAI`'s rule that the
 `i` flag blocks the interrupt being *taken* but never the wake, and `STP`'s reset-only exit are
-certified by unit test.
+certified by unit test. Then the ten branches — `BPL`, `BMI`, `BVC`, `BVS`, `BCC`, `BCS`, `BNE`,
+`BEQ`, `BRA` and `BRL`. A taken branch that crosses a page costs a fourth cycle in emulation mode
+and *not* in native mode, where a taken branch is a flat three cycles wherever it lands: the one
+behaviour here that differs from all five eight-bit cores. `BRL` reaches the whole bank with a
+signed sixteen-bit displacement and is a flat four cycles in both modes. Every branch's
+displacement add wraps inside the program bank and never carries into `PBR`, which 5,076 of the
+200,000 branch vectors exercise directly.
 `ADC` and `SBC` are cycle- and result-correct in decimal mode at both operand widths, including
 16-bit BCD, which no source documents — the correction algorithm was measured from the vectors.
 `BIT`'s immediate opcode is a genuinely different operation from its other four forms, not just

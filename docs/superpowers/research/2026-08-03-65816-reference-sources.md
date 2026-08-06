@@ -2686,6 +2686,29 @@ The destination formulas are §5.18's: `K : PC+2+$LL` for `rel8` and `K : PC+3+$
 in both cases is the address of the *next* instruction, and `K` is carried through unchanged. Table 5-7
 agrees by writing the destination as `PBR,PC+Offset` on both rows — the same `PBR`, never a `PBR+1`.
 
+**Measured (phase 7d task 6), across all 200,000 vectors for the ten opcodes.** All three answers hold and
+nothing in rows 20 and 21 needed correcting. Three things the transcription alone does not settle:
+
+1. **The page-cross cycle is emulation-mode-only, confirmed by the cycle-length histograms.** All nine
+   `*.n` files contain two- and three-cycle vectors and **no four-cycle vector at all** (`80.n` is 10,000
+   of exactly three); all nine `*.e` files contain four-cycle ones — 1,180 to 1,314 per conditional file
+   and 2,500 for `80.e`. `82.e` and `82.n` are 10,000 of exactly four each, so `BRL` has no conditional
+   cycle in either mode, as answer 2 says.
+2. **Row 20's address column means the offset byte's own address, not the byte after the branch.** Cycles
+   2a and 2b both drive `PBR,PC+1` literally — the same address cycle 2 fetched the displacement from —
+   and the second drives it again *after* `PC` has moved. `10 n 2` reads `$BF3750` on cycles 2 and 3;
+   `10 e 7` reads `$E2195E` on cycles 2, 3 and 4. This is a real difference from the five 8-bit cores in
+   this repository, whose taken-branch cycle rereads the byte *after* the branch (`PC+2`) and whose
+   page-cross cycle drives the *un-fixed* new `PC`. Neither of those addresses appears in any 65816 branch
+   vector, so the 65816 needs branch micro-ops of its own — and, because the un-fixed `PC` is never driven
+   on this part, it can do the whole displacement add in one cycle rather than half of it.
+   Row 21's cycle 4 is the same rule one byte along: `PBR,PC+2`, the high displacement byte's own address.
+3. **The bank boundary is covered by the vectors, not a gap.** 5,076 of the 200,000 — 99 `rel8` and 4,977
+   `rel16` — have `base + displacement` outside `$0000`-`$FFFF`, and every one records the wrapped `PC`
+   with `PBR` unchanged. `rel16` wraps in about a quarter of its vectors, since a 16-bit displacement from
+   an arbitrary `PC` usually can. The natural assumption — that a ±128 displacement from a random `PC`
+   would never reach `$xxFFFF` in ten thousand tries — is wrong for `rel8` too, at roughly 1 in 1,800.
+
 ### 14.6 The jumps, the calls and the returns
 
 Transcribed from Table 5-7 rows 1b, 1c, 2a, 2b, 3a, 3b, 4b, 4c (pp. 36–37) and 22g, 22h, 22i (p. 42).

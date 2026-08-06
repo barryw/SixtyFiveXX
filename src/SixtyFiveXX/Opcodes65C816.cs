@@ -62,21 +62,27 @@ namespace SixtyFiveXX;
 /// <c>MVN</c> (<c>$54</c>) and <c>MVP</c> (<c>$44</c>) — 228 + 2 = 230. They are the only entries
 /// here taking <see cref="AddrMode.BlockMove"/>, and the only instruction on the part that
 /// rewinds <c>PC</c>: one whole instruction per byte moved, re-entered by the next fetch until
-/// the count in the sixteen-bit accumulator runs out (research document §14.3).
+/// the count in the sixteen-bit accumulator runs out (research document §14.3); phase 7d task 5's
+/// two: the halts <c>WAI</c> (<c>$CB</c>) and <c>STP</c> (<c>$DB</c>) — 230 + 2 = 232; and phase
+/// 7d task 6's ten: the eight conditional branches, <c>BRA</c> and <c>BRL</c> — 232 + 10 = 242.
+/// The nine short branches take <see cref="AddrMode.Relative"/>, shared with the five eight-bit
+/// cores but emitted to micro-ops of this part's own; <c>BRL</c> brings in the one addressing mode
+/// this task adds, <see cref="AddrMode.RelativeLong"/>. <see cref="Access.None"/> and no
+/// <see cref="Width"/> on all ten: a displacement is not an operand fetched at a width the flags
+/// select, and <c>BRL</c>'s is sixteen bits whatever <c>m</c> and <c>x</c> say.
 /// <para>
-/// The remaining 26 entries are <see cref="OpcodeInfo.Undefined"/> and throw
-/// <see cref="UndefinedOpcodeException"/> on fetch. Phase 7d's later tasks fill them in: the ten
-/// branches (<c>BPL</c>, <c>BMI</c>, <c>BVC</c>, <c>BVS</c>, <c>BCC</c>, <c>BCS</c>, <c>BNE</c>,
-/// <c>BEQ</c>, <c>BRA</c>, <c>BRL</c>), the five jumps (<c>$4C</c>, <c>$6C</c>, <c>$7C</c>,
-/// <c>$5C</c>, <c>$DC</c>), the three calls (<c>JSR abs</c>, <c>JSR (abs,X)</c>, <c>JSL</c>), the
-/// three returns (<c>RTI</c>, <c>RTS</c>, <c>RTL</c>), the three stack-addressing pushes
-/// (<c>PEA</c>, <c>PEI</c>, <c>PER</c>) and the two halts (<c>WAI</c>, <c>STP</c>) — research
-/// document §14.8's table of all 44, less this task's two.
+/// The remaining 14 entries are <see cref="OpcodeInfo.Undefined"/> and throw
+/// <see cref="UndefinedOpcodeException"/> on fetch. Phase 7d's later tasks fill them in: the five
+/// jumps (<c>$4C</c>, <c>$6C</c>, <c>$7C</c>, <c>$5C</c>, <c>$DC</c>), the three calls
+/// (<c>JSR abs</c>, <c>JSR (abs,X)</c>, <c>JSL</c>), the three returns (<c>RTI</c>, <c>RTS</c>,
+/// <c>RTL</c>) and the three stack-addressing pushes (<c>PEA</c>, <c>PEI</c>, <c>PER</c>) —
+/// research document §14.8's table of all 44, less this task's ten and the four tasks 4 and 5
+/// landed.
 /// </para>
 /// </remarks>
 internal static class Opcodes65C816
 {
-    /// <summary>Opcode byte to descriptor. 230 entries defined, 26 undefined.</summary>
+    /// <summary>Opcode byte to descriptor. 242 entries defined, 14 undefined.</summary>
     public static readonly OpcodeInfo[] Table = BuildTable();
 
     private static OpcodeInfo[] BuildTable()
@@ -414,6 +420,21 @@ internal static class Opcodes65C816
         // m says (research document §14.3), so there is no accumulator width to declare either.
         Set(0x54, "MVN", AddrMode.BlockMove, Op.Mvn, Access.None);
         Set(0x44, "MVP", AddrMode.BlockMove, Op.Mvp, Access.None);
+
+        // Branches. Eight conditional, BRA unconditional, and BRL with a sixteen-bit
+        // displacement. Width.None throughout: a displacement is not an operand fetched at
+        // a width the flags select.
+        Set(0x10, "BPL", AddrMode.Relative, Op.Bpl, Access.None);
+        Set(0x30, "BMI", AddrMode.Relative, Op.Bmi, Access.None);
+        Set(0x50, "BVC", AddrMode.Relative, Op.Bvc, Access.None);
+        Set(0x70, "BVS", AddrMode.Relative, Op.Bvs, Access.None);
+        Set(0x90, "BCC", AddrMode.Relative, Op.Bcc, Access.None);
+        Set(0xB0, "BCS", AddrMode.Relative, Op.Bcs, Access.None);
+        Set(0xD0, "BNE", AddrMode.Relative, Op.Bne, Access.None);
+        Set(0xF0, "BEQ", AddrMode.Relative, Op.Beq, Access.None);
+        Set(0x80, "BRA", AddrMode.Relative, Op.Bra, Access.None);
+
+        Set(0x82, "BRL", AddrMode.RelativeLong, Op.Brl, Access.None);
 
         return t;
     }

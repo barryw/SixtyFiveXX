@@ -191,6 +191,13 @@ internal enum AddrMode : byte
     /// </remarks>
     BlockMove,
 
+    /// <summary>
+    /// A signed sixteen-bit branch displacement, measured from the byte after the instruction.
+    /// Reaches anywhere in the current program bank and never changes <c>PBR</c>. Used only by
+    /// <c>BRL</c>. 65816 only.
+    /// </summary>
+    RelativeLong,
+
     /// <summary>Not implemented by this variant.</summary>
     Undefined,
 }

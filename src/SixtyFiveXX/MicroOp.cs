@@ -1060,6 +1060,77 @@ internal enum MicroOp : byte
     /// only escape is <c>Cpu.Reset</c>: no interrupt releases it (datasheet §7.14, Clark §6.9).
     /// </summary>
     StpHold816,
+
+    /// <summary>
+    /// Cycle 2 of every conditional branch and of <c>BRA</c>: the signed eight-bit displacement,
+    /// fetched at <c>PBR,PC+1</c>, <c>VDA=0 VPA=1</c> — datasheet Table 5-7 row 20, research
+    /// document §14.5. Ends the instruction here when the condition is false, which is Note 5's
+    /// "add 1 cycle if branch is taken" read the other way round.
+    /// <para>
+    /// The 65816 form of <see cref="BranchFetch"/> and separate from it for one reason: this
+    /// reads <c>PBR,PC</c> and that reads a bare sixteen-bit <c>PC</c>. See
+    /// <c>W65C816ReachabilityTests</c>, which asserts the 65816 reaches neither that micro-op
+    /// nor the two after it.
+    /// </para>
+    /// </summary>
+    BranchFetch816,
+
+    /// <summary>
+    /// Row 20's cycle 2a — the taken branch's internal cycle — and the whole of the displacement
+    /// add. Drives <c>PBR,PC+1</c>, the offset byte's <em>own</em> address, which is not what the
+    /// eight-bit <see cref="BranchTaken"/> drives (that one rereads the byte after the branch);
+    /// research document §14.5 transcribes it and every taken vector confirms it.
+    /// <para>
+    /// The add wraps inside the program bank: <c>PC</c> is a <c>ushort</c> and <c>PBR</c> is
+    /// never touched, so <c>$13FFFE</c> plus a forward displacement lands in bank <c>$13</c>,
+    /// not <c>$14</c> — Clark §5.1.2 and §4, and §5.18's <c>K : PC+2+$LL</c>. The vectors do
+    /// reach that boundary, contrary to what a random <c>PC</c> and a ±128 displacement suggest:
+    /// 99 of the 180,000 <c>rel8</c> vectors have a destination outside <c>$0000</c>-<c>$FFFF</c>
+    /// before the wrap, and every one records the wrapped <c>PC</c> with <c>PBR</c> unchanged.
+    /// </para>
+    /// <para>
+    /// <b>The one behavioural difference from all five eight-bit cores in this codebase.</b>
+    /// This ends the instruction whenever <c>E</c> is clear, whether or not the add crossed a
+    /// page — a taken branch in native mode is a flat three cycles wherever it lands. Datasheet
+    /// Note 6 gates the extra cycle on "6502 emulation mode (E=1)" and Clark §6.2.1.1's
+    /// <c>2+t+t*e*p</c> multiplies the page-cross term by <c>e</c>, exactly as §3.2's <c>x*p</c>
+    /// is multiplied by <c>x</c>. The page itself is measured against the byte after the branch,
+    /// not against the opcode — Clark's <c>LABEL BRA LABEL+2</c> "always takes 3 cycles, no
+    /// matter where the BRA instruction is located in memory".
+    /// </para>
+    /// </summary>
+    BranchTaken816,
+
+    /// <summary>
+    /// Row 20's cycle 2b, the emulation-mode-only page-cross cycle. A second internal cycle at
+    /// the same <c>PBR,PC+1</c> <see cref="BranchTaken816"/> drove — which is why that one
+    /// stashes the address rather than this one recomputing it from a <c>PC</c> that has already
+    /// moved to the destination.
+    /// <para>
+    /// Nothing but the cycle happens here. The eight-bit <see cref="BranchFixup"/> applies a
+    /// <c>±$100</c> correction on its cycle because its <c>BranchTaken</c> deliberately leaves
+    /// <c>PC</c> half-corrected; this core's does the whole add in one go, since the un-fixed
+    /// program counter is never driven on the bus in either mode and so is unobservable.
+    /// </para>
+    /// </summary>
+    BranchFixup816,
+
+    /// <summary>
+    /// <c>BRL</c>'s cycle 4 — row 21's single <c>IO</c> at <c>PBR,PC+2</c>, the high displacement
+    /// byte's own address, following row 20's "last operand byte" rule. Performs the sixteen-bit
+    /// signed add from the displacement <see cref="FetchAddrLo"/> and <see cref="FetchAddrHi"/>
+    /// left in the effective-address register, wrapping inside the program bank exactly as
+    /// <see cref="BranchTaken816"/> does: Clark §4's "a BRL $2000 at $13E000 will branch to
+    /// $132000 rather than $142000". A sixteen-bit displacement from an arbitrary <c>PC</c>
+    /// wraps about a quarter of the time, so this is the best-covered rule of the ten — 4,977 of
+    /// <c>$82</c>'s 20,000 vectors land only because the carry out of sixteen bits is discarded.
+    /// <para>
+    /// Unconditional, and the last cycle either way — <c>BRL</c> has no not-taken case and no
+    /// page-cross penalty in either mode (research document §14.5 answer 2, Clark §6.2.1.2's
+    /// flat <c>82 3 4 rel16</c>).
+    /// </para>
+    /// </summary>
+    BranchLong816,
 }
 
 /// <summary>
@@ -1255,6 +1326,11 @@ internal static class MicroOps
                      // 9a/9b print VDA=0 VPA=1 on both, and every one of the 40,000 vectors
                      // reads "-p-r…" on cycles 2 and 3.
                      MicroOp.BlockMoveDestBank, MicroOp.BlockMoveSrcBank,
+                     // A branch's displacement byte is a live-PC read like any other operand
+                     // fetch: research document §14.5's row 20 prints VDA=0 VPA=1 on it, and
+                     // every one of the 200,000 branch vectors' cycle 2 reads "-p-r…". BRL's two
+                     // displacement bytes are FetchAddrLo/FetchAddrHi, already here.
+                     MicroOp.BranchFetch816,
                  })
         {
             pins[(int)op] = BusPins.Vpa;
@@ -1394,6 +1470,10 @@ internal static class MicroOps
     /// They are in this table for what it actually gates: <c>Cpu.Tick</c>'s RDY halt path would
     /// otherwise fake a <em>read</em> at PC for the entire wait, on a bus that may have read
     /// side effects. An internal cycle there accesses nothing, which is the truthful halt.
+    /// <see cref="MicroOp.BranchTaken816"/>, <see cref="MicroOp.BranchFixup816"/> and
+    /// <see cref="MicroOp.BranchLong816"/> are phase 7d task 6's three — rows 20's cycles 2a and
+    /// 2b and row 21's cycle 4, every one an <c>IO</c> at the last operand byte's address with
+    /// no memory access; the branch vectors read <c>"---r…"</c> on each.
     /// </summary>
     private static bool[] BuildInternalCycleTable()
     {
@@ -1411,6 +1491,7 @@ internal static class MicroOps
                      MicroOp.IntInternal816,
                      MicroOp.BlockMoveInternal, MicroOp.BlockMoveNext,
                      MicroOp.WaiHold816, MicroOp.StpHold816,
+                     MicroOp.BranchTaken816, MicroOp.BranchFixup816, MicroOp.BranchLong816,
                  })
         {
             internalCycles[(int)op] = true;

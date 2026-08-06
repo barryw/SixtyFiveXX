@@ -1977,6 +1977,45 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 _s.PC = (ushort)(_s.PC + _branchFix);
                 break;
 
+            case MicroOp.BranchFetch816:
+                _data = ReadBus(PcAddress());
+                _s.PC++;
+                if (!IsBranchTaken()) EndInstruction();
+                break;
+
+            case MicroOp.BranchTaken816:
+            {
+                // The IO cycle drives the displacement byte's own address — research document
+                // §14.5's row 20 writes cycles 2, 2a and 2b all as PBR,PC+1 — so it is PC-1 by
+                // the time the fetch above has stepped over it. Stashed because cycle 2b drives
+                // the same address after PC has moved to the destination.
+                _addr = (_s.PBR << 16) | ((_s.PC - 1) & 0xFFFF);
+                InternalCycle(_addr);
+
+                // Wraps inside the program bank: PC is a ushort and PBR is untouched.
+                var lo = (_s.PC & 0xFF) + (sbyte)_data;
+                _s.PC = (ushort)(_s.PC + (sbyte)_data);
+
+                // Datasheet Note 6: the page-cross cycle exists in emulation mode ONLY. Clark
+                // §6.2.1.1's 2+t+t*e*p says the same by multiplying the term by e. A taken
+                // branch in native mode is a flat three cycles wherever it lands, which is the
+                // one place this core's branches differ from all five 8-bit cores here.
+                if (!_s.E || lo is >= 0 and <= 0xFF) EndInstruction();
+                break;
+            }
+
+            case MicroOp.BranchFixup816:
+                InternalCycle(_addr);                 // row 20's cycle 2b, e = 1 only
+                break;
+
+            case MicroOp.BranchLong816:
+                // Row 21's cycle 4, at PBR,PC+2 — the high displacement byte's own address, the
+                // same "last operand byte" rule row 20 follows. _addr holds the signed 16-bit
+                // displacement FetchAddrLo and FetchAddrHi assembled.
+                InternalCycle((_s.PBR << 16) | ((_s.PC - 1) & 0xFFFF));
+                _s.PC = (ushort)(_s.PC + (short)_addr);
+                break;
+
             case MicroOp.StackDummyRead:
                 ReadBus(0x0100 + S8);
                 break;

@@ -213,4 +213,15 @@ internal enum Op : byte
     /// eight-bit table.
     /// </summary>
     Mvn, Mvp,
+
+    /// <summary>
+    /// The long branch, <c>$82</c>. <see cref="Bra"/> with a signed sixteen-bit displacement:
+    /// three bytes, a flat four cycles in both modes, and no conditional cycle of any kind —
+    /// there is no not-taken case and no page-cross penalty (research document §14.5, datasheet
+    /// Table 5-7 row 21 and Clark §6.2.1.2). Like every branch on this part it wraps inside the
+    /// program bank and never carries into <c>PBR</c>. A separate member from <see cref="Bra"/>
+    /// only because the displacement's width decides the sequence, not the condition. 65816
+    /// only.
+    /// </summary>
+    Brl,
 }
