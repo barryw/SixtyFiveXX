@@ -3149,3 +3149,410 @@ their purpose would give (§14.2); a taken branch pays no page-cross cycle in na
 8-bit core in this repository (§14.5); and `MVN`/`MVP` re-fetch their own opcode and both operand bytes on
 every iteration, so `PC` is rewound seven cycles at a time and the vectors are truncated mid-instruction
 (§14.3).
+
+---
+
+## 15. Phase 7e's oracle — what 64tass actually assembles
+
+Added 2026-08-06, before any phase 7e code was written. Same practice as §9, §12, §13 and §14:
+establish the facts first, implement second. The phase 7e plan
+(`docs/superpowers/plans/2026-08-06-phase7e-disassembler.md`) cites this material as **§15.1**–**§15.4**,
+which is the numbering used here.
+
+**This section is different in kind from every one before it.** §9 and §13 transcribe a datasheet;
+§12, §13 and §14 measure a vector corpus. Phase 7e's subject is a *program* — 64tass, already a
+prerequisite for the Klaus interrupt test and already the oracle behind `RoundTripTests` — so almost
+nothing here is cited and almost everything is measured. Every byte string below was produced by
+running the assembler, not recalled.
+
+**The tool, and the method.** `64tass --version` reports **`64tass Turbo Assembler Macro V1.60.3243`**.
+Unless a row says otherwise, each source line was assembled *alone* in a file of the form
+
+```
+	.cpu "65816"
+	*=$1000
+	<the line>
+```
+
+with `64tass --nostart -o f.bin f.asm`, and the whole of `f.bin` is the byte string recorded. Where an
+`.as`/`.al`/`.xs`/`.xl` directive is named, it is a line of its own ahead of the instruction and its
+(zero) bytes are excluded. `--nostart` is what `RoundTripTests.Assemble` already passes, so these bytes
+are the bytes that harness compares.
+
+**Notation.** `m` and `x` are the flag values as everywhere else in this document (1 = eight bits,
+0 = sixteen). "Operative width" means the width the flag selects for that instruction: `m` for the
+accumulator operations, `x` for the index operations. `AddrMode` names are this repository's, from
+`src/SixtyFiveXX/AddrMode.cs`.
+
+**Nothing in this section contradicts a published source, so it adds no §3 entry.** 64tass agreed with
+the datasheet, with Clark and with §14.3 everywhere the three could be compared. What it *did*
+contradict is one line of the phase 7e plan, and that correction is recorded in §15.2.
+
+### 15.1 The dialect, the width directives, and a notation row for every mode
+
+**The dialect name is exactly `65816`.** Measured: `.cpu "65816"` assembles `JSL $123456` to
+`22 56 34 12`. `.cpu "65c816"`, `.cpu "w65816"` and `.cpu "65802"` are all rejected —
+`error: unknown processor`. The command-line form works with no `.cpu` line at all:
+`64tass --m65816 --nostart` assembles the same `JSL $123456` to the same `22 56 34 12`.
+
+**The width directives, and what happens on a mismatch.**
+
+> `.as` / `.al` set the accumulator width and `.xs` / `.xl` the index width, and the length of an
+> immediate operand comes from the **directive**, never from the value:
+>
+> | Source | Bytes |
+> | --- | --- |
+> | (no directive) `LDA #$34` | `a9 34` |
+> | (no directive) `LDA #$1234` | **error** — *too large for a 8 bit unsigned integer bits '$1234'* |
+> | `.as` `LDA #$34` | `a9 34` |
+> | `.as` `LDA #$1234` | **error** — same message |
+> | `.al` `LDA #$34` | `a9 34 00` |
+> | `.al` `LDA #$0034` | `a9 34 00` |
+> | `.al` `LDA #$1234` | `a9 34 12` |
+> | `.xs` `LDX #$34` | `a2 34` |
+> | `.xs` `CPY #$1234` | **error** — same message |
+> | `.xl` `LDX #$34` | `a2 34 00` |
+> | `.xl` `LDX #$1234` | `a2 34 12` |
+> | `.al` + `.xs` `CPX #$34` | `e0 34` |
+>
+> Three consequences, all load-bearing for phase 7e. **The default with no directive at all is eight
+> bits**, which is what makes the existing five round-trips continue to work unchanged. **A width
+> mismatch is a hard error, not a silent truncation** — a disassembler that rendered a 16-bit immediate
+> while the listing said `.as` would fail the round-trip loudly rather than round-trip wrongly. And
+> **the two widths are independent**: `.al` does not widen an `x`-sized immediate.
+
+> **`REP` and `SEP` do not change the assembler's width in the default mode.** `REP #$30` followed by
+> `LDA #$34` assembles to `c2 30 a9 34` — the `LDA` is still two bytes. Under `.autsiz` it does track:
+> the same two lines become `c2 30 a9 34 00`, and `.autsiz` with `SEP #$30` gives `e2 30 a9 34`.
+> `.mansiz` restores the non-tracking behaviour, and **`.mansiz` is the default** — measured, since the
+> no-directive run and the explicit `.mansiz` run produce identical bytes.
+>
+> This matters to phase 7e's round-trip more than it looks. That listing contains `$C2` and `$E2` as
+> *data* — every opcode appears in it — and their rendered text is `REP #$30` / `SEP #$30`. In the
+> default mode those lines are inert and the width the listing declared at the top holds all the way
+> down. A listing assembled under `.autsiz` would change width halfway through and every subsequent
+> immediate would be the wrong length.
+
+> **`REP`/`SEP` themselves never widen.** `REP #$30` is `c2 30` and `SEP #$30` is `e2 30` under `.as`
+> and under `.al` alike — they are `AddrMode.ImmediateByte`, and the width flags do not reach them.
+
+**The complete notation table.** One row per addressing mode this repository has, including the modes
+phase 6a already renders, so this is a table rather than a delta. Assembled at `*=$1000` under `.as`
+and `.xs` unless the row names a directive. The `@w`/`@l` prefixes are explained in §15.2; they are
+included here because they are part of the text phase 7e has to emit.
+
+| `AddrMode` | Source text | Assembled bytes | Length |
+| --- | --- | --- | --- |
+| `Implied` | `NOP` | `ea` | 1 |
+| `Accumulator` | `ASL A` | `0a` | 1 |
+| `Immediate`, `m = 1` (`.as`) | `LDA #$34` | `a9 34` | 2 |
+| `Immediate`, `m = 0` (`.al`) | `LDA #$1234` | `a9 34 12` | 3 |
+| `Immediate`, `x = 1` (`.xs`) | `LDX #$34` | `a2 34` | 2 |
+| `Immediate`, `x = 0` (`.xl`) | `LDX #$1234` | `a2 34 12` | 3 |
+| `ImmediateByte` | `REP #$30` | `c2 30` | 2 |
+| `ImmediateByte` | `SEP #$30` | `e2 30` | 2 |
+| `ImmediateByte` | `WDM #$12` | `42 12` | 2 |
+| `DirectPage` | `LDA $12` | `a5 12` | 2 |
+| `DirectPageX` | `LDA $12,X` | `b5 12` | 2 |
+| `DirectPageY` | `LDX $12,Y` | `b6 12` | 2 |
+| `DirectPageIndirect` | `LDA ($12)` | `b2 12` | 2 |
+| `DirectPageIndirectY` | `LDA ($12),Y` | `b1 12` | 2 |
+| `DirectPageIndexedIndirectX` | `LDA ($12,X)` | `a1 12` | 2 |
+| `DirectPageIndirectLong` | `LDA [$12]` | `a7 12` | 2 |
+| `DirectPageIndirectLongY` | `LDA [$12],Y` | `b7 12` | 2 |
+| `StackRelative` | `LDA $12,S` | `a3 12` | 2 |
+| `StackRelativeIndirectY` | `LDA ($12,S),Y` | `b3 12` | 2 |
+| `Absolute` | `LDA @w $1234` | `ad 34 12` | 3 |
+| `AbsoluteX` | `LDA @w $1234,X` | `bd 34 12` | 3 |
+| `AbsoluteY` | `LDA @w $1234,Y` | `b9 34 12` | 3 |
+| `AbsoluteLong` | `LDA @l $123456` | `af 56 34 12` | 4 |
+| `AbsoluteLongX` | `LDA @l $123456,X` | `bf 56 34 12` | 4 |
+| `Indirect` | `JMP @w ($1234)` | `6c 34 12` | 3 |
+| `AbsoluteIndexedIndirect` | `JMP @w ($1234,X)` | `7c 34 12` | 3 |
+| `AbsoluteIndirectLong` | `JML @w [$1234]` | `dc 34 12` | 3 |
+| `Relative` | `BEQ $1036` | `f0 34` | 2 |
+| `RelativeLong` | `BRL $2237` | `82 34 12` | 3 |
+| `BlockMove` | `MVN $12,$34` | `54 34 12` | 3 |
+| `BlockMove` | `MVP $12,$34` | `44 34 12` | 3 |
+| `Stack`, `Op.Brk` | `BRK #$12` | `00 12` | 2 |
+| `Stack`, `Op.Cop` | `COP #$12` | `02 12` | 2 |
+| `Stack`, `Op.Jmp` | `JMP @w $1234` | `4c 34 12` | 3 |
+| `Stack`, `Op.Jsr` | `JSR @w $1234` | `20 34 12` | 3 |
+| `Stack`, `Op.Pea` | `PEA @w $1234` | `f4 34 12` | 3 |
+| `Stack`, `Op.Pei` | `PEI ($12)` | `d4 12` | 2 |
+| `Stack`, `Op.Per` | `PER $2237` | `62 34 12` | 3 |
+| `Stack`, `Op.Rtl` | `RTL` | `6b` | 1 |
+| `Stack`, the pushes and pulls | `PHB` | `8b` | 1 |
+| `AbsoluteLong`, `JSL` | `JSL @l $123456` | `22 56 34 12` | 4 |
+| `AbsoluteLong`, `JML` long | `JML @l $123456` | `5c 56 34 12` | 4 |
+
+**Three rows deserve their own note.**
+
+> **`MVN`/`MVP`'s operands reverse between the text and the byte stream, and 64tass agrees with §14.3.**
+> `MVN $12,$34` is `54 34 12` and `MVP $AB,$CD` is `44 cd ab`. §14.3 established from `54.n.json` that
+> the byte at `PC+1` is the **destination** bank — it becomes the final `DBR` — and the byte at `PC+2`
+> is the source. So the byte immediately after the opcode is `$34`, the operand written **second** in
+> the text. **The text is `src,dst`; the stream is `dst,src`.** A renderer that emits the operand bytes
+> in the order it read them produces a `MVN` that moves the wrong way, and 64tass will assemble it
+> without complaint because both operands are syntactically valid banks.
+
+> **`PER` and `BRL` encode a displacement and must be rendered as a target, and the target depends on
+> the address the instruction sits at.** Measured at four origins, target `$1234` throughout:
+>
+> | Address | `PER $1234` | `BRL $1234` |
+> | --- | --- | --- |
+> | `$1000` | `62 31 02` | `82 31 02` |
+> | `$1024` | `62 0d 02` | `82 0d 02` |
+> | `$1027` | `62 0a 02` | `82 0a 02` |
+> | `$2000` | `62 31 f2` | `82 31 f2` |
+>
+> The rule, stated so no one has to re-measure: **the encoded word is `(target − (address + 3)) & $FFFF`,
+> little-endian** — a 16-bit signed displacement from the byte *after* the three-byte instruction,
+> which is §14.5's and §14.7's rule for the part itself. Rendering runs the other way:
+> `target = (address + 3 + (int16)displacement) & $FFFF`.
+>
+> **This corrects the phase 7e plan.** Its "Established facts" block records `PER $1234` → `62 0d 02`
+> and `BRL $1234` → `82 0a 02` as if they were properties of the instruction. They are not: they are
+> the bytes at `$1024` and `$1027` respectively, which is where those two lines happened to fall in the
+> file the plan's author assembled. The table above reproduces both exactly at those addresses, so the
+> plan's numbers are right and its framing is not. Anything phase 7e writes that quotes a `PER` or
+> `BRL` byte string has to quote the address with it.
+
+> **`JML` is 64tass's mnemonic for two different opcodes, told apart by syntax alone.**
+> `JML $123456` is `5c 56 34 12` (`AddrMode.AbsoluteLong`) and `JML [$1234]` is `dc 34 12`
+> (`AddrMode.AbsoluteIndirectLong`). This repository's table already spells both `JML`, so no
+> translation is needed — unlike the `RMB0`/`BBS7` case `RoundTripTests.ForAssembler` exists for.
+
+### 15.2 The shortest-encoding rule, the forcing prefixes, and the predicate
+
+**64tass emits the shortest encoding of that mnemonic whose operand range covers the value.** It is a
+property of the *value together with the mnemonic*, not of the value alone, and that second half is
+what makes the naive rule wrong. Measured, both boundaries the plan asked for:
+
+> | Source | Bytes | Encoding chosen |
+> | --- | --- | --- |
+> | `LDA $00FF` | `a5 ff` | direct page — **collapsed** |
+> | `LDA $0100` | `ad 00 01` | absolute |
+> | `LDA $FFFF` | `ad ff ff` | absolute |
+> | `LDA $00FFFF` | `ad ff ff` | absolute — **collapsed** |
+> | `LDA $010000` | `af 00 00 01` | long |
+> | `LDA $10000` | `af 00 00 01` | long |
+>
+> So the two boundaries are exactly `$0100` and `$010000`, and both are exclusive at the bottom: a value
+> of `$00FF` collapses and a value of `$0100` does not.
+
+**The forcing prefixes are `@b`, `@w` and `@l`**, written between the mnemonic and the operand:
+
+> | Source | Bytes |
+> | --- | --- |
+> | `LDA @w $0012` | `ad 12 00` |
+> | `LDA @w $00FF` | `ad ff 00` |
+> | `LDA @w $0100` | `ad 00 01` |
+> | `LDA @w $1234` | `ad 34 12` |
+> | `LDA @l $001234` | `af 34 12 00` |
+> | `LDA @l $00FFFF` | `af ff ff 00` |
+> | `LDA @l $010000` | `af 00 00 01` |
+> | `LDA @l $123456` | `af 56 34 12` |
+>
+> **Forcing a width the value already needs is a no-op**, as the `@w $1234` and `@l $123456` rows show.
+> That is the fact that makes the predicate below safe to state unconditionally.
+
+**Which modes actually collapse, and which are immune.** Measured with the operand value `$0012`
+(and `$000012` for the long forms), each line assembled alone:
+
+> | Opcode | Unforced text | Unforced bytes | Forced text | Forced bytes |
+> | --- | --- | --- | --- | --- |
+> | `$AD` | `LDA $0012` | `a5 12` | `LDA @w $0012` | `ad 12 00` |
+> | `$BD` | `LDA $0012,X` | `b5 12` | `LDA @w $0012,X` | `bd 12 00` |
+> | `$B9` | `LDA $0012,Y` | `b9 12 00` | `LDA @w $0012,Y` | `b9 12 00` |
+> | `$BE` | `LDX $0012,Y` | `b6 12` | `LDX @w $0012,Y` | `be 12 00` |
+> | `$9E` | `STZ $0012,X` | `74 12` | `STZ @w $0012,X` | `9e 12 00` |
+> | `$AF` | `LDA $000012` | `a5 12` | `LDA @l $000012` | `af 12 00 00` |
+> | `$BF` | `LDA $000012,X` | `b5 12` | `LDA @l $000012,X` | `bf 12 00 00` |
+> | `$6C` | `JMP ($0012)` | `6c 12 00` | `JMP @w ($0012)` | `6c 12 00` |
+> | `$7C` | `JMP ($0012,X)` | `7c 12 00` | `JMP @w ($0012,X)` | `7c 12 00` |
+> | `$DC` | `JML [$0012]` | `dc 12 00` | `JML @w [$0012]` | `dc 12 00` |
+> | `$4C` | `JMP $0012` | `4c 12 00` | `JMP @w $0012` | `4c 12 00` |
+> | `$20` | `JSR $0012` | `20 12 00` | `JSR @w $0012` | `20 12 00` |
+> | `$F4` | `PEA $0012` | `f4 12 00` | `PEA @w $0012` | `f4 12 00` |
+> | `$22` | `JSL $000012` | `22 12 00 00` | `JSL @l $000012` | `22 12 00 00` |
+> | `$5C` | `JML $000012` | `5c 12 00 00` | `JML @l $000012` | `5c 12 00 00` |
+>
+> **`LDA $0012,Y` does not collapse but `LDX $0012,Y` does.** There is no `LDA dp,Y` on the part, so
+> `abs,Y` is already the shortest `LDA` form; there *is* an `LDX dp,Y` (`$B6`), so `LDX abs,Y` collapses.
+> A rule phrased purely on the value would predict both or neither and be wrong about one of them.
+> Likewise `JMP`, `JSR`, `PEA`, `JSL`, `JML` and the three indirect-absolute forms have no shorter
+> encoding of their own mnemonic and are immune whatever the value.
+
+**The predicate, stated so a reader can implement it without re-measuring.** Two forms, and they are
+measurably equivalent:
+
+> - **Conditional** — emit `@w ` before the operand of `Absolute`, `AbsoluteX`, `AbsoluteY`, `Indirect`,
+>   `AbsoluteIndexedIndirect`, `AbsoluteIndirectLong` and the `Op.Jmp`/`Op.Jsr`/`Op.Pea` arms of
+>   `Stack` **when the rendered value is `< $0100`**; emit `@l ` before the operand of `AbsoluteLong`
+>   and `AbsoluteLongX` **when the rendered value is `< $010000`**.
+> - **Unconditional** — emit the same prefix for those modes always.
+>
+> They produce identical bytes for every one of the 256 opcodes, because forcing a width the value
+> already needs is a no-op. The conditional form is what the phase 7e spec states and it renders more
+> readable text; the unconditional form is one fewer branch. **Both are correct — this is a
+> presentation choice, not a correctness one.** Verified by assembling the complete 256-opcode listing
+> both ways with operand bytes that make every absolute operand `$1234`: identical output, 559 bytes.
+
+**Nothing collapses below two bytes, and `@b` is never needed.** `LDA $12` is `a5 12`, `LDA $00` is
+`a5 00`, and `LDA @b $12` and `LDA @b $00` are the same two bytes. There is no one-byte-operand
+addressing mode on the part for `@b` to reach for, and every direct-page operand this disassembler
+renders is written with two hex digits and so is already under `$100`. `@b` would only earn its place
+if the listing ever set `.dpage` to something other than zero, which nothing in this repository does.
+
+**One immediate-mode consequence, because it is the exception that makes the rule easy.** Immediates
+never collapse and take no prefix: `.al` + `LDA #$0034` is `a9 34 00`, not `a9 34`. The operand length
+comes from the width directive (§15.1), so the value is irrelevant. The immediate is the only operand
+on the part with that property.
+
+### 15.3 The ambiguity set is empty, and the covered count is 256
+
+`RoundTripTests.AmbiguousOpcodes` excludes any opcode that renders as text some *other* opcode of the
+same variant also renders, because an assembler handed that text has to pick one encoding and the
+others cannot come back as themselves. The five 8-bit cores lose 43, 43, 79, 46 and 44 opcodes that
+way, which is where the pinned counts of 213, 213, 177, 210 and 212 come from.
+
+> **Measured, not cited: the 65816 loses none. The covered count is 256 of 256, under all four `m`/`x`
+> combinations.**
+>
+> Derived by rendering all 256 opcodes of `Opcodes65C816.Table` under the notation of §15.1 and
+> grouping by text, which is exactly what `AmbiguousOpcodes` does. Every one of the 256 renders as a
+> distinct string. It survives a sweep of **576 combinations** — eight low operand bytes
+> (`$00 $01 $12 $34 $7F $80 $FD $FF`) × six high bytes (`$00 $01 $12 $7F $80 $FF`) × three bank bytes
+> (`$00 $56 $FF`) × four `m`/`x` combinations — with zero ambiguity in every one, so the result does
+> not depend on which operand bytes phase 7e's harness picks.
+>
+> **The set does not differ per width combination**, which the plan's step 5 flagged as a possibility.
+> It cannot: widening an immediate changes `#$34` to `#$1234` for every `Width.M`/`Width.X` opcode at
+> once, and those opcodes already differ from each other by mnemonic.
+>
+> **Why it comes out empty is worth one sentence, because it is a property of the part rather than
+> luck.** WDC assigned all 256 opcodes and this repository's table defines all 256 with no
+> `OpcodeInfo.Undefined` entry, so there are no `???` or `JAM` shapes to collide, and no undocumented
+> `NOP` aliases of the kind that cost the NMOS parts 43 opcodes and Synertek 79.
+
+> **Measured, not cited: all 256 round-trip through 64tass exactly, at every width, today.**
+>
+> A complete listing was laid out the way `RoundTripTests.Build` lays one out — every opcode at
+> consecutive addresses from `*=$1000`, operand bytes `$34`, `$12` and (for the four-byte forms) `$56`,
+> each instruction given only as many operand bytes as its length — rendered under §15.1's notation with
+> `@w`/`@l` forcing, prefixed with the two width directives, and assembled:
+>
+> | `.as`/`.al` | `.xs`/`.xl` | Result |
+> | --- | --- | --- |
+> | `.as` | `.xs` | **559 bytes, byte-for-byte identical** |
+> | `.al` | `.xs` | **567 bytes, byte-for-byte identical** |
+> | `.as` | `.xl` | **563 bytes, byte-for-byte identical** |
+> | `.al` | `.xl` | **571 bytes, byte-for-byte identical** |
+>
+> The steps are the eight `Width.M` immediates (`ORA AND EOR ADC SBC CMP LDA BIT`) and the four
+> `Width.X` ones (`CPY CPX LDY LDX`) gaining a byte each — `+8` for `.al`, `+4` for `.xl`, `+12` for
+> both. So **the expected covered count for phase
+> 7e's round-trip is 256 for all four combinations, with an empty exclusion list**, and the notation in
+> §15.1 is sufficient to reach it — this is not a prediction, it is a run.
+>
+> **And the forcing is load-bearing exactly where §15.2 says.** The same listing rebuilt with operand
+> bytes `$12`/`$00`/`$00` — making every absolute operand `$0012` and every long operand `$000012` —
+> assembles to **559 bytes identical with forcing** and to **485 bytes, a 74-byte shortfall, without
+> it**. With the operand bytes `$34`/`$12` the harness uses today, the unforced listing also round-trips
+> exactly: the forcing is invisible at those operand values. That is the same blind spot §15.4's first
+> question is about.
+
+### 15.4 The two questions the phase 7e spec left open
+
+#### Question 1: the five 8-bit cores are affected by the collapse, and have been since phase 6a
+
+> **Measured, not cited. The answer is yes, under both 8-bit dialects.**
+>
+> ```
+> .cpu "6502i"    LDA $0012  ->  a5 12       (direct page — collapsed)
+> .cpu "w65c02"   LDA $0012  ->  a5 12       (direct page — collapsed)
+> ```
+>
+> `Disassembler`'s `AddrMode.Absolute`, `AbsoluteX`, `AbsoluteY`, `NopAbsolute` and `NopAbsoluteExtra`
+> arms all render `${value:X4}` with no prefix, so any of those opcodes whose operand word is under
+> `$0100` renders text that 64tass assembles as a *different, shorter opcode*.
+>
+> **The extent, per variant.** Every opcode counted in the pinned covered count was rendered with
+> operand bytes `$12`/`$00` — making every absolute operand `$0012` — and assembled on its own; the
+> count below is how many produced bytes other than the opcode and operand they were built from:
+>
+> | Variant | Dialect | Covered | Renders wrongly with an operand `< $0100` |
+> | --- | --- | --- | --- |
+> | `Mos6502Variant` | `6502i` | 213 | **53** |
+> | `Mos6510Variant` | `6502i` | 213 | **53** |
+> | `Synertek65C02Variant` | `w65c02` | 177 | **42** |
+> | `Rockwell65C02Variant` | `w65c02` | 210 | **42** |
+> | `Wdc65C02Variant` | `w65c02` | 212 | **42** |
+>
+> Examples from the 6502 set: `$0C NOP $0012` → `04 12`, `$0D ORA $0012` → `05 12`,
+> `$0E ASL $0012` → `06 12`, `$0F SLO $0012` → `07 12`, `$1D ORA $0012,X` → `15 12`. From the 65C02
+> set: `$0C TSB $0012` → `04 12`, `$1C TRB $0012` → `14 12`, `$9E STZ $0012,X` → `74 12`.
+>
+> **Why no existing test sees it.** `RoundTripTests` uses `OperandLo = $34` and `OperandHi = $12`, so
+> every absolute operand in the image it builds is `$1234` — above the boundary, and the shortest
+> encoding is the one the disassembler meant. The gate is structurally incapable of reaching the
+> collapse, not merely unlucky. All five round-trips were reproduced here at those operand bytes and at
+> `$12`/`$00`; the pinned counts 213, 213, 177, 210 and 212 all reproduce, and the failures appear only
+> at the second operand pair.
+>
+> **What is NOT settled here, deliberately.** Whether to fix it, and how. Adding `@w` would change the
+> rendered text of five certified cores — text that is public API in the sense that
+> `Instruction.Operand` is documented as "the usual 6502 notation", and `@w` is a 64tass spelling rather
+> than a 6502 one. Doing nothing leaves a disassembler that emits reassemble-wrong text for page-zero
+> addresses on every 8-bit core. **That decision belongs to the phase owner and this task does not
+> make it.** Recorded as gap 1 in §15.5.
+
+#### Question 2: `PublicSurfaceTests` would not see a new overload. The spec is right
+
+> **Answered by reading `tests/SixtyFiveXX.Conformance/PublicSurfaceTests.cs`, not by measurement.**
+>
+> Every assertion in that file is about **types**, and none about members:
+>
+> - `PackagedAssembly_ExposesExactlyTheIntendedPublicSurface` compares `ExpectedPublicTypes` — a list of
+>   namespace-qualified type names such as `SixtyFiveXX.Disassembler` — against
+>   `PackedAssemblies.PublicTypesFor(tfm)`.
+> - `PublicTypesFor` is built by `ReadPublicTypes`, which enumerates `MetadataReader.TypeDefinitions`
+>   and projects each to `FullName`. **It never reads a `MethodDefinition`.**
+> - `PackagedAssembly_KeepsTheDescriptorModelInvisible` checks `MustStayInternal` against the same
+>   type-name array.
+> - `Package_ShipsEveryDeclaredTargetFramework` compares TFM directory names.
+>
+> The class remarks say so outright: *"Scope: types, not members."* Adding
+> `Decode<TBus, TVariant>(in TBus, int, bool, bool)` to the existing public static class
+> `SixtyFiveXX.Disassembler` adds a `MethodDefinition` and no `TypeDefinition`, so the set this test
+> compares is unchanged and **task 2 needs no edit to this file**.
+>
+> **The one way task 2 could still break it**, stated because it is a real edge and not a hypothetical:
+> if the overload's parameters were typed on a *new public type* of this assembly — an options struct,
+> a `Widths` enum — that type would appear in `TypeDefinitions` and the exact-set assertion would fail.
+> Two `bool` parameters introduce no such type. The same applies to a compiler-generated nested type,
+> which `IsVisibleOutsideTheAssembly` would only surface if it were `NestedPublic`.
+
+### 15.5 The gaps this section records, listed in one place
+
+Everything above either carries a named source, or is labelled a measurement, or appears here. Same
+practice as §12.6, §13.6 and §14.9.
+
+| # | Gap | Status |
+| --- | --- | --- |
+| 1 | **The five 8-bit cores render absolute operands under `$0100` as text 64tass reassembles to a different opcode** — 53 opcodes on the two NMOS parts, 42 on each 65C02. Present since phase 6a; invisible to `RoundTripTests` because its operand bytes put every absolute operand at `$1234` | **Open as a decision, measured as a fact.** §15.4 question 1 carries the numbers and the two dialect measurements. Fixing it changes the rendered text of five certified cores and is the phase owner's call, not this task's. If it is fixed, the round-trip's operand bytes have to change too, or the fix will be as invisible as the defect |
+| 2 | **`@w`/`@l` are 64tass spellings, not 6502 notation.** `Instruction.Operand` is documented as "the usual 6502 notation"; a prefix that only one assembler understands is a step away from that | **Recorded, not actionable here.** It is the price of an assembler-checked gate, and `RoundTripTests.ForAssembler` already exists as the place where "what a reader wants" is rewritten into "what 64tass accepts" — the `RMB0`/`rmb 0,` case. Whether the prefix belongs in the library or in that method is a phase 7e design choice |
+| 3 | **Only 64tass was probed.** Every claim in this section is a claim about 64tass 1.60.3243 and about no other assembler. ca65, ACME and WDC's own `WDC02AS` may collapse differently, spell the prefixes differently, or reverse `MVN` differently | **Recorded, by design.** 64tass is the project's only assembler oracle and is already a Klaus prerequisite. Nothing here should be read as a statement about 65816 assembly syntax in general |
+| 4 | **The round-trip listing's width directives are an assumption about how phase 7e's harness will be written**, not a measurement of it. §15.3's four runs each declared one `.as`/`.al` and one `.xs`/`.xl` at the top of the listing and never changed width | **Recorded as a constraint on task 4.** It is measured that this *works*; it is not measured that any other arrangement does. `.autsiz` specifically must not be used — §15.1 shows it would let the `$C2`/`$E2` opcodes in the image change the width of everything after them |
+
+**Not gaps, so nobody re-opens them:** the dialect name `65816` and the `--m65816` equivalent (§15.1,
+both assembled); the width directives and the hard error on a mismatch (§15.1, ten assembled rows); that
+`REP`/`SEP` never widen and do not track in the default mode (§15.1, four assembled rows including the
+`.autsiz` contrast); every notation row in §15.1's table (each one assembled); the two collapse
+boundaries at `$0100` and `$010000` (§15.2, six assembled rows); that forcing an already-necessary width
+is a no-op (§15.2, four assembled rows); that `@b` is never needed and nothing collapses below two bytes
+(§15.2, four assembled rows); `MVN`/`MVP`'s reversed operands (§15.1, two assembled rows agreeing with
+§14.3's vector reading); `PER`/`BRL`'s displacement rule (§15.1, eight assembled rows across four
+addresses); the empty ambiguity set and the covered count of 256 (§15.3, 576 swept combinations); and
+that all 256 round-trip exactly at all four widths (§15.3, four complete assembled listings).
