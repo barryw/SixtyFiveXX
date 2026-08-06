@@ -194,6 +194,14 @@ public class Harte816Tests(ITestOutputHelper output)
             // Measured, not theorised: it is what $54.n vector 2 did. A fresh core is the only
             // way back to a boundary that neither adds public API nor spends cycles on the bus,
             // and it costs an allocation on 40,000 of the suite's 4.6 million vectors.
+            //
+            // The condition is AtInstructionBoundary — that is, `_mpc >= 0` — so it catches a
+            // core left mid-sequence and nothing else. WAI and STP hold by decrementing _mpc,
+            // which keeps them mid-sequence and so inside this guard; a halt implemented instead
+            // as "end the instruction but leave _waiting or _stopped set" would slip past it, and
+            // the leaked flag would stop the NEXT vector fetching at all. That is the same
+            // vector-2 failure shape as the block moves', and it is a real constraint on how a
+            // halt may be modelled, not an incidental property of the current one.
             if (!cpu.AtInstructionBoundary)
                 cpu = new Cpu<Harte816Bus, W65C816Variant>(new Harte816Bus(ram, log));
 

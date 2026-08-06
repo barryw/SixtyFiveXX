@@ -186,7 +186,7 @@ public class W65C816BlockMoveTests
     /// <c>$F3</c> after fourteen increments. Both width flags opposed again.
     /// </summary>
     [Fact]
-    public void IndexRegistersAreEightBitAndWrapWithinThePage_WhenXIsSet()
+    public void IndexRegistersAreEightBitAndWrapInsideTheLowByte_WhenXIsSet()
     {
         var ram = new BankedBus();
         var cpu = Machine(ram, Mvn);
