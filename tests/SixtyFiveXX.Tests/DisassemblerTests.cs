@@ -74,6 +74,25 @@ public class DisassemblerTests
         Assert.Equal(2, Decode(0x00, 0x12).Length);
     }
 
+    /// <summary>
+    /// COP, PEA, PEI and PER are 65816-only and share <see cref="AddrMode.Stack"/> with the
+    /// pushes, pulls, BRK, JMP and JSR above, but fit none of those shapes. Phase 7e owns
+    /// 65816 disassembly whole, so these throw rather than guess at a length — the same
+    /// contract every other undecoded 65816 addressing mode already has.
+    /// </summary>
+    [Theory]
+    [InlineData(0x02, "COP")]
+    [InlineData(0xF4, "PEA")]
+    [InlineData(0xD4, "PEI")]
+    [InlineData(0x62, "PER")]
+    public void W65C816StackOpcodes_ThrowUntilPhase7e(byte opcode, string mnemonic)
+    {
+        var ex = Assert.Throws<NotSupportedException>(
+            () => Decode<W65C816Variant>(0x1000, opcode, 0x00, 0x00));
+
+        Assert.Contains(mnemonic, ex.Message);
+    }
+
     [Theory]
     // The displacement is measured from the byte after the branch, so $00 lands on the next
     // instruction, $7F is the furthest forward and $80 the furthest back.

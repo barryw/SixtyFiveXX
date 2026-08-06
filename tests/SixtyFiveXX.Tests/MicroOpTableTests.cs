@@ -79,4 +79,30 @@ public class MicroOpTableTests
         while (Table.Ops[i + count] != MicroOp.End) count++;
         Assert.Equal(6, count);   // + the boundary cycle = 7
     }
+
+    /// <summary>
+    /// Every variant's table defines all 256 opcodes. Replaces the probe test that fetched the
+    /// first undefined byte and asserted it threw — a test with no probe left once the 65816
+    /// reached 256 of 256, and a weaker one in any case: this fails for a hole in ANY table,
+    /// not only the one variant that happened to have one.
+    /// </summary>
+    [Fact]
+    public void EveryVariantDefinesAll256Opcodes()
+    {
+        AssertTableIsFull(MicroOpTable.For<Mos6502Variant>(), "6502");
+        AssertTableIsFull(MicroOpTable.For<Mos6510Variant>(), "6510");
+        AssertTableIsFull(MicroOpTable.For<Synertek65C02Variant>(), "Synertek 65C02");
+        AssertTableIsFull(MicroOpTable.For<Rockwell65C02Variant>(), "Rockwell 65C02");
+        AssertTableIsFull(MicroOpTable.For<Wdc65C02Variant>(), "WDC 65C02");
+        AssertTableIsFull(MicroOpTable.For<W65C816Variant>(), "65816");
+
+        static void AssertTableIsFull(MicroOpTable table, string name)
+        {
+            for (var opcode = 0; opcode < 256; opcode++)
+            {
+                Assert.True(table.Info[opcode].Operation != Op.Undefined,
+                    $"{name}: ${opcode:X2} is undefined.");
+            }
+        }
+    }
 }

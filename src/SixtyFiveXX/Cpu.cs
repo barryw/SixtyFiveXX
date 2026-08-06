@@ -27,6 +27,39 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// <summary>Address of the IRQ and BRK vector.</summary>
     public const int IrqVector = 0xFFFE;
 
+    /// <summary>
+    /// The four 65816 native-mode interrupt vectors, plus the one emulation-mode vector the
+    /// eight-bit cores have no counterpart for. Research document §14.2, transcribed from
+    /// datasheet Tables 5-2 and 5-3, which Clark §6.3.1.1 corroborates cell for cell — and
+    /// measured: 10,000 of 10,000 vectors each for <c>$00</c>/<c>$02</c> in both modes.
+    /// <para>
+    /// There is no native <c>RESET</c> vector. Clark, verbatim: <em>"A RESET interrupt puts the
+    /// 65C816 into emulation mode, thus there is no native mode RESET vector"</em>, and Table
+    /// 5-3 has no row for it — so <see cref="ResetVector"/> serves both modes.
+    /// <c>ABORT</c>'s pair (<c>$00FFE8</c> native, <c>$00FFF8</c> emulation) is deliberately
+    /// absent: this core has no <c>ABORTB</c> pin and nothing can raise one.
+    /// </para>
+    /// <para>
+    /// Private, unlike the three above: this phase adds no public API, and
+    /// <see cref="Vector816"/> is the only reader. Emulation-mode <c>BRK</c> and <c>IRQ</c>
+    /// share <see cref="IrqVector"/> and emulation-mode <c>NMI</c> is <see cref="NmiVector"/>,
+    /// so only <c>COP</c> needs an emulation constant of its own.
+    /// </para>
+    /// </summary>
+    private const int CopVector816 = 0xFFE4;
+
+    /// <inheritdoc cref="CopVector816"/>
+    private const int BrkVector816 = 0xFFE6;
+
+    /// <inheritdoc cref="CopVector816"/>
+    private const int NmiVector816 = 0xFFEA;
+
+    /// <inheritdoc cref="CopVector816"/>
+    private const int IrqVector816 = 0xFFEE;
+
+    /// <inheritdoc cref="CopVector816"/>
+    private const int CopVectorEmulation = 0xFFF4;
+
     private TBus _bus;
     private readonly MicroOpTable _table;
     private readonly MicroOp[] _ops;
@@ -218,10 +251,13 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// <summary>Set by <c>JamHold</c>; cleared only by <see cref="Reset"/>.</summary>
     private bool _jammed;
 
-    /// <summary>Set by <c>StpHold</c>; cleared only by <see cref="Reset"/>.</summary>
+    /// <summary>Set by <c>StpHold</c> or <c>StpHold816</c>; cleared only by <see cref="Reset"/>.</summary>
     private bool _stopped;
 
-    /// <summary>Set by <c>WaiHold</c>; cleared by any interrupt signal, or by <see cref="Reset"/>.</summary>
+    /// <summary>
+    /// Set by <c>WaiHold</c> or <c>WaiHold816</c>; cleared by any interrupt signal, or by
+    /// <see cref="Reset"/>.
+    /// </summary>
     private bool _waiting;
 
     /// <summary>Current level on the IRQ pin. Level-sensitive, not latched.</summary>
@@ -291,14 +327,15 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     public bool IsJammed => _jammed;
 
     /// <summary>
-    /// True while <c>STP</c> has halted the processor. WDC only; nothing but
-    /// <see cref="Reset"/> clears it.
+    /// True while <c>STP</c> has halted the processor. The WDC 65C02 and the 65816 only;
+    /// nothing but <see cref="Reset"/> clears it.
     /// </summary>
     public bool IsStopped => _stopped;
 
     /// <summary>
-    /// True while <c>WAI</c> is holding the processor. WDC only. Cleared by IRQ being
-    /// asserted or an NMI latched, whether or not <c>I</c> allows the interrupt to be taken.
+    /// True while <c>WAI</c> is holding the processor. The WDC 65C02 and the 65816 only.
+    /// Cleared by IRQ being asserted or an NMI latched, whether or not <c>I</c> allows the
+    /// interrupt to be taken.
     /// </summary>
     public bool IsWaiting => _waiting;
 
@@ -423,15 +460,17 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             // was left holding by the instruction that just finished (see below), the
             // same instant real hardware samples during phase 2 of the penultimate cycle.
             //
-            // KNOWN GAP, 65816 only: when _intPoll is set, FetchOpcode() below diverts into
-            // the interrupt-entry sequence instead of fetching an opcode, and that cycle is
-            // actually a discarded read at PC — VDA and VPA should not both be asserted
-            // there, unlike a real opcode fetch. Research document §9 covers only phase 7b's
-            // addressing-mode slice and has no interrupt rows, so the correct pin pair cannot
-            // be established from it today. Left as OpcodeFetchPins until phase 7d implements
-            // 65816 interrupts and can pin the right value down. The five 8-bit cores are
-            // unaffected: VDA/VPA do not exist there, and their opcode-fetch-vs-interrupt-entry
-            // pin behaviour has no equivalent gap.
+            // GAP CLOSED, phase 7d task 3: when _intPoll is set, FetchOpcode() below diverts
+            // into the interrupt-entry sequence instead of fetching an opcode, and this comment
+            // used to record that the resulting cycle's pins were unknown — research document
+            // §9 has no interrupt rows. §14.2 supplies them: Table 5-7 row 22a's cycle 1 prints
+            // VDA=1 VPA=1 at PBR,PC, which is OpcodeFetchPins exactly. The datasheet labels its
+            // data bus "IO", meaning the byte is discarded, not that the address is invalid —
+            // both address-valid pins really are asserted, so this needed no change beyond the
+            // reading. Row 22a's cycle 2 is the internal cycle, and that one is a real IO with
+            // neither pin: MicroOp.IntInternal816. Not vector-covered — the SingleStepTests set
+            // carries no interrupt-line stimulus at all (§14.2's gap 1) — so this rests on the
+            // row. The five 8-bit cores are unaffected: VDA/VPA do not exist there.
             _lastPins = OpcodeFetchPins;
             FetchOpcode();
             return;
@@ -454,6 +493,11 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
         // stage-1 recognition is deferred to T1 phase 1 of the handler's first
         // instruction. The guarantee that falls out of it is the visible one — at least
         // one handler instruction always executes before another interrupt is serviced.
+        // The 65816's own BRK/COP/IRQ/NMI sequences end on VectorHi816, not this micro-op,
+        // and research document §14.2 records that omission as a deliberate decision — this
+        // part has no such blackout after those four. Its reset sequence is the exception:
+        // MicroOpTable's ResetEntry shares the 8-bit VectorLo/VectorHi pair on every variant,
+        // so this line still fires for the 65816 after a reset.
         if (micro == MicroOp.VectorHi) _intPoll = false;
 
         _mpc++;
@@ -543,6 +587,223 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// </remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private int PcAddress() => TVariant.Variant == CpuVariant.W65C816 ? (_s.PBR << 16) | _s.PC : _s.PC;
+
+    /// <summary>
+    /// The address the next stack access drives, on the 65816. Native mode puts the stack
+    /// anywhere in bank 0 and uses all sixteen bits of <c>S</c>; emulation mode confines it to
+    /// page one, which <see cref="S8"/>'s setter and <see cref="FetchOpcode"/> hold as an
+    /// invariant rather than something this method re-imposes. Both cases are therefore the
+    /// same expression. Bank 0 either way: research document §14.1, Clark §5.1.2 and §5.22,
+    /// plus every address cell in Table 5-7's rows 22a–22j, which write the bank as a literal
+    /// <c>0</c>.
+    /// </summary>
+    /// <remarks>
+    /// 65816 only. The five 8-bit cores keep their own <c>0x0100 + S8</c> in each stack
+    /// micro-op — those micro-ops are correct for them and are not reached from any 65816
+    /// sequence, which <c>W65C816ReachabilityTests</c> asserts.
+    /// </remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private int StackAddress816() => _s.S;
+
+    /// <summary>
+    /// True when the stack instruction now executing keeps its accesses inside page one in
+    /// emulation mode. Bruce Clark, "65C816 Opcodes" §5.1.1: the page-one wrap applies
+    /// <em>"only for 'old' instructions and addressing modes, i.e. instructions and addressing
+    /// modes that are available on the 65C02."</em> <c>PHA</c>, <c>PHP</c>, <c>PHX</c>,
+    /// <c>PHY</c>, <c>PLA</c>, <c>PLP</c>, <c>PLX</c> and <c>PLY</c> are old; <c>PHB</c>,
+    /// <c>PHK</c>, <c>PHD</c>, <c>PLB</c> and <c>PLD</c> are new to the 65816 and do not wrap
+    /// — the same exception research document §14.7 records for <c>PEA</c> and <c>PEI</c>, which
+    /// Clark states in the same passage.
+    /// </summary>
+    /// <remarks>
+    /// <b>Not in §14.1, originally.</b> That section answered the wrap question only from Clark
+    /// §5.22's blanket <em>"In emulation mode, SL will be decremented N times"</em> and omitted
+    /// §5.1.1's/§5.22's old/new (and interrupt) exception for the five new push/pull opcodes; it
+    /// has since been amended, alongside this task's other fixes, to carry it. The vectors below
+    /// settled it independently and are unambiguous: <c>ab e 75</c> starts at <c>S = $27FF</c>
+    /// (forced to <c>$01FF</c>) and <c>PLB</c> reads at <c>$000200</c>, not <c>$000100</c>, while
+    /// <c>28 e 311</c> starts at <c>$01FF</c> and <c>PLP</c> reads at <c>$000100</c>.
+    /// <c>0b e 435</c> is the discriminating
+    /// push: <c>PHD</c> from <c>S = $0100</c> writes at <c>$000100</c> and then <c>$0000FF</c>,
+    /// below page one entirely. The rule as implemented here — old wraps, new does raw 16-bit
+    /// arithmetic, and <see cref="StackSettle816"/> puts <c>SH</c> back to <c>$01</c> once the
+    /// last access is done — reproduces the access addresses and the final <c>S</c> of all
+    /// 260,000 vectors across the thirteen opcodes, in both modes, with no exceptions.
+    /// <para>
+    /// <b>Written as a list of operations, not as a general old/new predicate, deliberately.</b>
+    /// Clark, "65C816 Opcodes" §5.22, settles the rule outright: <em>"For all interrupts and 'old'
+    /// instructions, when the e flag is 1, the address of the data for an 8-bit push is 0,1,SL …
+    /// Otherwise … 0,S."</em> The predicate is universal — interrupts and old instructions wrap
+    /// within page one when <c>e = 1</c>; everything else uses raw 16-bit <c>0,S</c> — so
+    /// <c>COP</c> was never a counter-example: it is new to the 65816, but it is also an
+    /// interrupt, and §5.22 names interrupts in the same clause as "old" instructions. Measured
+    /// across every stack opcode in the instruction set: <c>JSR</c> (old) and <c>BRK</c>/<c>COP</c>
+    /// (interrupts) have zero out-of-page-one stack accesses in emulation mode, while <c>JSL</c>
+    /// has 103, <c>RTL</c> 196, <c>PER</c> 34 and <c>PEA</c> 51 — for example <c>22 e 61</c> writes
+    /// <c>$0000FF</c> from <c>S = $0100</c>. All new, all non-wrapping; all old or interrupt, all
+    /// wrapping. The list below is that same predicate written as opcodes rather than as an
+    /// <see cref="AddrMode"/> flag, because it is cheap and needs no addressing-mode plumbing: when
+    /// a later task adds the remaining old instructions, this list gains <c>Op.Jsr</c>,
+    /// <c>Op.Rts</c> and <c>Op.Rti</c>, and leaves <c>Op.Jsl</c>, <c>Op.Rtl</c>, <c>Op.Per</c>,
+    /// <c>Op.Pea</c> and <c>Op.Pei</c> off.
+    /// </para>
+    /// <para>
+    /// Phase 7d task 3 added the four interrupts — <c>Op.Brk</c> and <c>Op.Cop</c>, which are
+    /// opcodes, and <c>Op.Irq</c> and <c>Op.Nmi</c>, which are not: <see cref="FetchOpcode"/>
+    /// assigns those two when it diverts into the interrupt sequence, precisely so this predicate
+    /// and <see cref="MicroOp.PushPInt816"/> can see them. Clark §5.22 names interrupts in the
+    /// same clause as "old" instructions and draws no distinction among them, so all four are on
+    /// the list; the two opcodes are measured at zero out-of-page-one accesses across their
+    /// 20,000 emulation-mode vectors, and the two hardware interrupts have no vectors at all
+    /// (§14.2's gap 1) and rest on the citation alone.
+    /// </para>
+    /// </remarks>
+    /// <remarks>
+    /// Phase 7d task 7 added the three the paragraph above predicted — <c>Op.Jsr</c>,
+    /// <c>Op.Rts</c> and <c>Op.Rti</c>, all three available on the 65C02 and so all three "old" —
+    /// and left <c>Op.Jsl</c> and <c>Op.Rtl</c> off, both new to the 65816. Measured across their
+    /// emulation-mode vectors: <c>$20</c>, <c>$FC</c>, <c>$40</c> and <c>$60</c> have zero
+    /// out-of-page-one stack accesses, while <c>$22</c> has 103 and <c>$6B</c> 196. The
+    /// discriminating vectors are <c>20 e 1023</c> (<c>SL = $00</c>, second push at
+    /// <c>$0001FF</c>), <c>22 e 61</c> (<c>SL = $00</c>, pushes at <c>$000100</c>,
+    /// <c>$0000FF</c>, <c>$0000FE</c>), <c>60 e 121</c> and <c>40 e 50</c> (<c>SL = $FF</c>,
+    /// first pull at <c>$000100</c>) and <c>6b e 104</c> (<c>SL = $FF</c>, pulls at
+    /// <c>$000200</c> onward).
+    /// <para>
+    /// <c>Op.Jsr</c> covers <b>both</b> <c>$20</c> and <c>$FC</c>, and that is right even though
+    /// <c>(abs,X)</c> is an addressing mode new to the 65816: <c>fc e 458</c> starts at
+    /// <c>SL = $00</c> and writes <c>$000100</c> then <c>$0001FF</c>. Clark §5.22's rule is
+    /// stated over <em>instructions</em> ("for all interrupts and 'old' instructions"), and by
+    /// that reading <c>JSR</c> is one however it addresses. §5.1.1's broader "instructions
+    /// <em>and addressing modes</em>" wording would predict the opposite; the vectors settle it,
+    /// and research document §14.6 records the measurement.
+    /// </para>
+    /// <para>
+    /// Phase 7d task 8 added <b>nothing</b>: <c>PEA</c>, <c>PEI</c> and <c>PER</c> are all new to
+    /// the 65816 and so all three fall under §5.22's "Otherwise … <c>0,S</c>". Recorded here
+    /// rather than left as an absence, because this is the last opcode task on the part and an
+    /// empty diff is otherwise indistinguishable from a forgotten one. Measured across their
+    /// emulation-mode vectors: <c>$62</c> has 34 out-of-page-one stack writes, <c>$D4</c> 41 and
+    /// <c>$F4</c> 51, of 20,000 each. Research document §14.7.
+    /// </para>
+    /// </remarks>
+    private bool StackWrapsInPageOne() => _op is Op.Pha or Op.Php or Op.Phx or Op.Phy
+                                                or Op.Pla or Op.Plp or Op.Plx or Op.Ply
+                                                or Op.Brk or Op.Cop or Op.Irq or Op.Nmi
+                                                or Op.Jsr or Op.Rts or Op.Rti;
+
+    /// <summary>
+    /// The vector an interrupt reads, on the 65816. Native mode has its own four addresses;
+    /// emulation mode reuses the eight-bit cores' — except <c>COP</c>, which the eight-bit
+    /// cores do not have. Research document §14.2 — every address here is transcribed from
+    /// that table, not derived from the 6502's.
+    /// </summary>
+    /// <remarks>
+    /// One selector rather than a test inside each interrupt micro-op: the choice depends only
+    /// on <c>E</c> and on which interrupt is being taken, both of which are known before the
+    /// sequence starts, and keeping it in one place is what makes the five constants above
+    /// reviewable against §14.2 as a block.
+    /// <para>
+    /// Reached from exactly two places, one per kind of interrupt:
+    /// <see cref="FetchOpcode"/> for a hardware interrupt, whose reason only the dispatcher
+    /// knows, and <see cref="MicroOp.BrkPad816"/> for <c>BRK</c>/<c>COP</c>, whose reason is
+    /// their opcode. <b>Which cycle commits the vector is unobservable on this part</b>, unlike
+    /// on the NMOS cores where the P-push cycle commits it and a latched NMI may hijack it
+    /// there — see <see cref="MicroOp.PushPInt816"/> for why there is no hijack here.
+    /// </para>
+    /// </remarks>
+    private int Vector816(Op reason) => reason switch
+    {
+        Op.Cop => _s.E ? CopVectorEmulation : CopVector816,
+        Op.Brk => _s.E ? IrqVector : BrkVector816,
+        Op.Nmi => _s.E ? NmiVector : NmiVector816,
+        Op.Irq => _s.E ? IrqVector : IrqVector816,
+        _ => throw new InvalidOperationException($"{reason} is not an interrupt."),
+    };
+
+    /// <summary>Writes one byte at <see cref="StackAddress816"/>, then moves <c>S</c> down.</summary>
+    private void PushStack816(byte value)
+    {
+        WriteBus(StackAddress816(), value);
+        if (_s.E && StackWrapsInPageOne()) S8--; else _s.S--;
+    }
+
+    /// <summary>Moves <c>S</c> up, then reads one byte at <see cref="StackAddress816"/>.</summary>
+    /// <remarks>
+    /// The order is the hardware's and matters: a push writes before decrementing and a pull
+    /// increments before reading, so <c>S</c> always points at the next free byte.
+    /// <c>S8++</c> rather than <c>_s.S++</c> is what keeps an old instruction's wrap inside page
+    /// one — <c>_s.S++</c> at <c>$01FF</c> would produce <c>$0200</c>, which is exactly what a
+    /// new instruction does; see <see cref="StackWrapsInPageOne"/>.
+    /// </remarks>
+    private byte PullStack816()
+    {
+        if (_s.E && StackWrapsInPageOne()) S8++; else _s.S++;
+        return ReadBus(StackAddress816());
+    }
+
+    /// <summary>
+    /// Puts <c>SH</c> back to <c>$01</c> after a stack instruction's last access, for emulation
+    /// mode. Emulation mode has no storage for <c>SH</c> at all (Eyes &amp; Lichty p. 71, quoted
+    /// at <see cref="Op.Xce"/>) — but a new instruction's address adder still carries out of
+    /// <c>SL</c>, which is how <c>PHD</c> at <c>S = $0100</c> writes its second byte at
+    /// <c>$0000FF</c> and still ends with <c>S = $01FE</c>. Called from the last cycle of every
+    /// push and pull rather than from <see cref="FetchOpcode"/>'s own forcing block, because the
+    /// register is observable at the instruction boundary — every vector's <c>final.s</c> reads
+    /// it there — and <see cref="FetchOpcode"/> does not run until the next instruction.
+    /// A no-op for the old instructions, whose <see cref="S8"/> arithmetic never left page one.
+    /// </summary>
+    private void StackSettle816()
+    {
+        if (_s.E) S8 = (byte)_s.S;
+    }
+
+    /// <summary>
+    /// <c>RTI</c>'s last cycle: commits the two width bits of the status byte
+    /// <see cref="MicroOp.PullP816"/> left in <c>_data16</c>, and applies whatever setting
+    /// <c>x</c> to 1 implies. <c>Op.Plp</c>'s arm from <c>if (_s.E)</c> onward, verbatim and
+    /// deliberately — research document §14.1 measured that a pulled <c>x = 1</c> forces
+    /// <c>XH = YH = $00</c> the same instant <c>SEP</c> does, and <c>RTI</c> writes the same
+    /// flag the same way. See <see cref="MicroOp.PullP816"/> for why only these two bits wait.
+    /// </summary>
+    private void CommitPulledStatus816()
+    {
+        _s.P = (byte)_data16;
+        if (_s.E) _s.P |= Flag.M | Flag.X;
+        if (_s.XFlag) { _s.X &= 0x00FF; _s.Y &= 0x00FF; }
+    }
+
+    /// <summary>
+    /// True when the stack operation now executing moves sixteen bits. Read from the live flag
+    /// rather than from <c>_wide</c>: these opcodes declare <see cref="Width.None"/>, because
+    /// <c>Width</c> means "the operand fetched from memory is 16 bits" and that is what keeps
+    /// <c>W65C816WidthTests</c>'s set equality meaningful.
+    /// </summary>
+    /// <remarks>
+    /// 65816 only, like <see cref="IndexX"/> and for the same reason: the only micro-ops that
+    /// call it — <see cref="MicroOp.StackPushInternal816"/> and
+    /// <see cref="MicroOp.PullLow816"/> — appear in no 8-bit core's table, so no guard on
+    /// <c>TVariant.Variant</c> is needed to keep <c>_s.M</c> and <c>_s.XFlag</c> (which alias
+    /// the 8-bit cores' <c>U</c> and <c>B</c> bits) from being read there.
+    /// <para>
+    /// <c>PEA</c>, <c>PEI</c> and <c>PER</c> are on the list and are <b>not</b> consulted at run
+    /// time, which is deliberate rather than an oversight. All three push sixteen bits whatever
+    /// <c>m</c> and <c>x</c> say (Clark §6.8.1), so their sequences emit
+    /// <see cref="MicroOp.PushHigh816"/> unconditionally and reach neither caller above; the
+    /// conditional-slot machinery exists for the seven pushes and six pulls, whose high byte
+    /// really is optional. They are listed anyway because this predicate is the one place the
+    /// question "does this stack operation move sixteen bits?" is answered for the whole part,
+    /// and an operation that answers it with the <c>false</c> of a default arm is a trap for the
+    /// next caller added.
+    /// </para>
+    /// </remarks>
+    private bool StackIsWide() => _op switch
+    {
+        Op.Pha or Op.Pla => !_s.M,
+        Op.Phx or Op.Plx or Op.Phy or Op.Ply => !_s.XFlag,
+        Op.Phd or Op.Pld or Op.Pea or Op.Pei or Op.Per => true,
+        _ => false,             // PHP, PLP, PHB, PHK, PLB — always one byte
+    };
 
     /// <summary>
     /// The <c>X</c> index register, narrowed to 8 bits when the <c>x</c> flag selects that
@@ -883,12 +1144,25 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             if (_nmiPending)
             {
                 _nmiPending = false;
-                _vector = NmiVector;
+                _op = Op.Nmi;
             }
             else
             {
-                _vector = IrqVector;
+                _op = Op.Irq;
             }
+
+            // _op is assigned on every core but read only by the 65816, whose interrupt
+            // sequence shares StackWrapsInPageOne, PushPInt816 and Vector816 with BRK and COP
+            // and can tell them apart only by this. The five 8-bit cores' sequence reads none
+            // of the three; nothing else in an interrupt sequence reads _op on any core.
+            //
+            // The vector likewise: the 65816 has two sets of four (research document §14.2),
+            // so it goes through Vector816. The guard is a compile-time constant per closed
+            // generic type, so for those five cores this folds back to exactly the
+            // NmiVector/IrqVector choice that was here before.
+            _vector = TVariant.Variant == CpuVariant.W65C816
+                ? Vector816(_op)
+                : _op == Op.Nmi ? NmiVector : IrqVector;
             _mpc = _table.IrqEntry;
             return;
         }
@@ -953,6 +1227,73 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
         _ => throw new InvalidOperationException($"{_op} is not a branch."),
     };
 
+    /// <summary>
+    /// One block-move iteration's register update, and the rewind — the whole of
+    /// <c>MVN</c>/<c>MVP</c>'s operation, run on the last of the seven cycles. Research document
+    /// §14.3.
+    /// </summary>
+    /// <remarks>
+    /// Three rules, each from a source and each measured there:
+    /// <list type="bullet">
+    /// <item><description>
+    /// <b>The count is the accumulator, is bytes-minus-one, and is sixteen bits regardless of
+    /// <c>m</c>.</b> Clark §6.6 writes "(16-bit)" three times in two sentences and never
+    /// qualifies it by <c>m</c>; §14.3 measured <c>54 n 1</c>, which has <c>m = 1</c> and takes
+    /// <c>A</c> from <c>$EF9B</c> to <c>$EF8D</c> — a sixteen-bit <c>-14</c>. The <c>B</c>
+    /// accumulator is clobbered, and that is correct.
+    /// </description></item>
+    /// <item><description>
+    /// <b>The index registers move at the operative index width</b>, up for <c>MVN</c> and down
+    /// for <c>MVP</c> (Table 5-7's own annotations "x,y Increment" and "x,y Decrement"). With
+    /// <c>x = 1</c> they wrap inside the low byte: <c>54 n 63</c> reads <c>…$B300FF</c> then
+    /// <c>$B30000</c> and ends with <c>X = $01</c> from <c>$F3</c>. <see cref="X8"/>'s setter
+    /// zeroes the high byte, which agrees with hardware holding <c>XH</c>/<c>YH</c> at <c>$00</c>
+    /// whenever <c>x</c> is set — the same rule <c>Op.Inx</c> already relies on. No vector in
+    /// either file has <c>x = 1</c> with a nonzero index high byte, so nothing arbitrates that
+    /// case; this follows the part rather than inventing a preserving formula for it.
+    /// </description></item>
+    /// <item><description>
+    /// <b><c>PC</c> is rewound onto the opcode unless the count has run out.</b> Clark §6.6: "the
+    /// program counter will be the address of the next instruction … if the accumulator is
+    /// $FFFF, and the program counter will be the address of the the MVN or MVP if the
+    /// accumulator is not $FFFF (i.e. the instruction jumps to itself if the accumulator is not
+    /// $FFFF)." The test is on the decremented value, so a move with <c>A = $0000</c> — one byte
+    /// — never rewinds at all. <c>PC</c> is sixteen bits and wraps within the bank without
+    /// touching <c>PBR</c>, exactly as it does when advancing.
+    /// </description></item>
+    /// </list>
+    /// No flag is written. <c>P</c> is identical in the initial and final state of all 20,000
+    /// <c>$54</c>/<c>$44</c> native vectors.
+    /// <para>
+    /// 65816 only: reached from <see cref="MicroOp.BlockMoveNext"/>, which appears in no
+    /// eight-bit sequence, so the reads of <c>_s.XFlag</c> here need no variant guard — the same
+    /// position <see cref="StackIsWide"/> and <see cref="IndexX"/> are in.
+    /// </para>
+    /// </remarks>
+    private void BlockMoveStep()
+    {
+        var delta = _op switch
+        {
+            Op.Mvn => +1,
+            Op.Mvp => -1,
+            _ => throw new InvalidOperationException($"{_op} is not a block move."),
+        };
+
+        if (_s.XFlag)
+        {
+            X8 = (byte)(X8 + delta);
+            Y8 = (byte)(Y8 + delta);
+        }
+        else
+        {
+            _s.X = (ushort)(_s.X + delta);
+            _s.Y = (ushort)(_s.Y + delta);
+        }
+
+        _s.A--;
+        if (_s.A != 0xFFFF) _s.PC -= 3;
+    }
+
     /// <summary>The value an unstable store will write, before the address fold-in.</summary>
     private byte UnstableStoreValue() => _op switch
     {
@@ -994,6 +1335,205 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 // The same internal cycle, without the Exec() — XBA's extra one. Research
                 // document §13.5, Table 5-7 row 19b: two IO cycles, both at PBR,PC+1.
                 InternalCycle((_s.PBR << 16) | _s.PC);
+                break;
+
+            case MicroOp.StackPushInternal816:
+                // Cycle 2 of every push: an internal cycle at PBR,PC+1 — research document
+                // §14.1, Table 5-7 row 22c, measured against 08.n/08.e. The value is formed
+                // here, before the first write, so both write cycles are pure.
+                InternalCycle(PcAddress());
+                Exec();
+                if (!StackIsWide()) _mpc++;      // skip PushHigh816: one byte only
+                break;
+
+            case MicroOp.PushHigh816:
+                PushStack816((byte)(_data16 >> 8));
+                break;
+
+            case MicroOp.PushLow816:
+                PushStack816((byte)_data16);
+                StackSettle816();
+                break;
+
+            case MicroOp.PullLow816:
+                _data16 = PullStack816();
+                if (StackIsWide()) break;
+                StackSettle816();
+                Exec();
+                EndInstruction();
+                break;
+
+            case MicroOp.PullHigh816:
+                _data16 |= (ushort)(PullStack816() << 8);
+                StackSettle816();
+                Exec();
+                break;
+
+            // Phase 7d task 3: the interrupts. Research document §14.2, Table 5-7 rows 22j
+            // (BRK/COP) and 22a (IRQ/NMI/RESET/ABORT). The two rows share cycles 3 to 8
+            // exactly, so the five micro-ops from PushPbr816 on are shared too; only the two
+            // leading cycles differ, and each of those owns the emulation-mode skip of the
+            // program-bank push.
+
+            case MicroOp.BrkPad816:
+                // Row 22j cycle 2. The signature byte IS fetched — VPA=1 with a real value on
+                // the row, and every one of the 40,000 BRK/COP vectors shows a non-null value
+                // with pin string "-p-r…" here. Read and discarded; PC advances past it, which
+                // is why the pushed address is the instruction's own plus 2.
+                ReadBus(PcAddress());
+                _s.PC++;
+                // The vector is chosen here rather than on the P push, where the eight-bit
+                // cores commit it: that commit point exists to bound the NMI hijack, and this
+                // part has none (see PushPInt816), so nothing between here and VectorLo816 can
+                // change the answer. E cannot change mid-instruction either.
+                _vector = Vector816(_op);
+                if (_s.E) _mpc++;           // emulation pushes no program bank: skip PushPbr816
+                break;
+
+            case MicroOp.IntInternal816:
+                // Row 22a cycle 2: an internal cycle at PBR,PC — VDA=0 VPA=0, no memory access.
+                // PC is NOT advanced: a hardware interrupt consumes no opcode, so both of its
+                // leading cycles drive the same address. Cycle 1 is FetchOpcode's own discarded
+                // read, which the row prints as VDA=1 VPA=1.
+                InternalCycle(PcAddress());
+                if (_s.E) _mpc++;           // as BrkPad816: no program-bank push in emulation
+                break;
+
+            case MicroOp.PushPbr816:
+                // Native only, both rows: "omitted when e = 1", datasheet §7.11.2 ("previous
+                // contents of the PBR are not automatically saved") and Clark §6.3.1.1, which
+                // lists no K push in the emulation sequence. Datasheet note 7 — "subtract 1
+                // cycle for 6502 emulation mode" — is the same fact from the cycle-count side;
+                // research document §14.2 records that row 22a prints that marker one line too
+                // high and resolves it against row 22j, where it is unambiguous.
+                PushStack816(_s.PBR);
+                break;
+
+            case MicroOp.PushPch816:
+                PushStack816((byte)(_s.PC >> 8));
+                break;
+
+            case MicroOp.PushPcl816:
+                PushStack816((byte)_s.PC);
+                break;
+
+            case MicroOp.PushPInt816:
+                // The P push, then I set and D cleared — in that order. Clark §6.3.1: "The i
+                // flag is set after pushing the P register; furthermore … the d flag is cleared
+                // after pushing the P register", and measured: the pushed byte XORed against
+                // the initial P is $00 across all 40,000 BRK/COP vectors, so both flag writes
+                // land strictly after the push, while the final P has d = 0 and i = 1 in all
+                // 40,000.
+                //
+                // Bit 4 is the one place the two rows differ. BRK and COP push P verbatim in
+                // both modes (measured, above). A hardware interrupt pushes it verbatim in
+                // native mode too — Table 8-1, "X=X on stack always", bit 4 simply being the x
+                // flag — but forces it to 0 in emulation mode: datasheet note 11, "BRK bit 4
+                // equals 0 in Emulation mode", printed on row 22a and NOT on row 22j, which is
+                // the 6502's rule and the opposite of what the note's wording reads like on its
+                // own. Flag.B and Flag.X are the same bit; the name used here is Flag.B because
+                // what is being cleared is the break flag, not the index-width flag — and in
+                // emulation mode x is forced to 1 anyway, so the two readings differ only in
+                // what they mean, never in what they do.
+                //
+                // No NMI hijack, deliberately. The NMOS cores in this repository let a latched
+                // NMI steal a BRK's vector on this very cycle; research document §14.2 records
+                // that no 65816 source mentions the case at all and that no vector can settle
+                // it, and §14.9's gap 2 says outright not to carry the NMOS behaviour over by
+                // inference. It is not carried over. The general 6502-family sampling rule —
+                // recognise at an instruction boundary — is what runs here instead, and it
+                // needs no unsourced claim; the NMOS anomaly is a property of that die's ~VEC
+                // transistor chain, which no source places on this one. Same reasoning applies
+                // to the recognition blackout Tick performs on MicroOp.VectorHi: VectorHi816 is
+                // deliberately NOT in it. See the task 3 report.
+                PushStack816((_op is Op.Irq or Op.Nmi) && _s.E ? (byte)(_s.P & ~Flag.B) : _s.P);
+                _s.I = true;
+                _s.D = false;
+                break;
+
+            case MicroOp.VectorLo816:
+                _tmp = ReadBus(_vector);
+                break;
+
+            case MicroOp.VectorHi816:
+                // Both vector bytes come from bank 0 — both rows print "0,VA" and "0,VA+1" —
+                // and _vector is already a bank-0 address, so no PBR is folded in. PBR itself
+                // is cleared here, in both modes: datasheet §7.11.1 and §7.11.2 say so
+                // separately for native and emulation, the rows' own "0,AAV" next-opcode cell
+                // says it from the bus side, and the final PBR is $00 in all 40,000 vectors.
+                _s.PC = (ushort)((ReadBus(_vector + 1) << 8) | _tmp);
+                _s.PBR = 0;
+                break;
+
+            case MicroOp.StackDummyReadDec816:
+                // The 65816's reset stack decrement. Same shape as StackDummyReadDec, but the
+                // address comes from StackAddress816() rather than a hard-coded 0x0100 + S8.
+                // Reset always enters emulation mode, where the two agree — this exists so the
+                // formula is right because it is right, not because another invariant holds.
+                ReadBus(StackAddress816());
+                if (_s.E) S8--; else _s.S--;
+                break;
+
+            // Phase 7d task 4: the block moves. Research document §14.3, Table 5-7 rows 9a and
+            // 9b — seven cycles per byte moved, the fetch plus these six, and one whole
+            // instruction per byte. Every cycle below drives exactly _addr at the moment it
+            // runs, which is why _addr is re-pointed at the destination on the read cycle: it
+            // makes the RDY halt path in Tick() re-drive the right address on all four
+            // non-fetch cycles, rather than the stale-address approximation that path notes as
+            // a limitation for the rest of the core.
+
+            case MicroOp.BlockMoveDestBank:
+                // Cycle 2, DBA. Datasheet §7.18, verbatim in §14.3: "The MVN and MVP
+                // instructions change the Data Bank Register to the value of the second byte of
+                // the instruction (destination bank address)." The second byte of the
+                // instruction is the one at PC+1 — the opcode is the first — so the register is
+                // written here, on the fetch, and the write cycle reads it back from DBR.
+                _s.DBR = ReadBus(PcAddress());
+                _s.PC++;
+                break;
+
+            case MicroOp.BlockMoveSrcBank:
+                // Cycle 3, SBA — into no register at all, only into this iteration's own source
+                // address, which is why both operand bytes are re-fetched every iteration. The
+                // index is folded in here rather than on the read cycle: X cannot change in
+                // between (nothing but BlockMoveNext touches it), and it leaves _addr holding
+                // the exact address cycle 4 will drive.
+                _addr = (ReadBus(PcAddress()) << 16) | IndexX();
+                _s.PC++;
+                break;
+
+            case MicroOp.BlockMoveRead:
+                // Cycle 4, at SBA,X. _addr then becomes DBA,Y for the three cycles that follow:
+                // DBR is already the destination bank (cycle 2) and Y is still this iteration's,
+                // since BlockMoveNext has not run yet. Both addresses wrap inside their own
+                // bank — Clark §5.1.2, "source,destination addressing … wraps at both the source
+                // and destination bank boundaries" — which is what the 16-bit IndexX()/IndexY()
+                // ORed under a bank byte gives, with no carry out of the low sixteen bits.
+                _data = ReadBus(_addr);
+                _addr = (_s.DBR << 16) | IndexY();
+                break;
+
+            case MicroOp.BlockMoveWrite:
+                // Cycle 5, at DBA,Y.
+                WriteBus(_addr, _data);
+                break;
+
+            case MicroOp.BlockMoveInternal:
+                // Cycle 6: an internal cycle at the address just written, not at PBR,PC. See
+                // MicroOp.BlockMoveInternal — the only internal cycles on this part whose
+                // address is a data address.
+                InternalCycle(_addr);
+                break;
+
+            case MicroOp.BlockMoveNext:
+                // Cycle 7: the same internal cycle again, then the whole iteration's register
+                // update and the rewind. The instruction ends here either way; only where PC
+                // points differs, so a move that is not finished is re-entered by the next
+                // fetch and an interrupt latched during this cycle is serviced first. Clark
+                // §6.6: MVN/MVP "can be interrupted by IRQ and NMI before the move is complete
+                // … however, they can only be interrupted every seventh cycle."
+                InternalCycle(_addr);
+                BlockMoveStep();
                 break;
 
             case MicroOp.RepSepOperand:
@@ -1493,6 +2033,219 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 _s.PC = (ushort)(_s.PC + _branchFix);
                 break;
 
+            case MicroOp.BranchFetch816:
+                _data = ReadBus(PcAddress());
+                _s.PC++;
+                if (!IsBranchTaken()) EndInstruction();
+                break;
+
+            case MicroOp.BranchTaken816:
+            {
+                // The IO cycle drives the displacement byte's own address — research document
+                // §14.5's row 20 writes cycles 2, 2a and 2b all as PBR,PC+1 — so it is PC-1 by
+                // the time the fetch above has stepped over it. Stashed because cycle 2b drives
+                // the same address after PC has moved to the destination.
+                _addr = (_s.PBR << 16) | ((_s.PC - 1) & 0xFFFF);
+                InternalCycle(_addr);
+
+                // Wraps inside the program bank: PC is a ushort and PBR is untouched.
+                var lo = (_s.PC & 0xFF) + (sbyte)_data;
+                _s.PC = (ushort)(_s.PC + (sbyte)_data);
+
+                // Datasheet Note 6: the page-cross cycle exists in emulation mode ONLY. Clark
+                // §6.2.1.1's 2+t+t*e*p says the same by multiplying the term by e. A taken
+                // branch in native mode is a flat three cycles wherever it lands, which is the
+                // one place this core's branches differ from all five 8-bit cores here.
+                if (!_s.E || lo is >= 0 and <= 0xFF) EndInstruction();
+                break;
+            }
+
+            case MicroOp.BranchFixup816:
+                InternalCycle(_addr);                 // row 20's cycle 2b, e = 1 only
+                break;
+
+            case MicroOp.BranchLong816:
+                // Row 21's cycle 4, at PBR,PC+2 — the high displacement byte's own address, the
+                // same "last operand byte" rule row 20 follows. _addr holds the signed 16-bit
+                // displacement FetchAddrLo and FetchAddrHi assembled. Recomputed here rather than
+                // stashed the way BranchTaken816 stashes the equivalent PBR,PC+1 above: BRL has
+                // only this one internal cycle, so there is no second cycle to hand a stash to.
+                InternalCycle((_s.PBR << 16) | ((_s.PC - 1) & 0xFFFF));
+                _s.PC = (ushort)(_s.PC + (short)_addr);
+                break;
+
+            // Phase 7d task 7: the jumps, the calls and the returns. Research document §14.6,
+            // Table 5-7 rows 1b, 4b, 3b, 3a, 2a, 1c, 2b, 4c, 22g, 22h and 22i.
+
+            case MicroOp.JmpAbs816:
+                // Row 1b cycle 3. PBR is untouched — an absolute JMP cannot leave its bank.
+                _s.PC = (ushort)((ReadBus(PcAddress()) << 8) | _addr);
+                break;
+
+            case MicroOp.JmpLong816:
+            {
+                // Row 4b cycle 4. The bank byte is read through the OLD PBR, then installed.
+                var bank = ReadBus(PcAddress());
+                _s.PC = (ushort)_addr;
+                _s.PBR = bank;
+                break;
+            }
+
+            case MicroOp.JmpIndLo816:
+                // Rows 3b/3a cycle 4, at 0,AA. Bank 0 regardless of PBR: _addr is the bare
+                // sixteen-bit operand the two preceding fetches assembled, so this is already a
+                // bank-0 address with nothing to strip.
+                _ptr = _addr;
+                _tmp = ReadBus(_ptr);
+                break;
+
+            case MicroOp.JmpIndHi816:
+                // Rows 3b/3a cycle 5, at 0,AA+1 — a sixteen-bit increment inside bank 0, with no
+                // page qualification at all. This is the cycle that would carry the NMOS
+                // JMP ($xxFF) bug if it were copied from MicroOp.JmpIndHi; Clark §5.4 says
+                // outright that this part does not have it, and $6c's 36 (.e) / 35 (.n)
+                // pointer-low-byte-$FF vectors arbitrate it — including the $00FFFF -> $000000
+                // bank-0 wrap itself, measured directly from 6c e 4469 and 6c e 6042.
+                _s.PC = (ushort)((ReadBus((_ptr + 1) & 0xFFFF) << 8) | _tmp);
+                break;
+
+            case MicroOp.JmlIndBank816:
+                // Row 3a cycle 6, at 0,AA+2: the destination bank, from the pointer's own third
+                // byte rather than from PBR.
+                _s.PBR = ReadBus((_ptr + 2) & 0xFFFF);
+                break;
+
+            case MicroOp.JmpAbsXInternal816:
+                // Rows 2a cycle 4 / 2b cycle 6: an IO at the high operand byte's own address,
+                // which is PC-1 by now, then the index. Unconditional, and the add wraps inside
+                // sixteen bits so the pointer stays in bank K — Clark §5.5.
+                InternalCycle((_s.PBR << 16) | ((_s.PC - 1) & 0xFFFF));
+                _addr = (_addr + IndexX()) & 0xFFFF;
+                break;
+
+            case MicroOp.JmpAbsXLo816:
+                // Rows 2a cycle 5 / 2b cycle 7, at PBR,AA+X — bank K, not bank 0.
+                _tmp = ReadBus((_s.PBR << 16) | _addr);
+                break;
+
+            case MicroOp.JmpAbsXHi816:
+                // Rows 2a cycle 6 / 2b cycle 8, at PBR,AA+X+1, wrapping inside bank K.
+                _s.PC = (ushort)((ReadBus((_s.PBR << 16) | ((_addr + 1) & 0xFFFF)) << 8) | _tmp);
+                break;
+
+            case MicroOp.JsrFetchHi816:
+                // Row 1c cycle 3. PC is deliberately NOT advanced: Clark §6.2.2.1 fixes the
+                // pushed address at the instruction's own plus 2, so leaving PC on the last
+                // operand byte is what makes the two pushes below read the right value — and
+                // makes the internal cycle that follows drive row 1c's PBR,PC+2 unadjusted.
+                _addr |= ReadBus(PcAddress()) << 8;
+                break;
+
+            case MicroOp.StackInternal816:
+                // Rows 4c cycle 5 / 22h cycle 6: an IO at the stack byte the previous cycle
+                // touched. JSL has just PUSHED, so S has stepped down and the address is S+1;
+                // RTS has just PULLED, so S has stepped up and the address is S itself. Both
+                // rows print the same address on the access cycle and on this one.
+                InternalCycle(_op == Op.Jsl ? (_s.S + 1) & 0xFFFF : StackAddress816());
+                break;
+
+            case MicroOp.JslBank816:
+                // Row 4c cycle 6: the destination bank at PBR,PC+3, read through the old PBR —
+                // cycle 4 has already pushed it. PC is not advanced, for JsrFetchHi816's reason.
+                _s.PBR = ReadBus(PcAddress());
+                break;
+
+            case MicroOp.JsrPushPcl816:
+                // Rows 1c cycle 6 / 4c cycle 8: the last cycle of both calls.
+                PushStack816((byte)_s.PC);
+                StackSettle816();
+                _s.PC = (ushort)_addr;
+                break;
+
+            case MicroOp.PullP816:
+                // Row 22g cycle 4. NOTHING IS MASKED — that is defect 1, and it is the whole
+                // reason this micro-op exists rather than the shared MicroOp.PullP, whose
+                // `& ~Flag.B` clears the same bit that is the index-width flag here. The byte
+                // is kept whole in _data16 and committed by CommitPulledStatus816 below.
+                //
+                // Six of the eight bits land now, exactly as the eight-bit cores' PullP and
+                // Op.Plp land theirs — I in particular, so an IRQ pending across the return is
+                // recognised by this instruction's own last-cycle poll rather than one
+                // instruction later. The two WIDTH bits are held back to the last cycle:
+                // measured, and it is the one thing about RTI the vectors alone say. 40 n 3
+                // starts with x = 1, pulls a P whose x is 0, and still prints "x" in the pin
+                // string of cycles 5, 6 and 7; 40 n 2 does the same for m. Nothing RTI does
+                // after this cycle is width-dependent, so where the two bits land is
+                // unobservable except there.
+                _data16 = PullStack816();
+                _s.P = (byte)((_data16 & ~(Flag.M | Flag.X)) | (_s.P & (Flag.M | Flag.X)));
+                break;
+
+            case MicroOp.PullPcl816:
+                _tmp = PullStack816();
+                break;
+
+            case MicroOp.ReturnPullPch816:
+                // Rows 22h/22i cycle 5, plus the "+1" Clark §6.2.2.2 gives RTS and RTL. It
+                // wraps inside sixteen bits and never reaches the bank: "if $FF, $FF, and $12
+                // are pulled from the stack, the instruction at $120000 (rather than $130000)
+                // will be executed next." Which cycle performs the add is unobservable — RTS's
+                // sixth drives a stack address, and RTL has no spare cycle at all.
+                _s.PC = (ushort)(((PullStack816() << 8) | _tmp) + 1);
+                break;
+
+            case MicroOp.RtiPullPch816:
+                // Row 22g cycle 6, and NO "+1" — Clark §6.3.2, "unlike RTS (and RTL), the
+                // program counter is not incremented after it is pulled from the stack."
+                _s.PC = (ushort)((PullStack816() << 8) | _tmp);
+                if (!_s.E) break;               // native pulls the program bank as well
+                CommitPulledStatus816();
+                StackSettle816();
+                EndInstruction();
+                break;
+
+            case MicroOp.RtiPullPbr816:
+                // Row 22g cycle 7, note 7: native only.
+                _s.PBR = PullStack816();
+                CommitPulledStatus816();
+                StackSettle816();
+                break;
+
+            case MicroOp.PullPbr816:
+                // Row 22i cycle 6 — RTL, which has no status byte to commit.
+                _s.PBR = PullStack816();
+                StackSettle816();
+                break;
+
+            // Phase 7d task 8: the three stack-addressing pushes. Research document §14.7,
+            // Table 5-7 rows 22d, 22e and 22f. Each forms a sixteen-bit value its own way and
+            // then hands it to the shared PushHigh816/PushLow816 pair — unconditionally, since
+            // all three push two bytes whatever m and x say (Clark §6.8.1).
+
+            case MicroOp.PeaFetchHi816:
+                // Row 22d cycle 3. The operand is a value, not an address: nothing reads $AAHL.
+                _addr |= ReadBus(PcAddress()) << 8;
+                _s.PC++;
+                _data16 = (ushort)_addr;
+                break;
+
+            case MicroOp.PeiReadHigh816:
+                // Row 22e cycle 4, at 0,D+DO+1. HighByteAddressBank0 wraps within bank 0 and
+                // never at a page boundary — Clark §5.1.1 states that outright for PEI, which
+                // is new to the part.
+                _data16 = (ushort)((ReadBus(HighByteAddressBank0()) << 8) | _tmp);
+                break;
+
+            case MicroOp.PerCompute816:
+                // Row 22f cycle 4: an IO at the last operand byte's own address, PC-1 by now.
+                // The displacement is added to the address of the NEXT instruction — Clark
+                // §5.14/§5.18, PC+3 for a three-byte instruction, which is the live PC here
+                // because both fetches have already advanced it. Sixteen bits, wrapping inside
+                // the program bank; no bank byte is pushed.
+                InternalCycle((_s.PBR << 16) | ((_s.PC - 1) & 0xFFFF));
+                _data16 = (ushort)(_s.PC + _addr);
+                break;
+
             case MicroOp.StackDummyRead:
                 ReadBus(0x0100 + S8);
                 break;
@@ -1726,6 +2479,21 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             case MicroOp.StpHold:
                 _stopped = true;
                 ReadBus(_s.PC);
+                _mpc--;                 // hold position: only Reset escapes
+                break;
+
+            case MicroOp.WaiHold816:
+                // The 65816's hold. Same wake rule as WaiHold — the interrupt SIGNAL, not the
+                // poll — and the same _mpc-- that keeps the core off an instruction boundary
+                // for as long as it holds. No bus access: research document §14.4 measured
+                // every one of the 20,000 $CB vectors ending in [null, null, "--------"], with
+                // no address and no read/write character at all. See MicroOp.WaiHold816.
+                if (_nmiPending || _irqLine) _waiting = false;
+                else { _waiting = true; _mpc--; }
+                break;
+
+            case MicroOp.StpHold816:
+                _stopped = true;
                 _mpc--;                 // hold position: only Reset escapes
                 break;
 

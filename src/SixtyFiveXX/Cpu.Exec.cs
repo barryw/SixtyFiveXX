@@ -16,6 +16,19 @@ public sealed partial class Cpu<TBus, TVariant>
             case Op.Nop: break;
             case Op.NopRead: break;   // the read already happened; the value is discarded
 
+            case Op.Wdm:
+                // $42 is two bytes and two cycles, and its second byte is never read at all —
+                // the cycle that would fetch it is an internal cycle, which is why WDM shares
+                // MicroOp.ImpliedExec816 with every other implied 65816 opcode instead of
+                // fetching an operand. Stepping PC over the byte the bus never saw is the whole
+                // of the operation. Research document §14.2/§3.4: all 20,000 vectors show cycle
+                // 2 with a null value, the pin string "---r…", and PC advancing by exactly 2;
+                // Clark §6.7's "The second byte is read, but ignored" is wrong and recorded as
+                // a source error. 65816 only — Op.Wdm appears in no eight-bit table, so this
+                // arm needs no variant guard.
+                _s.PC++;
+                break;
+
             // Loads. Lda is width-aware for the 65816: in 8-bit mode (true for every 8-bit
             // core as well as a native-mode 65816 with an 8-bit accumulator) it must touch
             // only the low byte, preserving whatever sits in the high byte — the "hidden B
@@ -295,6 +308,87 @@ public sealed partial class Cpu<TBus, TVariant>
             case Op.Dey:
                 if (TVariant.Variant != CpuVariant.W65C816 || _s.XFlag) { Y8 = (byte)(Y8 - 1); SetZN(Y8); }
                 else { _s.Y = (ushort)(_s.Y - 1); SetZN16(_s.Y); }
+                break;
+
+            // ---- 65816 pushes. Each leaves the value in _data16; the push micro-ops move it,
+            // high byte first, and skip the high slot when the push is one byte wide. Sequenced
+            // ahead of the eight-bit arms below because a `when` guard only wins if it is
+            // reached first; on the five 8-bit cores TVariant.Variant is a compile-time constant
+            // and every one of these folds away entirely.
+            case Op.Pha when TVariant.Variant == CpuVariant.W65C816:
+                _data16 = _s.A;
+                break;
+
+            case Op.Phx when TVariant.Variant == CpuVariant.W65C816:
+                _data16 = IndexX();
+                break;
+
+            case Op.Phy when TVariant.Variant == CpuVariant.W65C816:
+                _data16 = IndexY();
+                break;
+
+            case Op.Php when TVariant.Variant == CpuVariant.W65C816:
+                // P verbatim, all eight bits, in BOTH modes — research document §14.1's measured
+                // block: across all 10,000 vectors of 08.n and all 10,000 of 08.e, the byte
+                // written XORed against the initial P is $00, 20,000 of 20,000. No bit is forced
+                // on the way out. In emulation mode this is observationally identical to pushing
+                // P | $30, because FetchOpcode already holds bits 4 and 5 set there; the verbatim
+                // form is the one §14.1 says to implement, and it needs no mode test.
+                _data16 = _s.P;
+                break;
+
+            case Op.Phb:
+                _data16 = _s.DBR;
+                break;
+
+            case Op.Phk:
+                _data16 = _s.PBR;
+                break;
+
+            case Op.Phd:
+                _data16 = _s.DP;
+                break;
+
+            // ---- 65816 pulls. _data16 holds what was pulled, narrowed already when 8-bit.
+            case Op.Pla when TVariant.Variant == CpuVariant.W65C816:
+                if (_s.M) { A8 = (byte)_data16; SetZN(A8); }
+                else { _s.A = _data16; SetZN16(_s.A); }
+                break;
+
+            case Op.Plx when TVariant.Variant == CpuVariant.W65C816:
+                if (_s.XFlag) { X8 = (byte)_data16; SetZN(X8); }
+                else { _s.X = _data16; SetZN16(_s.X); }
+                break;
+
+            case Op.Ply when TVariant.Variant == CpuVariant.W65C816:
+                if (_s.XFlag) { Y8 = (byte)_data16; SetZN(Y8); }
+                else { _s.Y = _data16; SetZN16(_s.Y); }
+                break;
+
+            case Op.Plp when TVariant.Variant == CpuVariant.W65C816:
+                // Defect 1, carried since phase 7b. Nothing is masked: in native mode bit 4 is x
+                // and bit 5 is m, and the shared MicroOp.PullP's `& ~Flag.B` would clear the
+                // index-width flag outright. Research document §14.1: all 10,000 native vectors
+                // load the pulled byte verbatim; all 10,000 emulation vectors differ from it by
+                // $00, $10, $20 or $30 and nothing else — the two forced bits and no others.
+                //
+                // The forcing and the index narrowing below are Op.Sep's arm verbatim, matched
+                // deliberately rather than restated: §14.1 measured that PLP setting x = 1
+                // forces XH = YH = $00 the same instant SEP does, over 2,494 non-vacuous 28.n
+                // vectors.
+                _s.P = (byte)_data16;
+                if (_s.E) _s.P |= Flag.M | Flag.X;
+                if (_s.XFlag) { _s.X &= 0x00FF; _s.Y &= 0x00FF; }
+                break;
+
+            case Op.Plb:
+                _s.DBR = (byte)_data16;
+                SetZN(_s.DBR);
+                break;
+
+            case Op.Pld:
+                _s.DP = _data16;
+                SetZN16(_s.DP);
                 break;
 
             // Stack. PHP and BRK are the only ways the B flag reaches memory.

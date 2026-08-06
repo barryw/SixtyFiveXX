@@ -323,17 +323,6 @@ internal enum MicroOp : byte
     JamHold,
 
     /// <summary>
-    /// Placeholder for every 65816 sequence slot no task has filled in yet — see
-    /// <c>MicroOpTable</c>'s <c>NotYet816</c> field, the only place this is used.
-    /// Deliberately has no <c>case</c> in <c>Cpu.Execute</c>'s switch, so reaching one falls
-    /// into that switch's own <c>default</c> arm and throws
-    /// <see cref="NotImplementedException"/> naming this member, instead of silently
-    /// running whichever NMOS or CMOS micro-op happened to occupy the slot. Phase 7d's
-    /// interrupt work is what finally replaces every use of it.
-    /// </summary>
-    Unimplemented816,
-
-    /// <summary>
     /// The 65816's implied-mode second cycle: an internal cycle at <c>PBR,PC</c> — no memory
     /// access at all — then run the operation. Research document §9, row 19a: cycle 2 of
     /// <c>XCE</c> (and every other implied 65816 instruction) drives <c>VDA=0 VPA=0</c>, which
@@ -446,6 +435,15 @@ internal enum MicroOp : byte
     /// <c>(dp),Y</c>) and three-byte ones (<c>[dp]</c>, <c>[dp],Y</c>) alike, since the first
     /// pointer byte is read identically either way. Research document §9's "(Direct,X)" cycle 4,
     /// "(Direct)"/"(Direct),Y" cycle 3, and "[Direct]"/"[Direct],Y" cycle 3.
+    /// <para>
+    /// Phase 7d task 8 added a caller that is not an addressing mode: <c>PEI</c>'s cycle 3.
+    /// "Push Effective Indirect address" reads a two-byte pointer from the direct page in bank 0
+    /// and pushes it instead of dereferencing it, and Table 5-7 row 22e names those two bytes
+    /// <c>AAL</c>/<c>AAH</c> exactly as the indirect modes' rows do — same address, same
+    /// <see cref="BusPins.Vda"/>. Its high byte is <see cref="PeiReadHigh816"/> rather than
+    /// <see cref="DpPtrReadHi"/>, which page-wraps in emulation mode as an "old" mode must and
+    /// <c>PEI</c>, being new, must not.
+    /// </para>
     /// </summary>
     PtrReadLo816,
 
@@ -844,6 +842,552 @@ internal enum MicroOp : byte
     /// for a carrying variant to differ about.
     /// </summary>
     RmwWrite816,
+
+    // Phase 7d task 2: the 65816's own stack access path. Research document §14.1, Table 5-7
+    // rows 22c (the seven pushes) and 22b (the six pulls). Every one of these drives
+    // Cpu.StackAddress816() — the full sixteen bits of S, in bank 0 — rather than the five
+    // 8-bit cores' hard-coded 0x0100 + SL.
+
+    /// <summary>
+    /// Cycle 2 of every 65816 push: an internal cycle at <c>PBR,PC+1</c> that also runs the
+    /// operation, leaving the value to push in <c>_data16</c>. Research document §14.1, row 22c
+    /// — a push has exactly one <c>IO</c> cycle and a pull has two, which is the whole of the
+    /// one-cycle difference between the two rows. Skips the following
+    /// <see cref="PushHigh816"/> slot when the push is one byte wide, the same conditional-slot
+    /// idiom <see cref="FetchDpOffset"/> uses for <see cref="DirectPagePenalty"/>; width comes
+    /// from <c>Cpu.StackIsWide</c>, not from <c>_wide</c>, because these opcodes fetch no
+    /// operand and so declare no <see cref="Width"/>.
+    /// </summary>
+    StackPushInternal816,
+
+    /// <summary>
+    /// A 16-bit push's high byte, written first at <c>0,S</c> — row 22c's <c>3a</c>, gated by
+    /// note <c>(1)</c>. The stack descends, so pushing high first puts the low byte at the lower
+    /// address; research document §14.1 question 2 corroborates it from four separate Clark
+    /// passages as well as the row.
+    /// </summary>
+    PushHigh816,
+
+    /// <summary>
+    /// Every push's low byte, written last at <c>0,S</c> (row 22c's <c>3</c>, which is
+    /// <c>0,S-1</c> when <see cref="PushHigh816"/> ran first and moved <c>S</c> down). Also the
+    /// only write cycle of a one-byte push.
+    /// </summary>
+    PushLow816,
+
+    /// <summary>
+    /// Every pull's low byte, read at <c>0,S+1</c> — row 22b's cycle <c>4</c>. Ends the
+    /// instruction here when the pull is one byte wide, which is what makes the following
+    /// <see cref="PullHigh816"/> slot cost nothing for <c>PLP</c>, <c>PLB</c> and a narrow
+    /// <c>PLA</c>/<c>PLX</c>/<c>PLY</c>.
+    /// </summary>
+    PullLow816,
+
+    /// <summary>
+    /// A 16-bit pull's high byte, read at <c>0,S+2</c> — row 22b's <c>4a</c>, gated by note
+    /// <c>(1)</c> — then the operation runs against the assembled 16-bit value.
+    /// </summary>
+    PullHigh816,
+
+    /// <summary>
+    /// The 65816's reset stack decrement: <see cref="StackDummyReadDec"/> with the address taken
+    /// from <c>Cpu.StackAddress816()</c> instead of a hard-coded <c>0x0100 + SL</c>. Reset always
+    /// enters emulation mode, where the two expressions agree — this exists so the reset section
+    /// computes the right address because it is the right address, not because another invariant
+    /// happens to hold. <c>W65C816ReachabilityTests</c> is what asserts the 65816 never reaches
+    /// the 8-bit form.
+    /// </summary>
+    StackDummyReadDec816,
+
+    // Phase 7d task 3: the 65816's interrupts. Research document §14.2, Table 5-7 rows 22j
+    // (BRK/COP) and 22a (IRQ/NMI/RESET/ABORT). The two rows are identical from cycle 3 on, so
+    // the five members from PushPbr816 down are shared by both sequences; only the two leading
+    // cycles differ, and each of those owns the emulation-mode skip of the program-bank push.
+    // These are also the first micro-ops in this repository to assert VPB.
+
+    /// <summary>
+    /// <c>BRK</c>/<c>COP</c>'s cycle 2 — row 22j's <c>Signature</c> read at <c>PBR,PC+1</c>,
+    /// <c>VDA=0 VPA=1</c>. The byte is fetched and discarded, and <c>PC</c> advances past it,
+    /// which is why both instructions push their own address plus 2 (Clark §6.3.1, measured
+    /// across all 40,000 vectors). Also chooses the vector — <c>Cpu.Vector816</c> — and skips
+    /// <see cref="PushPbr816"/> when <c>e = 1</c>, the same conditional-slot idiom
+    /// <see cref="FetchDpOffset"/> uses for <see cref="DirectPagePenalty"/>.
+    /// </summary>
+    BrkPad816,
+
+    /// <summary>
+    /// A hardware interrupt's cycle 2 — row 22a's <c>IO</c> at <c>PBR,PC</c>, <c>VDA=0
+    /// VPA=0</c>, no memory access. Cycle 1 is <c>Cpu.FetchOpcode</c>'s own discarded read at
+    /// the same address, which the row prints as <c>VDA=1 VPA=1</c>; nothing advances <c>PC</c>
+    /// here, since a hardware interrupt consumes no opcode. Skips <see cref="PushPbr816"/> when
+    /// <c>e = 1</c>, exactly as <see cref="BrkPad816"/> does.
+    /// <para>
+    /// Not <see cref="ImpliedInternal816"/>, whose address happens to coincide but which owns
+    /// no skip and which every push, pull and <c>XBA</c> already shares.
+    /// </para>
+    /// </summary>
+    IntInternal816,
+
+    /// <summary>
+    /// The program-bank push, at <c>0,S</c> — cycle 3 of both rows, and the cycle emulation
+    /// mode omits. No eight-bit core has it. Datasheet §7.11.1: <em>"In the Native mode,
+    /// previous PBR contents are automatically saved on Stack"</em>; §7.11.2: in emulation mode
+    /// they <em>"are not automatically saved"</em>.
+    /// </summary>
+    PushPbr816,
+
+    /// <summary>
+    /// The return address, high byte then low — cycles 4 and 5 of both rows, at <c>0,S-1</c>
+    /// and <c>0,S-2</c>. The 65816 forms of <see cref="PushPch"/> and <see cref="PushPcl"/>:
+    /// they drive <c>Cpu.StackAddress816</c>, the full sixteen bits of <c>S</c> in bank 0,
+    /// rather than a hard-coded <c>$0100 + SL</c>, and they wrap inside page one in emulation
+    /// mode only because an interrupt is on <c>Cpu.StackWrapsInPageOne</c>'s list (Clark §5.22).
+    /// </summary>
+    PushPch816,
+
+    /// <inheritdoc cref="PushPch816"/>
+    PushPcl816,
+
+    /// <summary>
+    /// The status push — cycle 6 of both rows — then <c>I</c> set and <c>D</c> cleared, in that
+    /// order (Clark §6.3.1, measured). Serves all four interrupts: <c>BRK</c> and <c>COP</c>
+    /// push <c>P</c> verbatim in both modes, and a hardware interrupt does too except in
+    /// emulation mode, where bit 4 is forced to <c>0</c> — datasheet note 11, printed on row
+    /// 22a and not on 22j. <b>No NMI hijack</b>, unlike <see cref="PushPBrk"/> and
+    /// <see cref="PushPInt"/>: research document §14.2/§14.9 gap 2 records that no 65816 source
+    /// mentions the case and that no vector can settle it, so the NMOS anomaly is deliberately
+    /// not carried over. See <c>Cpu.Execute</c>'s arm for the full reasoning.
+    /// </summary>
+    PushPInt816,
+
+    /// <summary>
+    /// The two vector reads — cycles 7 and 8 of both rows, at <c>0,VA</c> and <c>0,VA+1</c>,
+    /// bank 0. The only cycles in this repository that assert <see cref="BusPins.Vpb"/>
+    /// alongside <see cref="BusPins.Vda"/>: both rows print <c>VPB=0 VDA=1 VPA=0</c>, and the
+    /// datasheet says it again in prose on p. 30 — <em>"The VP output is low during the two
+    /// cycles used for vector location access"</em>. Confirmed character for character by the
+    /// vectors, whose last two cycles read <c>d-vr…</c>.
+    /// <para>
+    /// <see cref="VectorHi816"/> also clears <c>PBR</c>, in both modes (datasheet §7.11.1 and
+    /// §7.11.2), which is what puts the handler in bank 0 — the rows' own <c>0,AAV</c>
+    /// next-opcode cell. Distinct from <see cref="VectorLo"/>/<see cref="VectorHi"/>, which the
+    /// 65816's reset sequence still shares: those clear no bank register, and reset has
+    /// <c>Cpu.Reset</c> to do it instead.
+    /// </para>
+    /// </summary>
+    VectorLo816,
+
+    /// <inheritdoc cref="VectorLo816"/>
+    VectorHi816,
+
+    // The block moves, MVN and MVP. Research document §14.3, Table 5-7 rows 9a and 9b, whose
+    // seven cycles are the opcode fetch plus the six members below. One instruction per byte
+    // moved: no member here loops, and none holds a position of its own — the sequence runs to
+    // MicroOp.End every time and BlockMoveNext rewinds PC so the NEXT FETCH re-enters it. That
+    // is what lets an interrupt land between iterations (Clark §6.6, "they can only be
+    // interrupted every seventh cycle"), which an internal loop would make impossible.
+
+    /// <summary>
+    /// Cycle 2, <c>DBA</c>: the destination bank byte, fetched at <c>PBR,PC+1</c> and written
+    /// straight into <c>DBR</c>. Datasheet §7.18 — the register takes "the value of the second
+    /// byte of the instruction" — so the write happens here, on the fetch, and the following
+    /// write cycle reads <c>DBR</c> back rather than a latch. Row 9a/9b prints <c>VDA=0
+    /// VPA=1</c>, an ordinary operand fetch.
+    /// </summary>
+    BlockMoveDestBank,
+
+    /// <summary>
+    /// Cycle 3, <c>SBA</c>: the source bank byte, fetched at <c>PBR,PC+2</c> and kept only for
+    /// this iteration's own read — it goes into no register, which is why <c>MVN</c> re-fetches
+    /// both operand bytes on every one of its iterations rather than carrying them along. Same
+    /// pins as <see cref="BlockMoveDestBank"/>.
+    /// </summary>
+    BlockMoveSrcBank,
+
+    /// <summary>
+    /// Cycle 4: the read at <c>SBA,X</c>, with <c>X</c> as it stands before this iteration's
+    /// update. <c>VDA=1 VPA=0</c> — a data access in a bank that is neither <c>PBR</c> nor
+    /// <c>DBR</c>. The index is the operative width (<c>Cpu.IndexX</c>) and the address wraps
+    /// inside the source bank: Clark §5.1.2, "source,destination addressing … wraps at both the
+    /// source and destination bank boundaries".
+    /// </summary>
+    BlockMoveRead,
+
+    /// <summary>
+    /// Cycle 5: the write at <c>DBA,Y</c> — <c>DBR</c>, which
+    /// <see cref="BlockMoveDestBank"/> has already updated, and <c>Y</c> before this iteration's
+    /// update. Wraps inside the destination bank exactly as the read wraps inside the source.
+    /// </summary>
+    BlockMoveWrite,
+
+    /// <summary>
+    /// Cycle 6: the first of two internal cycles, both driving the address just written —
+    /// <c>DBA,Y</c>, not <c>PBR,PC</c>. Research document §14.3 calls this the one place in
+    /// this phase where an internal cycle's address is a data address rather than a program
+    /// one; every other <c>IO</c> row in §9, §13 and §14.1 drives a program-counter address.
+    /// </summary>
+    BlockMoveInternal,
+
+    /// <summary>
+    /// Cycle 7: the second internal cycle at the same <c>DBA,Y</c>, and the iteration's whole
+    /// register update — <c>A</c> down by one over a full sixteen bits whatever <c>m</c> says
+    /// (Clark §6.6, measured in §14.3), <c>X</c> and <c>Y</c> by one at the operative index
+    /// width in the opcode's own direction, and then the rewind: <c>PC</c> back by 3 unless the
+    /// decremented accumulator has reached <c>$FFFF</c>.
+    /// </summary>
+    /// <remarks>
+    /// This micro-op ends the instruction the same way on both paths — by being the last one
+    /// before <see cref="End"/> — and differs only in where <c>PC</c> points afterwards. It is
+    /// deliberately not written as a loop that holds its own sequence position: Clark §6.6 says
+    /// <c>MVN</c> and <c>MVP</c> "can be interrupted by IRQ and NMI before the move is complete
+    /// (unlike every other instruction …); however, they can only be interrupted every seventh
+    /// cycle", and a genuine instruction boundary here is what produces exactly that, through
+    /// the interrupt poll every instruction already gets and with no special case anywhere.
+    /// </remarks>
+    BlockMoveNext,
+
+    /// <summary>
+    /// The 65816's <c>WAI</c> hold — the cycle after the three datasheet Table 5-7 row 19d
+    /// prints. Holds the sequence position, so it repeats until IRQ is asserted or an NMI is
+    /// latched; the <c>I</c> flag does not block the wake, only what happens afterwards
+    /// (Clark §6.9). The 65816 form of <see cref="WaiHold"/>, and different from it in one
+    /// respect: it performs <b>no bus access at all</b>, not even an internal cycle.
+    /// <para>
+    /// That is measured, not chosen. Research document §14.4 read all 20,000 <c>$CB</c>
+    /// vectors: every one is four entries, of which the fourth is
+    /// <c>[null, null, "--------"]</c> — no address, no value, and not even a read/write
+    /// character, in emulation mode as much as native. There is no address to drive and no
+    /// access to perform, so this drives none. It is nonetheless a real cycle: the clock ran,
+    /// and <c>Cpu.Tick</c> counts it.
+    /// </para>
+    /// </summary>
+    WaiHold816,
+
+    /// <summary>
+    /// The 65816's <c>STP</c> hold — row 19c's fourth entry, the same shape as
+    /// <see cref="WaiHold816"/> and with the same measured "no address, no access" cycle. The
+    /// only escape is <c>Cpu.Reset</c>: no interrupt releases it (datasheet §7.14, Clark §6.9).
+    /// </summary>
+    StpHold816,
+
+    /// <summary>
+    /// Cycle 2 of every conditional branch and of <c>BRA</c>: the signed eight-bit displacement,
+    /// fetched at <c>PBR,PC+1</c>, <c>VDA=0 VPA=1</c> — datasheet Table 5-7 row 20, research
+    /// document §14.5. Ends the instruction here when the condition is false, which is Note 5's
+    /// "add 1 cycle if branch is taken" read the other way round.
+    /// <para>
+    /// The 65816 form of <see cref="BranchFetch"/> and separate from it for one reason: this
+    /// reads <c>PBR,PC</c> and that reads a bare sixteen-bit <c>PC</c>. See
+    /// <c>W65C816ReachabilityTests</c>, which asserts the 65816 reaches neither that micro-op
+    /// nor the two after it.
+    /// </para>
+    /// </summary>
+    BranchFetch816,
+
+    /// <summary>
+    /// Row 20's cycle 2a — the taken branch's internal cycle — and the whole of the displacement
+    /// add. Drives <c>PBR,PC+1</c>, the offset byte's <em>own</em> address, which is not what the
+    /// eight-bit <see cref="BranchTaken"/> drives (that one rereads the byte after the branch);
+    /// research document §14.5 transcribes it and every taken vector confirms it.
+    /// <para>
+    /// The add wraps inside the program bank: <c>PC</c> is a <c>ushort</c> and <c>PBR</c> is
+    /// never touched, so <c>$13FFFE</c> plus a forward displacement lands in bank <c>$13</c>,
+    /// not <c>$14</c> — Clark §5.1.2 and §4, and §5.18's <c>K : PC+2+$LL</c>. The vectors do
+    /// reach that boundary, contrary to what a random <c>PC</c> and a ±128 displacement suggest:
+    /// 101 of the 180,000 <c>rel8</c> vectors have a destination outside <c>$0000</c>-<c>$FFFF</c>
+    /// before the wrap, and every one records the wrapped <c>PC</c> with <c>PBR</c> unchanged.
+    /// </para>
+    /// <para>
+    /// <b>The one behavioural difference from all five eight-bit cores in this codebase.</b>
+    /// This ends the instruction whenever <c>E</c> is clear, whether or not the add crossed a
+    /// page — a taken branch in native mode is a flat three cycles wherever it lands. Datasheet
+    /// Note 6 gates the extra cycle on "6502 emulation mode (E=1)" and Clark §6.2.1.1's
+    /// <c>2+t+t*e*p</c> multiplies the page-cross term by <c>e</c>, exactly as §3.2's <c>x*p</c>
+    /// is multiplied by <c>x</c>. The page itself is measured against the byte after the branch,
+    /// not against the opcode — Clark's <c>LABEL BRA LABEL+2</c> "always takes 3 cycles, no
+    /// matter where the BRA instruction is located in memory".
+    /// </para>
+    /// </summary>
+    BranchTaken816,
+
+    /// <summary>
+    /// Row 20's cycle 2b, the emulation-mode-only page-cross cycle. A second internal cycle at
+    /// the same <c>PBR,PC+1</c> <see cref="BranchTaken816"/> drove — which is why that one
+    /// stashes the address rather than this one recomputing it from a <c>PC</c> that has already
+    /// moved to the destination.
+    /// <para>
+    /// Nothing but the cycle happens here. The eight-bit <see cref="BranchFixup"/> applies a
+    /// <c>±$100</c> correction on its cycle because its <c>BranchTaken</c> deliberately leaves
+    /// <c>PC</c> half-corrected; this core's does the whole add in one go, since the un-fixed
+    /// program counter is never driven on the bus in either mode and so is unobservable.
+    /// </para>
+    /// </summary>
+    BranchFixup816,
+
+    /// <summary>
+    /// <c>BRL</c>'s cycle 4 — row 21's single <c>IO</c> at <c>PBR,PC+2</c>, the high displacement
+    /// byte's own address, following row 20's "last operand byte" rule. Performs the sixteen-bit
+    /// signed add from the displacement <see cref="FetchAddrLo"/> and <see cref="FetchAddrHi"/>
+    /// left in the effective-address register, wrapping inside the program bank exactly as
+    /// <see cref="BranchTaken816"/> does: Clark §4's "a BRL $2000 at $13E000 will branch to
+    /// $132000 rather than $142000". A sixteen-bit displacement from an arbitrary <c>PC</c>
+    /// wraps about a quarter of the time, so this is the best-covered rule of the ten — 4,977 of
+    /// <c>$82</c>'s 20,000 vectors land only because the carry out of sixteen bits is discarded.
+    /// <para>
+    /// Unconditional, and the last cycle either way — <c>BRL</c> has no not-taken case and no
+    /// page-cross penalty in either mode (research document §14.5 answer 2, Clark §6.2.1.2's
+    /// flat <c>82 3 4 rel16</c>).
+    /// </para>
+    /// </summary>
+    BranchLong816,
+
+    // Phase 7d task 7: the jumps, the calls and the returns. Research document §14.6, Table 5-7
+    // rows 1b, 4b, 3b, 3a, 2a (jumps), 1c, 2b, 4c (calls) and 22g, 22h, 22i (returns). None of
+    // these reuses an eight-bit micro-op: every one of the eight-bit forms drives either a bare
+    // sixteen-bit PC or a bare $0100 + SL, and the two that do not — JmpIndLo and PtrJmpHi —
+    // are on W65C816ReachabilityTests' deny-list from this task on, so the whole family is
+    // emitted from this part's own members.
+
+    /// <summary>
+    /// <c>JMP abs</c>'s cycle 3 — row 1b: reads <c>New PCH</c> at <c>PBR,PC+2</c> and installs
+    /// the destination in one go. The 65816 form of <see cref="JmpAbs"/>, and separate from it
+    /// because that one reads a bare sixteen-bit <c>PC</c>. <c>PBR</c> is untouched: an absolute
+    /// <c>JMP</c> cannot leave its own bank.
+    /// </summary>
+    JmpAbs816,
+
+    /// <summary>
+    /// <c>JML $llhhbb</c>'s cycle 4 — row 4b: reads the destination bank at <c>PBR,PC+3</c>,
+    /// then installs both it and the sixteen-bit address the two preceding operand fetches left
+    /// in the effective-address register. Read before <c>PBR</c> is written, so the fetch itself
+    /// still comes from the old bank.
+    /// </summary>
+    JmpLong816,
+
+    /// <summary>
+    /// The low byte of an indirect jump's bank-0 pointer — <c>0,AA</c>, row 3b's cycle 4 and row
+    /// 3a's. §14.6 answer 1, Clark §5.1.2: <c>$6C</c> and <c>$DC</c> take their pointer from
+    /// <b>bank 0 regardless of <c>PBR</c></b>, which is what makes this distinct from
+    /// <see cref="JmpAbsXLo816"/>'s bank-K read.
+    /// </summary>
+    JmpIndLo816,
+
+    /// <summary>
+    /// The high byte of that pointer — <c>0,AA+1</c>, a sixteen-bit increment inside bank 0 with
+    /// <b>no page qualification</b>. Clark §5.4, verbatim: "on the 65C816, as on the 65C02,
+    /// (absolute) addressing does not wrap at a page boundary, i.e. for a JMP ($12FF) the low
+    /// byte of the destination address is taken from $12FF and the high byte … from $1300."
+    /// The eight-bit <see cref="JmpIndHi"/> reproduces the NMOS bug and this deliberately does
+    /// not; §5.4's own worked example pins what does wrap, the bank 0 boundary
+    /// (<c>$00FFFF → $000000</c>).
+    /// <para>
+    /// Shared with <c>JML [abs]</c>, whose sequence simply continues into
+    /// <see cref="JmlIndBank816"/>: installing <c>PC</c> here is harmless, since nothing between
+    /// the two cycles reads it.
+    /// </para>
+    /// </summary>
+    JmpIndHi816,
+
+    /// <summary>
+    /// <c>JML [abs]</c>'s cycle 6 — row 3a: the pointer's own third byte at <c>0,AA+2</c>,
+    /// which becomes the destination bank. The row's next-opcode cell reads <c>NEW PBR,PC</c>:
+    /// this is the only jump whose bank comes from memory rather than from the instruction
+    /// stream.
+    /// </summary>
+    JmlIndBank816,
+
+    /// <summary>
+    /// <c>(abs,X)</c>'s indexing cycle — row 2a's cycle 4 and row 2b's cycle 6: an internal
+    /// cycle at the high operand byte's own address (<c>PBR,PC+2</c>, which is <c>PC - 1</c> by
+    /// the time this runs, the same re-derivation <see cref="DirectPagePenalty"/> and
+    /// <see cref="BranchLong816"/> use), then <c>X</c> folded into the pointer. Unconditional:
+    /// neither row gates it, and neither <c>$7C</c> nor <c>$FC</c> carries a page-cross term in
+    /// Clark's cycle column. The add wraps inside sixteen bits — Clark §5.5's <c>X = $000A</c>,
+    /// <c>JMP ($FFFE,X)</c> reading <c>$120008</c>.
+    /// </summary>
+    JmpAbsXInternal816,
+
+    /// <summary>
+    /// The low byte of an <c>(abs,X)</c> pointer — <c>PBR,AA+X</c>, row 2a's cycle 5 and row
+    /// 2b's cycle 7. §14.6 answer 1, Clark §5.5: this mode's pointer lives in <b>bank K</b>,
+    /// not bank 0.
+    /// </summary>
+    /// <remarks>
+    /// <b>Pins deviate from Table 5-7.</b> Rows 2a and 2b print <c>VDA=0 VPA=1</c> on this cycle
+    /// and the next; all 40,000 <c>$7C</c>/<c>$FC</c> vectors read <c>d--r</c> — VDA asserted,
+    /// VPA clear — which is what every other pointer read on this part drives. Measured, and
+    /// recorded in research document §14.6.
+    /// </remarks>
+    JmpAbsXLo816,
+
+    /// <summary>
+    /// The high byte of that pointer — <c>PBR,AA+X+1</c>, wrapping inside bank K exactly as the
+    /// index add does. Installs the destination; <c>PBR</c> is untouched, so <c>$7C</c> and
+    /// <c>$FC</c> both stay in the program bank. Same measured pin deviation as
+    /// <see cref="JmpAbsXLo816"/>.
+    /// </summary>
+    JmpAbsXHi816,
+
+    /// <summary>
+    /// <c>JSR abs</c>'s cycle 3 — row 1c: reads <c>New PCH</c> at <c>PBR,PC+2</c> and
+    /// deliberately does <b>not</b> advance <c>PC</c>. That is the whole mechanism by which the
+    /// pushed address is the instruction's own plus 2 rather than plus 3 — Clark §6.2.2.1, "the
+    /// address pushed is one less than the address of the next instruction" — and it leaves the
+    /// following internal cycle and the two pushes reading <c>PC</c> unadjusted.
+    /// </summary>
+    JsrFetchHi816,
+
+    /// <summary>
+    /// An internal cycle at a <b>stack</b> address, driving the byte the immediately preceding
+    /// cycle touched. Two instructions have one and they reach it from opposite directions:
+    /// <c>JSL</c>'s cycle 5 redrives the program bank it has just pushed (row 4c prints
+    /// <c>0,S</c> on cycles 4 and 5 alike, so the address is <c>S + 1</c> once the push has
+    /// stepped <c>S</c> down), and <c>RTS</c>'s cycle 6 redrives the <c>PCH</c> it has just
+    /// pulled (row 22h prints <c>0,S+2</c> on cycles 5 and 6 alike, which is <c>S</c> itself
+    /// once the pull has stepped <c>S</c> up).
+    /// </summary>
+    /// <remarks>
+    /// Research document §14.1 anticipated this member and phase 7d task 2 deliberately did not
+    /// create it: a <em>pull</em>'s two internal cycles are both at <c>PBR,PC+1</c>, not at a
+    /// stack address, so they are <see cref="ImpliedInternal816"/> and need nothing new. These
+    /// two are the only cycles on the part whose <c>IO</c> address is a stack address.
+    /// </remarks>
+    StackInternal816,
+
+    /// <summary>
+    /// <c>JSL</c>'s cycle 6 — row 4c: the destination bank at <c>PBR,PC+3</c>, read through the
+    /// <em>old</em> program bank (cycle 4 has already pushed it) and installed here. Does not
+    /// advance <c>PC</c>, for the same reason <see cref="JsrFetchHi816"/> does not: cycles 7 and
+    /// 8 push <c>PC</c> itself, and Clark §6.2.2.1 fixes that value at the instruction's own
+    /// address plus 3.
+    /// </summary>
+    JslBank816,
+
+    /// <summary>
+    /// The last cycle of <c>JSR abs</c> and <c>JSL</c> — rows 1c and 4c: the return address's
+    /// low byte pushed at <c>0,S-1</c>/<c>0,S-2</c>, then the destination installed. One
+    /// micro-op for both, because by this cycle the two sequences differ in nothing:
+    /// <see cref="PushPch816"/> has already run and the effective-address register holds the
+    /// sixteen-bit destination in each. <c>JSR (abs,X)</c> pushes four cycles earlier and so
+    /// uses the plain <see cref="PushPcl816"/> instead.
+    /// </summary>
+    JsrPushPcl816,
+
+    /// <summary>
+    /// <c>RTI</c>'s cycle 4 — row 22g: the status register, pulled at <c>0,S+1</c>, <b>before</b>
+    /// the return address (§14.6 answer 6; Clark §6.3.2, "the P register is pulled, then the
+    /// 16-bit program counter is pulled").
+    /// </summary>
+    /// <remarks>
+    /// <b>Defect 1, on the second instruction that can hit it.</b> Nothing is masked. The shared
+    /// <see cref="PullP"/> clears <c>~Flag.B</c>, which on this part is the same bit as
+    /// <c>~Flag.X</c> and would silently narrow the index registers on a native 65816. The rule
+    /// applied is <c>Op.Plp</c>'s — restore <c>P</c>, force <c>m</c> and <c>x</c> when
+    /// <c>e = 1</c>, and zero <c>XH</c>/<c>YH</c> whenever <c>x</c> ends up set — and it is
+    /// measured the same way: all 10,000 <c>40.n</c> vectors' final <c>P</c> equals the pulled
+    /// byte exactly, and all 10,000 <c>40.e</c> vectors differ from it by <c>$00</c>, <c>$10</c>,
+    /// <c>$20</c> or <c>$30</c> and nothing else.
+    /// <para>
+    /// <b>The two width bits land on the instruction's last cycle, not on this one</b>, through
+    /// <c>Cpu.CommitPulledStatus816</c>. <c>PLP</c> could not expose the difference — its pull
+    /// <em>is</em> its last cycle — and <c>RTI</c> is the only instruction on the part that
+    /// restores <c>P</c> with cycles still to run. Measured: <c>40 n 3</c> starts with
+    /// <c>x = 1</c>, pulls a status byte whose <c>x</c> is 0, and every remaining cycle's pin
+    /// string still reads <c>x</c>. The other six bits land here, so <c>I</c> is restored in time
+    /// for this instruction's own last-cycle interrupt poll, exactly as on the five eight-bit
+    /// cores.
+    /// </para>
+    /// </remarks>
+    PullP816,
+
+    /// <summary>
+    /// The return address's low byte, pulled at <c>0,S+1</c> (<c>RTS</c>, <c>RTL</c>) or
+    /// <c>0,S+2</c> (<c>RTI</c>, whose <c>P</c> pull came first). Rows 22g/22h/22i.
+    /// </summary>
+    PullPcl816,
+
+    /// <summary>
+    /// <c>RTS</c>'s and <c>RTL</c>'s return-address high byte, and the <c>+1</c> with it —
+    /// Clark §6.2.2.2, "pulls the low byte, then the high byte of the program counter from the
+    /// stack, then increments the program counter". The increment wraps inside sixteen bits and
+    /// never reaches the bank: "if $FF, $FF, and $12 are pulled from the stack, the instruction
+    /// at $120000 (rather than $130000) will be executed next."
+    /// </summary>
+    /// <remarks>
+    /// The increment is folded into this cycle rather than given the one the datasheet spends on
+    /// it. <c>RTS</c>'s sixth cycle drives a stack address, not <c>PC</c> (row 22h's
+    /// <c>0,S+2</c>), so which of the two cycles performs the arithmetic is unobservable on the
+    /// bus; <c>RTL</c> has no such cycle at all, its sixth being the bank pull, which is why
+    /// both returns are six cycles for different reasons. Task 6's warning applies here — the
+    /// eight-bit <see cref="RtsFinish"/> splits the work across a cycle that reads <c>PC</c>,
+    /// and that split does not transfer.
+    /// </remarks>
+    ReturnPullPch816,
+
+    /// <summary>
+    /// <c>RTI</c>'s return-address high byte — row 22g's cycle 6, and <b>no <c>+1</c></b>. Clark
+    /// §6.3.2, verbatim: "Note that unlike RTS (and RTL), the program counter is not incremented
+    /// after it is pulled from the stack." Ends the instruction in emulation mode, where the
+    /// program bank is not pulled (note 7 on the row's seventh cycle) — the same conditional-slot
+    /// idiom <see cref="FetchDpOffset"/> uses, spelled as an early end because the slot skipped
+    /// is the last one.
+    /// </summary>
+    RtiPullPch816,
+
+    /// <summary>
+    /// The program bank, pulled last — <c>RTL</c>'s cycle 6, row 22i.
+    /// </summary>
+    PullPbr816,
+
+    /// <summary>
+    /// Native <c>RTI</c>'s cycle 7 — row 22g, note 7. The same pull as <see cref="PullPbr816"/>
+    /// plus the commit of the status byte's two width bits, which is why the two are separate
+    /// members rather than one with a run-time operation test: see <see cref="PullP816"/>.
+    /// </summary>
+    RtiPullPbr816,
+
+    /// <summary>
+    /// <c>PEA</c>'s cycle 3 — row 22d: the second operand byte, at <c>PBR,PC+2</c>, and the
+    /// sixteen-bit value it completes moved into the push register. An ordinary operand fetch on
+    /// the bus (<see cref="BusPins.Vpa"/>, exactly as the <see cref="FetchAddrLo"/> before it),
+    /// separate from <see cref="FetchAddrHi"/> only because <see cref="PushHigh816"/> and
+    /// <see cref="PushLow816"/> read <c>_data16</c> and the operand fetches build <c>_addr</c>.
+    /// The value is <b>not</b> used as an address: Clark §6.8.1, "PEA #$1234 … simply pushes the
+    /// value $1234, but does not access memory location $1234 (in any bank)".
+    /// </summary>
+    PeaFetchHi816,
+
+    /// <summary>
+    /// <c>PEI</c>'s cycle 4 — row 22e: the high byte of the sixteen-bit value, read at
+    /// <c>0,D+DO+1</c>, and the completed word moved into the push register. Bank 0 with a
+    /// sixteen-bit wrap and <b>no page wrap</b>, which is <c>Cpu.HighByteAddressBank0</c>'s
+    /// formula and is right here for the reason Clark §5.1.1 gives outright: "since PEI is a
+    /// 'new' instruction, PEI $FF does not wrap at a page boundary (either the direct page part,
+    /// or the (pushing onto the) stack part)". Its low byte is <see cref="PtrReadLo816"/>.
+    /// </summary>
+    PeiReadHigh816,
+
+    /// <summary>
+    /// <c>PER</c>'s cycle 4 — row 22f: an <c>IO</c> at <c>PBR,PC+2</c>, the last operand byte's
+    /// own address, and with it the address that gets pushed.
+    /// </summary>
+    /// <remarks>
+    /// <b>The displacement is measured from the address of the next instruction</b>, not from the
+    /// opcode and not from the last operand byte — research document §14.7, and Clark §5.14
+    /// verbatim: "PER adds the immediate data to the address of the next instruction. This is the
+    /// same formula that relative16 addressing uses for the destination address". §5.18's
+    /// relative16 formula is <c>K : PC+3+$HHLL</c> with <c>PC</c> the opcode's own address, and
+    /// <c>PER</c> is three bytes, so the base is <c>PC+3</c> — which is exactly the live <c>PC</c>
+    /// by the time this runs, both operand fetches having advanced it. Row 22f's
+    /// <c>PCH+Offset+Carry</c>/<c>PCL+Offset</c> is the same arithmetic written as two bytes and
+    /// does not disambiguate which <c>PC</c> the datasheet means; Clark does.
+    /// <para>
+    /// The sum wraps inside sixteen bits and never reaches <c>PBR</c> (Clark §5.1.2, "the Program
+    /// Counter … is confined to bank K"), and no bank byte is pushed — unlike <c>JSL</c>, this
+    /// instruction transfers control nowhere and the value is just a number.
+    /// </para>
+    /// </remarks>
+    PerCompute816,
 }
 
 /// <summary>
@@ -916,14 +1460,23 @@ internal static class MicroOps
     /// by RDY must drive PC rather than the effective-address register.
     /// </summary>
     /// <remarks>
-    /// Only <c>WAI</c> and <c>STP</c> qualify. Every other read micro-op runs for a bounded
-    /// number of cycles, so the stale address the halt path drives for those is a single
-    /// wrong cycle — a known limitation recorded at the halt branch in <c>Cpu.Tick</c>.
-    /// These two are unbounded: a hold lasts until an interrupt or a reset, so the wrong
-    /// address would be driven for the entire wait. That matters most for exactly the case
-    /// <c>WAI</c> exists to serve, synchronising with hardware that also drives RDY.
+    /// Only <c>WAI</c> and <c>STP</c> qualify, on all four cores that have them. Every other
+    /// read micro-op runs for a bounded number of cycles, so the stale address the halt path
+    /// drives for those is a single wrong cycle — a known limitation recorded at the halt
+    /// branch in <c>Cpu.Tick</c>. These are unbounded: a hold lasts until an interrupt or a
+    /// reset, so the wrong address would be driven for the entire wait. That matters most for
+    /// exactly the case <c>WAI</c> exists to serve, synchronising with hardware that also
+    /// drives RDY.
+    /// <para>
+    /// The 65816's pair perform no bus access when live (see <see cref="MicroOp.WaiHold816"/>),
+    /// so this only decides the address a cycle halted by RDY re-drives. It is still PC there:
+    /// the halt path drives <em>some</em> address on every cycle it intercepts, and for an
+    /// unbounded hold the effective-address register — stale, since these are implied
+    /// instructions that never set it — would be the wrong one for the whole wait.
+    /// </para>
     /// </remarks>
-    public static bool HoldsAtPc(MicroOp op) => op is MicroOp.WaiHold or MicroOp.StpHold;
+    public static bool HoldsAtPc(MicroOp op) =>
+        op is MicroOp.WaiHold or MicroOp.StpHold or MicroOp.WaiHold816 or MicroOp.StpHold816;
 
     private static readonly BusPins[] Pins = BuildPinsTable();
 
@@ -969,6 +1522,12 @@ internal static class MicroOps
                      MicroOp.ExecWrite816, MicroOp.ExecWriteHigh816, MicroOp.ExecWriteHigh816Carry,
                      MicroOp.RmwModifyWrite816, MicroOp.RmwWriteHigh816, MicroOp.RmwWriteHigh816Carry,
                      MicroOp.RmwWrite816,
+                     MicroOp.PushHigh816, MicroOp.PushLow816,
+                     MicroOp.PushPbr816, MicroOp.PushPch816, MicroOp.PushPcl816, MicroOp.PushPInt816,
+                     MicroOp.BlockMoveWrite,
+                     // The calls' one push that is not already here. JSR abs and JSR (abs,X)
+                     // reuse PushPch816/PushPcl816 for the rest.
+                     MicroOp.JsrPushPcl816,
                  })
         {
             writes[(int)op] = true;
@@ -1019,6 +1578,28 @@ internal static class MicroOps
                      MicroOp.AbsHi, MicroOp.AbsHiIndexedX, MicroOp.AbsHiIndexedXWrite,
                      MicroOp.AbsHiIndexedY, MicroOp.AbsHiIndexedYWrite,
                      MicroOp.FetchAddrBank, MicroOp.FetchAddrBankX, MicroOp.FetchSrOffset,
+                     // BRK/COP's signature byte is a live-PC read like any other operand fetch
+                     // — research document §14.2's row 22j prints VDA=0 VPA=1 on it, and every
+                     // one of the 40,000 vectors' cycle 2 reads "-p-r…".
+                     MicroOp.BrkPad816,
+                     // The block moves' two operand fetches: research document §14.3's rows
+                     // 9a/9b print VDA=0 VPA=1 on both, and every one of the 40,000 vectors
+                     // reads "-p-r…" on cycles 2 and 3.
+                     MicroOp.BlockMoveDestBank, MicroOp.BlockMoveSrcBank,
+                     // A branch's displacement byte is a live-PC read like any other operand
+                     // fetch: research document §14.5's row 20 prints VDA=0 VPA=1 on it, and
+                     // every one of the 200,000 branch vectors' cycle 2 reads "-p-r…". BRL's two
+                     // displacement bytes are FetchAddrLo/FetchAddrHi, already here.
+                     MicroOp.BranchFetch816,
+                     // The jumps' and calls' remaining operand fetches: research document
+                     // §14.6's rows 1b, 4b, 1c and 4c all print VDA=0 VPA=1 on them, exactly as
+                     // for FetchAddrLo/FetchAddrHi, which the same sequences already use.
+                     MicroOp.JmpAbs816, MicroOp.JmpLong816,
+                     MicroOp.JsrFetchHi816, MicroOp.JslBank816,
+                     // PEA's second operand byte: research document §14.7's row 22d prints
+                     // VDA=0 VPA=1 on it, the same as the FetchAddrLo before it. PER's two
+                     // displacement bytes are FetchAddrLo/FetchAddrHi, already here.
+                     MicroOp.PeaFetchHi816,
                  })
         {
             pins[(int)op] = BusPins.Vpa;
@@ -1045,6 +1626,38 @@ internal static class MicroOps
                      MicroOp.ReadExec816, MicroOp.ReadExecHigh816, MicroOp.ReadExecHigh816Carry,
                      MicroOp.ExecWrite816, MicroOp.ExecWriteHigh816, MicroOp.ExecWriteHigh816Carry,
                      MicroOp.SrPtrReadHi,
+                     // The 65816's stack accesses. A stack access is a data access, never a
+                     // program one: research document §14.1's rows 22b and 22c print VDA=1
+                     // VPA=0 on every one of them, and MLB and VPB stay inactive throughout.
+                     MicroOp.PushHigh816, MicroOp.PushLow816,
+                     MicroOp.PullLow816, MicroOp.PullHigh816,
+                     MicroOp.StackDummyReadDec816,
+                     // The interrupts' four pushes. Rows 22a and 22j print VDA=1 VPA=0 on every
+                     // one, exactly as the pushes above; VPB and MLB stay inactive until the
+                     // vector reads.
+                     MicroOp.PushPbr816, MicroOp.PushPch816, MicroOp.PushPcl816, MicroOp.PushPInt816,
+                     // The block moves' two real accesses, in banks that are neither PBR nor
+                     // the one the other one uses: rows 9a/9b print VDA=1 VPA=0 on each, and
+                     // the vectors read "d--r…" then "d--w…".
+                     MicroOp.BlockMoveRead, MicroOp.BlockMoveWrite,
+                     // The indirect jumps' bank-0 pointer reads, and every stack access of the
+                     // calls and returns. Rows 3a/3b print VDA=1 VPA=0 on the pointer bytes and
+                     // rows 1c/4c/22g/22h/22i on every stack cycle, the same classification the
+                     // pushes and pulls above already carry.
+                     MicroOp.JmpIndLo816, MicroOp.JmpIndHi816, MicroOp.JmlIndBank816,
+                     // (abs,X)'s two pointer reads, AGAINST the table: rows 2a and 2b print
+                     // VDA=0 VPA=1 on them, and all 40,000 $7C/$FC vectors read "d--r". The
+                     // vectors win, and research document §14.6 records the deviation — a
+                     // pointer read is a data access on this part however the row writes it.
+                     MicroOp.JmpAbsXLo816, MicroOp.JmpAbsXHi816,
+                     MicroOp.JsrPushPcl816,
+                     MicroOp.PullP816, MicroOp.PullPcl816,
+                     MicroOp.ReturnPullPch816, MicroOp.RtiPullPch816,
+                     MicroOp.PullPbr816, MicroOp.RtiPullPbr816,
+                     // PEI's direct-page word: row 22e prints VDA=1 VPA=0 on both bytes — a
+                     // data access, not a program one — and no MLB, this being no part of a
+                     // read-modify-write. Its low byte is PtrReadLo816, already here.
+                     MicroOp.PeiReadHigh816,
                  })
         {
             pins[(int)op] = BusPins.Vda;
@@ -1079,9 +1692,15 @@ internal static class MicroOps
         pins[(int)MicroOp.RmwModifyRead816Carry] = BusPins.Mlb;
         pins[(int)MicroOp.RmwModifyWrite816] = BusPins.Mlb;
 
-        // Vector pulls. See BusPins.Vpb.
+        // Vector pulls. See BusPins.Vpb. The 65816's own pair carries the identical
+        // combination: research document §14.2's rows 22a and 22j both print VPB=0 VDA=1
+        // VPA=0, and the vectors' last two cycles read "d-vr…" — VDA set, VPA clear, VPB set,
+        // read. That VDA is asserted on a cycle whose whole purpose is fetching an address is
+        // §14.2's own warning: no amount of reasoning about the cycle's purpose gives it.
         pins[(int)MicroOp.VectorLo] = BusPins.Vda | BusPins.Vpb;
         pins[(int)MicroOp.VectorHi] = BusPins.Vda | BusPins.Vpb;
+        pins[(int)MicroOp.VectorLo816] = BusPins.Vda | BusPins.Vpb;
+        pins[(int)MicroOp.VectorHi816] = BusPins.Vda | BusPins.Vpb;
 
         return pins;
     }
@@ -1089,10 +1708,9 @@ internal static class MicroOps
     /// <summary>
     /// The micro-ops <see cref="PinsFor"/> legitimately classifies <see cref="BusPins.None"/>.
     /// <see cref="MicroOp.End"/> consumes no cycle and is never dispatched to <c>Cpu.Execute</c>
-    /// at all. <see cref="MicroOp.Unimplemented816"/> is a placeholder that throws
-    /// <see cref="NotImplementedException"/> the moment it is reached, before driving any pin —
-    /// <c>None</c> is therefore the honest recording of what it asserts (nothing, because it
-    /// never gets that far), not a guess about what a future opcode in its slot will assert.
+    /// at all. It was joined here until phase 7d task 3 by <c>Unimplemented816</c>, a
+    /// placeholder that threw the moment it was reached; the 65816 interrupt sequence was its
+    /// last emitter and it is now deleted.
     /// <see cref="MicroOp.ImpliedExec816"/> is the first micro-op that is <c>None</c> because
     /// it genuinely drives neither pin — a real 65816 internal cycle, per research document §9.
     /// <see cref="MicroOp.ImpliedInternal816"/> is that same cycle without the <c>Exec()</c>,
@@ -1118,6 +1736,42 @@ internal static class MicroOps
     /// <see cref="BusPins.None"/> — see this method's own summary. They are here because
     /// <c>Cpu.Tick</c>'s RDY halt path uses this table to choose between <c>InternalCycle</c> and
     /// <c>ReadBus</c>, and would otherwise fake a read on a halted cycle that accesses nothing.
+    /// <see cref="MicroOp.StackPushInternal816"/> is phase 7d task 2's one — cycle 2 of every
+    /// 65816 push, an <c>IO</c> row at <c>PBR,PC+1</c> in research document §14.1's row 22c. The
+    /// pulls' two internal cycles are <see cref="MicroOp.ImpliedInternal816"/>, already here:
+    /// row 22b drives the identical address on both of them, so they need no member of their own.
+    /// <see cref="MicroOp.IntInternal816"/> is phase 7d task 3's one — a hardware interrupt's
+    /// cycle 2, research document §14.2's row 22a, an <c>IO</c> at <c>PBR,PC</c>. It does need a
+    /// member of its own despite driving the address <see cref="MicroOp.ImpliedInternal816"/>
+    /// would: it owns the emulation-mode skip of the program-bank push.
+    /// <see cref="MicroOp.BlockMoveInternal"/> and <see cref="MicroOp.BlockMoveNext"/> are phase
+    /// 7d task 4's two — cycles 6 and 7 of <c>MVN</c>/<c>MVP</c>, the only internal cycles in this
+    /// codebase whose address is a <em>data</em> address (<c>DBA,Y</c>, the byte just written)
+    /// rather than a program one; research document §14.3 flags exactly that. Two members rather
+    /// than one repeated, because the second also performs the iteration's register update and
+    /// the rewind.
+    /// <see cref="MicroOp.WaiHold816"/> and <see cref="MicroOp.StpHold816"/> are phase 7d task
+    /// 5's two, and the only members here that perform no access on the <em>live</em> path
+    /// either — they drive no address at all, which is what research document §14.4 measured in
+    /// all 40,000 <c>$CB</c>/<c>$DB</c> vectors' <c>[null, null, "--------"]</c> final entry.
+    /// They are in this table for what it actually gates: <c>Cpu.Tick</c>'s RDY halt path would
+    /// otherwise fake a <em>read</em> at PC for the entire wait, on a bus that may have read
+    /// side effects. An internal cycle there accesses nothing, which is the truthful halt.
+    /// <see cref="MicroOp.BranchTaken816"/>, <see cref="MicroOp.BranchFixup816"/> and
+    /// <see cref="MicroOp.BranchLong816"/> are phase 7d task 6's three — rows 20's cycles 2a and
+    /// 2b and row 21's cycle 4, every one an <c>IO</c> at the last operand byte's address with
+    /// no memory access; the branch vectors read <c>"---r…"</c> on each.
+    /// <see cref="MicroOp.JmpAbsXInternal816"/> and <see cref="MicroOp.StackInternal816"/> are
+    /// phase 7d task 7's two — <c>(abs,X)</c>'s indexing cycle, which is the familiar <c>IO</c>
+    /// at the last operand byte, and the one shape this codebase had no member for: an internal
+    /// cycle at a <em>stack</em> address, which only <c>JSL</c>'s cycle 5 and <c>RTS</c>'s cycle
+    /// 6 have. The block moves' pair are the only other internal cycles here that drive
+    /// something other than a program address.
+    /// <see cref="MicroOp.PerCompute816"/> is phase 7d task 8's one, and the last member added to
+    /// this table — row 22f's cycle 4, an <c>IO</c> at the last operand byte's own address, the
+    /// same shape <see cref="MicroOp.BranchLong816"/> has for <c>BRL</c>'s sixteen-bit add.
+    /// <c>PEA</c> and <c>PEI</c> add nothing here: <c>PEA</c> has no internal cycle at all, and
+    /// <c>PEI</c>'s conditional one is <see cref="MicroOp.DirectPagePenalty"/>, already here.
     /// </summary>
     private static bool[] BuildInternalCycleTable()
     {
@@ -1125,12 +1779,19 @@ internal static class MicroOps
 
         foreach (var op in new[]
                  {
-                     MicroOp.End, MicroOp.Unimplemented816, MicroOp.ImpliedExec816,
+                     MicroOp.End, MicroOp.ImpliedExec816,
                      MicroOp.ImpliedInternal816, MicroOp.RepSepExec,
                      MicroOp.DirectPagePenalty, MicroOp.DirectPageIndexX, MicroOp.DirectPageIndexY,
                      MicroOp.IndexDirectPageIndirectY,
                      MicroOp.AbsIndexFixup, MicroOp.StackRelativePenalty, MicroOp.IndexStackRelativeIndirectY,
                      MicroOp.RmwModifyRead816, MicroOp.RmwModifyRead816Carry,
+                     MicroOp.StackPushInternal816,
+                     MicroOp.IntInternal816,
+                     MicroOp.BlockMoveInternal, MicroOp.BlockMoveNext,
+                     MicroOp.WaiHold816, MicroOp.StpHold816,
+                     MicroOp.BranchTaken816, MicroOp.BranchFixup816, MicroOp.BranchLong816,
+                     MicroOp.JmpAbsXInternal816, MicroOp.StackInternal816,
+                     MicroOp.PerCompute816,
                  })
         {
             internalCycles[(int)op] = true;

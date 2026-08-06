@@ -45,14 +45,51 @@ namespace SixtyFiveXX;
 /// instructions (<c>CLC</c>, <c>SEC</c>, <c>CLI</c>, <c>SEI</c>, <c>CLV</c>, <c>CLD</c>,
 /// <c>SED</c>), <c>INX</c>/<c>INY</c>/<c>DEX</c>/<c>DEY</c> and <c>NOP</c> — 200 + 12 = 212. The
 /// flag instructions and <c>NOP</c> touch no width-dependent register; the index increments are
-/// sized by <c>x</c>, the same implied-mode shape task 5's accumulator forms use. The remaining
-/// 44 entries are <see cref="OpcodeInfo.Undefined"/> and throw
-/// <see cref="UndefinedOpcodeException"/> on fetch; phase 7d fills in the rest — control flow,
-/// the stack, interrupts, <c>MVN</c>/<c>MVP</c>, <c>COP</c>/<c>WDM</c> and <c>WAI</c>/<c>STP</c>.
+/// sized by <c>x</c>, the same implied-mode shape task 5's accumulator forms use; and phase 7d
+/// task 2's thirteen: the seven pushes (<c>PHA</c>, <c>PHP</c>, <c>PHX</c>, <c>PHY</c>,
+/// <c>PHB</c>, <c>PHD</c>, <c>PHK</c>) and the six pulls (<c>PLA</c>, <c>PLP</c>, <c>PLX</c>,
+/// <c>PLY</c>, <c>PLB</c>, <c>PLD</c>) — 212 + 13 = 225. These are the first entries here to take
+/// <see cref="AddrMode.Stack"/> and so the first routed through
+/// <c>MicroOpTable.EmitControlFlow816</c> rather than <c>EmitAddressed816</c>. They declare no
+/// <see cref="Width"/> despite four of them being sized by <c>m</c> and four by <c>x</c>: they
+/// fetch no operand from memory and reach no width-deciding micro-op, so each arm tests its own
+/// flag through <c>Cpu.StackIsWide</c> (research document §14.1); and phase 7d task 3's three:
+/// <c>BRK</c>, <c>COP</c> and <c>WDM</c> — 225 + 3 = 228. The first two share Table 5-7's row 22j
+/// with each other and cycles 3 to 8 with the hardware interrupts' row 22a, so they also bring in
+/// the part's own <c>IRQ</c> and <c>NMI</c> sequences, which have no opcodes and no vectors
+/// (research document §14.2). <c>WDM</c> is none of that — a reserved two-byte, two-cycle
+/// no-operation whose second byte is never read; and phase 7d task 4's two: the block moves
+/// <c>MVN</c> (<c>$54</c>) and <c>MVP</c> (<c>$44</c>) — 228 + 2 = 230. They are the only entries
+/// here taking <see cref="AddrMode.BlockMove"/>, and the only instruction on the part that
+/// rewinds <c>PC</c>: one whole instruction per byte moved, re-entered by the next fetch until
+/// the count in the sixteen-bit accumulator runs out (research document §14.3); phase 7d task 5's
+/// two: the halts <c>WAI</c> (<c>$CB</c>) and <c>STP</c> (<c>$DB</c>) — 230 + 2 = 232; and phase
+/// 7d task 6's ten: the eight conditional branches, <c>BRA</c> and <c>BRL</c> — 232 + 10 = 242.
+/// The nine short branches take <see cref="AddrMode.Relative"/>, shared with the five eight-bit
+/// cores but emitted to micro-ops of this part's own; <c>BRL</c> brings in the one addressing mode
+/// this task adds, <see cref="AddrMode.RelativeLong"/>. <see cref="Access.None"/> and no
+/// <see cref="Width"/> on all ten: a displacement is not an operand fetched at a width the flags
+/// select, and <c>BRL</c>'s is sixteen bits whatever <c>m</c> and <c>x</c> say; and phase 7d task
+/// 7's eleven: the five jumps (<c>$4C</c>, <c>$6C</c>, <c>$7C</c>, <c>$5C</c>, <c>$DC</c>), the
+/// three calls (<c>$20</c>, <c>$FC</c>, <c>$22</c>) and the three returns (<c>$40</c>, <c>$60</c>,
+/// <c>$6B</c>) — 242 + 11 = 253. Research document §14.6. They bring in the last addressing mode
+/// this phase adds, <see cref="AddrMode.AbsoluteIndirectLong"/>, and the two entries that make
+/// <c>MicroOpTable.Emit816</c>'s routing order load-bearing: <c>$5C</c> and <c>$22</c> take
+/// <see cref="AddrMode.AbsoluteLong"/>, the mode <c>LDA long</c> uses, so they are routed on
+/// their <em>operation</em> before any mode test runs; and phase 7d task 8's three: the
+/// stack-addressing pushes <c>PEA</c> (<c>$F4</c>), <c>PEI</c> (<c>$D4</c>) and <c>PER</c>
+/// (<c>$62</c>) — 253 + 3 = <b>256</b>, the whole instruction set (research document §14.7).
+/// <para>
+/// <b>No entry is <see cref="OpcodeInfo.Undefined"/>.</b> The 65816 defines all 256 opcodes and
+/// this table now does too. <see cref="UndefinedOpcodeException"/> and <c>Cpu.FetchOpcode</c>'s
+/// guard that throws it both remain: the type is public API, and the guard is the defensive path
+/// for exactly the hole <c>MicroOpTableTests.EveryVariantDefinesAll256Opcodes</c> exists to
+/// detect. Reaching it is now a bug in this file, not a byte WDC left unassigned.
+/// </para>
 /// </remarks>
 internal static class Opcodes65C816
 {
-    /// <summary>Opcode byte to descriptor. 212 entries defined, 44 undefined.</summary>
+    /// <summary>Opcode byte to descriptor. All 256 entries defined.</summary>
     public static readonly OpcodeInfo[] Table = BuildTable();
 
     private static OpcodeInfo[] BuildTable()
@@ -337,6 +374,106 @@ internal static class Opcodes65C816
         Set(0x88, "DEY", AddrMode.Implied, Op.Dey, Access.None);
 
         Set(0xEA, "NOP", AddrMode.Implied, Op.Nop, Access.None);
+
+        // The two halts. AddrMode.Implied, but MicroOpTable.Emit816 intercepts the operation
+        // ahead of the implied branch: both are three cycles rather than two, and both then hold
+        // (research document §14.4). Access.None and Width.None — neither touches memory or a
+        // width-dependent register.
+        Set(0xCB, "WAI", AddrMode.Implied, Op.Wai, Access.None);
+        Set(0xDB, "STP", AddrMode.Implied, Op.Stp, Access.None);
+
+        // The stack. All AddrMode.Stack — the mode this codebase uses for hand-written
+        // sequences — and all Width.None: they fetch no operand from memory, so each arm
+        // tests its own flag. PHP/PHB/PHK/PLB move one byte whatever m and x say; PHD/PLD
+        // move two; PHA/PLA are sized by m and PHX/PHY/PLX/PLY by x.
+        Set(0x48, "PHA", AddrMode.Stack, Op.Pha, Access.None);
+        Set(0x08, "PHP", AddrMode.Stack, Op.Php, Access.None);
+        Set(0xDA, "PHX", AddrMode.Stack, Op.Phx, Access.None);
+        Set(0x5A, "PHY", AddrMode.Stack, Op.Phy, Access.None);
+        Set(0x8B, "PHB", AddrMode.Stack, Op.Phb, Access.None);
+        Set(0x0B, "PHD", AddrMode.Stack, Op.Phd, Access.None);
+        Set(0x4B, "PHK", AddrMode.Stack, Op.Phk, Access.None);
+
+        Set(0x68, "PLA", AddrMode.Stack, Op.Pla, Access.None);
+        Set(0x28, "PLP", AddrMode.Stack, Op.Plp, Access.None);
+        Set(0xFA, "PLX", AddrMode.Stack, Op.Plx, Access.None);
+        Set(0x7A, "PLY", AddrMode.Stack, Op.Ply, Access.None);
+        Set(0xAB, "PLB", AddrMode.Stack, Op.Plb, Access.None);
+        Set(0x2B, "PLD", AddrMode.Stack, Op.Pld, Access.None);
+
+        // Interrupts. BRK and COP are two-byte instructions whose second byte is fetched and
+        // discarded; WDM is a reserved two-byte no-operation that WDC guarantees will never be
+        // given a meaning on this part.
+        //
+        // WDM takes AddrMode.ImmediateByte, not AddrMode.Implied: it is two bytes long, and
+        // ImmediateByte already means exactly "one operand byte, always eight bits" — the mode
+        // REP and SEP use. That the byte is never actually READ (research document §14.2/§3.4,
+        // measured) is a property of the cycle, not of the operand's existence: PC still steps
+        // over it, and a disassembler that called this one byte would decode the next
+        // instruction from the middle of this one. Access.None rather than REP/SEP's
+        // Access.Read for the same measurement: no bus access happens.
+        Set(0x00, "BRK", AddrMode.Stack,         Op.Brk, Access.None);
+        Set(0x02, "COP", AddrMode.Stack,         Op.Cop, Access.None);
+        Set(0x42, "WDM", AddrMode.ImmediateByte, Op.Wdm, Access.None);
+
+        // Block moves. Two operand bytes, both banks, and one instruction per byte moved:
+        // the sequence rewinds PC so the next fetch re-executes it until the count runs out.
+        //
+        // Access.None and Width.None despite reading and writing memory on every iteration:
+        // AddrMode.BlockMove is routed by MicroOpTable.Emit816 to its own six-micro-op sequence
+        // before either field is consulted, and the two registers whose width matters here are
+        // read at the operative width by the micro-ops themselves (Cpu.IndexX/IndexY) — the same
+        // shape AddrMode.Stack's thirteen entries take. The count in A is sixteen bits whatever
+        // m says (research document §14.3), so there is no accumulator width to declare either.
+        Set(0x54, "MVN", AddrMode.BlockMove, Op.Mvn, Access.None);
+        Set(0x44, "MVP", AddrMode.BlockMove, Op.Mvp, Access.None);
+
+        // Branches. Eight conditional, BRA unconditional, and BRL with a sixteen-bit
+        // displacement. Width.None throughout: a displacement is not an operand fetched at
+        // a width the flags select.
+        Set(0x10, "BPL", AddrMode.Relative, Op.Bpl, Access.None);
+        Set(0x30, "BMI", AddrMode.Relative, Op.Bmi, Access.None);
+        Set(0x50, "BVC", AddrMode.Relative, Op.Bvc, Access.None);
+        Set(0x70, "BVS", AddrMode.Relative, Op.Bvs, Access.None);
+        Set(0x90, "BCC", AddrMode.Relative, Op.Bcc, Access.None);
+        Set(0xB0, "BCS", AddrMode.Relative, Op.Bcs, Access.None);
+        Set(0xD0, "BNE", AddrMode.Relative, Op.Bne, Access.None);
+        Set(0xF0, "BEQ", AddrMode.Relative, Op.Beq, Access.None);
+        Set(0x80, "BRA", AddrMode.Relative, Op.Bra, Access.None);
+
+        Set(0x82, "BRL", AddrMode.RelativeLong, Op.Brl, Access.None);
+
+        // Jumps. JMP abs is AddrMode.Stack by this codebase's convention for hand-written
+        // sequences; the indirect forms keep their own modes because the disassembler
+        // formats an operand from them.
+        Set(0x4C, "JMP", AddrMode.Stack,                   Op.Jmp, Access.None);
+        Set(0x6C, "JMP", AddrMode.Indirect,                Op.Jmp, Access.None);
+        Set(0x7C, "JMP", AddrMode.AbsoluteIndexedIndirect, Op.Jmp, Access.None);
+        Set(0x5C, "JML", AddrMode.AbsoluteLong,            Op.Jml, Access.None);
+        Set(0xDC, "JML", AddrMode.AbsoluteIndirectLong,    Op.Jml, Access.None);
+
+        // Calls.
+        Set(0x20, "JSR", AddrMode.Stack,                   Op.Jsr, Access.None);
+        Set(0xFC, "JSR", AddrMode.AbsoluteIndexedIndirect, Op.Jsr, Access.None);
+        Set(0x22, "JSL", AddrMode.AbsoluteLong,            Op.Jsl, Access.None);
+
+        // Returns.
+        Set(0x40, "RTI", AddrMode.Stack, Op.Rti, Access.None);
+        Set(0x60, "RTS", AddrMode.Stack, Op.Rts, Access.None);
+        Set(0x6B, "RTL", AddrMode.Stack, Op.Rtl, Access.None);
+
+        // The three stack-addressing pushes. All push two bytes whatever m says: PEA pushes
+        // its own operand, PEI pushes a sixteen-bit value read from the direct page, and PER
+        // pushes an address formed from a signed sixteen-bit displacement.
+        //
+        // AddrMode.Stack on all three, including PEI, whose operand really is a direct-page
+        // offset: the mode field routes to MicroOpTable.EmitControlFlow816's hand-written
+        // sequences, and AddrMode.DirectPage would route PEI to EmitAddressed816 and give it a
+        // load's tail. Width.None for the reason the other AddrMode.Stack entries have it, and
+        // more strongly — there is no width to declare when the answer never depends on a flag.
+        Set(0xF4, "PEA", AddrMode.Stack, Op.Pea, Access.None);
+        Set(0xD4, "PEI", AddrMode.Stack, Op.Pei, Access.None);
+        Set(0x62, "PER", AddrMode.Stack, Op.Per, Access.None);
 
         return t;
     }

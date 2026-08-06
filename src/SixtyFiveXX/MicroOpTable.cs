@@ -72,24 +72,6 @@ internal sealed class MicroOpTable
         MicroOp.RmwModifyRead, MicroOp.IndexFixupCmos,
         MicroOp.ReadPageCrossCmos, MicroOp.RmwPageCrossCmos);
 
-    /// <summary>
-    /// Placeholder sequences for the 65816. Six copies of <see cref="MicroOp.Unimplemented816"/>
-    /// rather than <see cref="Nmos"/>, because NMOS is not a harmless placeholder here — it is
-    /// wrong: the 65816 has its own native-mode BRK and IRQ vectors, and its read-modify-write
-    /// direction depends on <c>E</c> at run time (datasheet Note 17, research document §7),
-    /// neither of which a <see cref="Nmos"/> substitution would produce. This exists only so
-    /// the shared <c>IrqEntry</c> section built in the constructor below — which reads
-    /// <c>seq.IntPushP</c> unconditionally, for every variant, at table-build time — has
-    /// something to read for the 65816 too. Nothing in phase 7b reaches it: no BRK, IRQ or NMI
-    /// test runs against the 65816 yet, and <c>Reset()</c> drives its own path. The first cycle
-    /// that does reach it, once phase 7d wires up 65816 interrupts, throws
-    /// <see cref="NotImplementedException"/> naming <see cref="MicroOp.Unimplemented816"/>
-    /// instead of quietly running NMOS.
-    /// </summary>
-    private static readonly Sequences NotYet816 = new(
-        MicroOp.Unimplemented816, MicroOp.Unimplemented816, MicroOp.Unimplemented816,
-        MicroOp.Unimplemented816, MicroOp.Unimplemented816, MicroOp.Unimplemented816);
-
     /// <remarks>
     /// Every variant is listed rather than defaulting to <see cref="Nmos"/>, so this fails
     /// as loudly as <see cref="OpcodeTableFor"/> does. A silent default is the worse
@@ -102,11 +84,16 @@ internal sealed class MicroOpTable
         CpuVariant.Wdc65C02 or CpuVariant.Rockwell65C02 or CpuVariant.Synertek65C02 => Cmos,
         CpuVariant.Mos6502 or CpuVariant.Mos6510 => Nmos,
 
-        // The 65816 has its own emission path — Emit816, below — which never reads these
-        // fields; Emit() dispatches to it before any of the six are consulted. See
-        // NotYet816's own remarks for why this arm returns that rather than Nmos, and why
-        // it cannot simply be omitted.
-        CpuVariant.W65C816 => NotYet816,
+        // The 65816 consults none of these six. Emit() dispatches to Emit816 before any of them
+        // is read, and phase 7d task 2 gave the part its own IrqEntry and ResetEntry sections
+        // in the constructor below, which was the last thing that read one (seq.IntPushP) on
+        // its behalf. The arm exists only because this switch deliberately refuses a silent
+        // default; the value returned is arbitrary, and Nmos is the arbitrary value that is
+        // already here. It replaced a NotYet816 placeholder built from six copies of a
+        // throwing Unimplemented816 micro-op, which existed purely to keep the then-shared
+        // IrqEntry section from running NMOS pushes on this part; phase 7d task 3 gave the part
+        // its real interrupt sequence and deleted that micro-op outright.
+        CpuVariant.W65C816 => Nmos,
 
         _ => throw new NotSupportedException($"No micro-op sequences for {variant} yet."),
     };
@@ -145,11 +132,13 @@ internal sealed class MicroOpTable
 
     /// <summary>
     /// Index of the hardware interrupt sequence in <see cref="Ops"/>. The dispatcher sets
-    /// the CPU's vector field to <c>NmiVector</c> or <c>IrqVector</c> before entering this
-    /// sequence. The sequence's own <c>PushPInt</c> micro-op may still redirect it once
-    /// more, from <c>IrqVector</c> to <c>NmiVector</c>, if an NMI is latched before that
-    /// cycle — a hijack of the IRQ dispatch already in progress. BRK's own sequence does
-    /// the same in <c>PushPBrk</c>.
+    /// the CPU's vector field before entering this sequence — to <c>NmiVector</c> or
+    /// <c>IrqVector</c> on the five eight-bit cores, and through <c>Cpu.Vector816</c> on the
+    /// 65816, which has two sets of four (research document §14.2). On the NMOS cores the
+    /// sequence's own <c>PushPInt</c> micro-op may still redirect it once more, from
+    /// <c>IrqVector</c> to <c>NmiVector</c>, if an NMI is latched before that cycle — a hijack
+    /// of the IRQ dispatch already in progress, which <c>PushPBrk</c> also performs for BRK.
+    /// Neither the CMOS cores nor the 65816 has it: see <c>MicroOp.PushPInt816</c>.
     /// </summary>
     public readonly ushort IrqEntry;
 
@@ -172,14 +161,38 @@ internal sealed class MicroOpTable
         }
 
         IrqEntry = (ushort)ops.Count;
-        ops.AddRange([
-            MicroOp.IntDummy,
-            MicroOp.PushPch,
-            MicroOp.PushPcl,
-            seq.IntPushP,
-            MicroOp.VectorLo,
-            MicroOp.VectorHi,
-        ]);
+        if (variant == CpuVariant.W65C816)
+        {
+            // Research document §14.2, Table 5-7 row 22a: eight cycles native, seven in
+            // emulation (note 7). Cycle 1 is Cpu.FetchOpcode's own discarded read at PBR,PC —
+            // the same free read every core's interrupt entry gets — and IntInternal816 is
+            // cycle 2, the row's IO at the same address. It also skips PushPbr816 when e = 1,
+            // which is the one cycle emulation mode omits. Cycles 3 to 8 are shared verbatim
+            // with row 22j, which is why EmitControlFlow816's BRK/COP arm lists the same five
+            // micro-ops from PushPbr816 down; the two rows differ only in their leading pair.
+            //
+            // Which vector is read is decided before this sequence starts, by FetchOpcode
+            // through Cpu.Vector816 — only the dispatcher knows an IRQ from an NMI, and on
+            // this part nothing in the sequence can change the answer afterwards (no NMI
+            // hijack: MicroOp.PushPInt816).
+            ops.AddRange([
+                MicroOp.IntInternal816, MicroOp.PushPbr816,
+                MicroOp.PushPch816, MicroOp.PushPcl816, MicroOp.PushPInt816,
+                MicroOp.VectorLo816, MicroOp.VectorHi816,
+            ]);
+        }
+        else
+        {
+            ops.AddRange([
+                MicroOp.IntDummy,
+                MicroOp.PushPch,
+                MicroOp.PushPcl,
+                seq.IntPushP,
+                MicroOp.VectorLo,
+                MicroOp.VectorHi,
+            ]);
+        }
+
         ops.Add(MicroOp.End);
 
         // Reset behaves like an interrupt whose pushes are replaced by reads: S still
@@ -187,16 +200,38 @@ internal sealed class MicroOpTable
         // goes through FetchOpcode (there is no opcode to fetch), so the sequence spells
         // out both of the dummy PC reads hardware performs — FetchOpcode supplies the
         // first one for free everywhere else.
+        //
+        // The 65816 gets its own copy for the same reason it gets its own IrqEntry, even though
+        // Reset() forces E = true before entering here and so cannot run this outside emulation
+        // mode: IntDummy reads a bare 16-bit PC and StackDummyReadDec drives a bare 0x0100 + SL,
+        // and both are right on this part only because another invariant happens to hold. The
+        // bank-aware ImpliedDummy (same Vpa classification as IntDummy) and
+        // StackDummyReadDec816 compute the right address outright. No cycle of the sequence
+        // changes: PBR is 0 after Reset() and SH is $01, so the two spellings agree cycle for
+        // cycle today. VectorLo/VectorHi are shared unchanged — they read $FFFC/$FFFD as a
+        // literal bank-0 address, which is correct on every variant including this one.
         ResetEntry = (ushort)ops.Count;
-        ops.AddRange([
-            MicroOp.IntDummy,
-            MicroOp.IntDummy,
-            MicroOp.StackDummyReadDec,
-            MicroOp.StackDummyReadDec,
-            MicroOp.StackDummyReadDec,
-            MicroOp.VectorLo,
-            MicroOp.VectorHi,
-        ]);
+        ops.AddRange(variant == CpuVariant.W65C816
+            ?
+            [
+                MicroOp.ImpliedDummy,
+                MicroOp.ImpliedDummy,
+                MicroOp.StackDummyReadDec816,
+                MicroOp.StackDummyReadDec816,
+                MicroOp.StackDummyReadDec816,
+                MicroOp.VectorLo,
+                MicroOp.VectorHi,
+            ]
+            : new[]
+            {
+                MicroOp.IntDummy,
+                MicroOp.IntDummy,
+                MicroOp.StackDummyReadDec,
+                MicroOp.StackDummyReadDec,
+                MicroOp.StackDummyReadDec,
+                MicroOp.VectorLo,
+                MicroOp.VectorHi,
+            });
         ops.Add(MicroOp.End);
 
         Ops = ops.ToArray();
@@ -382,6 +417,24 @@ internal sealed class MicroOpTable
             return;
         }
 
+        // WDM ($42) is two bytes and two cycles, and its second byte is NEVER read: the cycle
+        // that would fetch it is an internal cycle. Research document §14.2/§3.4, measured —
+        // all 20,000 vectors show cycle 2 with a null value and the pin string "---r…", and PC
+        // advancing by exactly 2. Clark §6.7's "The second byte is read, but ignored" is the
+        // one claim on the point in any source and it is wrong; the vectors win, and §3.4
+        // records it as a source error.
+        //
+        // So the cycle is row 19a's implied IO unchanged — ImpliedExec816 — and the whole of
+        // Op.Wdm's operation is the second PC increment. Ahead of the implied/accumulator
+        // branch below, which would otherwise emit the same micro-op and stop PC one byte
+        // short; WDM's own AddrMode.ImmediateByte would fall through to EmitAddressed816 and
+        // throw, so this branch is what gives the mode its meaning here.
+        if (info.Operation == Op.Wdm)
+        {
+            ops.Add(MicroOp.ImpliedExec816);
+            return;
+        }
+
         // XBA is implied, but 3 cycles rather than the implied block's 2: research document
         // §13.5, datasheet Table 5-7 row 19b, which XBA has to itself. Its cycles 2 and 3 are
         // both row 19a's IO cycle at PBR,PC+1, so the sequence is that cycle twice over, with
@@ -391,6 +444,21 @@ internal sealed class MicroOpTable
         if (info.Operation == Op.Xba)
         {
             ops.AddRange([MicroOp.ImpliedInternal816, MicroOp.ImpliedExec816]);
+            return;
+        }
+
+        // WAI and STP. Research document §14.4, Table 5-7 rows 19d and 19c: three cycles each —
+        // the opcode fetch, then TWO IO cycles at PBR,PC+1, which is XBA's row 19b shape with no
+        // operation on either, hence ImpliedInternal816 twice. The hold is the fourth cycle, and
+        // §14.4 measured what the vectors record for it: [null, null, "--------"], no address and
+        // no access, in all 40,000. Ahead of the implied branch below, which would otherwise stop
+        // at two cycles and never hold at all.
+        if (info.Operation is Op.Wai or Op.Stp)
+        {
+            ops.AddRange([
+                MicroOp.ImpliedInternal816, MicroOp.ImpliedInternal816,
+                info.Operation == Op.Wai ? MicroOp.WaiHold816 : MicroOp.StpHold816,
+            ]);
             return;
         }
 
@@ -404,12 +472,269 @@ internal sealed class MicroOpTable
             return;
         }
 
+        // The branches. Research document §14.5, Table 5-7 row 20: the displacement fetch, then
+        // one conditional internal cycle if the branch is taken (Note 5), then a second one if
+        // the taken branch crossed a page AND E is set (Note 6). Three micro-ops of its own
+        // rather than the eight-bit BranchFetch/BranchTaken/BranchFixup, which compute a bare
+        // sixteen-bit PC — W65C816ReachabilityTests asserts this core reaches none of them.
+        if (info.Mode == AddrMode.Relative)
+        {
+            ops.AddRange([MicroOp.BranchFetch816, MicroOp.BranchTaken816, MicroOp.BranchFixup816]);
+            return;
+        }
+
+        // BRL. Row 21: a flat four cycles with no conditional slot at all — no not-taken case
+        // and no page-cross penalty in either mode. Its two displacement bytes are an ordinary
+        // pair of PBR,PC operand fetches, so they reuse FetchAddrLo and FetchAddrHi and only the
+        // internal cycle that performs the sixteen-bit add is new.
+        if (info.Mode == AddrMode.RelativeLong)
+        {
+            ops.AddRange([MicroOp.FetchAddrLo, MicroOp.FetchAddrHi, MicroOp.BranchLong816]);
+            return;
+        }
+
+        // The two long control transfers, ahead of every mode test below. $5C (JML long) and
+        // $22 (JSL long) both take AddrMode.AbsoluteLong, which EmitAddressed816 also handles
+        // for LDA long and thirteen other addressed opcodes — so routing on the mode first would
+        // hand a long jump a long LOAD's addressing sequence and an access tail, silently. The
+        // operation is what distinguishes them, and it is tested here rather than inside
+        // EmitAddressed816 so that method keeps reading info.Mode and info.Access alone.
+        if (info.Operation is Op.Jml or Op.Jsl)
+        {
+            EmitControlFlow816(ops, info);
+            return;
+        }
+
+        // Control flow, the stack and the interrupts do not decompose into an addressing phase
+        // plus an access phase — the same reason EmitStack exists for the five 8-bit cores.
+        // Routed by mode here and switched by operation there. AddrMode.Indirect,
+        // AbsoluteIndexedIndirect and AbsoluteIndirectLong join AddrMode.Stack because the
+        // disassembler formats an operand from them (Disassembler.Decode's own arms) while the
+        // sequence they need is hand-written like every other jump's.
+        if (info.Mode is AddrMode.Stack or AddrMode.Indirect
+            or AddrMode.AbsoluteIndexedIndirect or AddrMode.AbsoluteIndirectLong)
+        {
+            EmitControlFlow816(ops, info);
+            return;
+        }
+
+        // The block moves. Research document §14.3, Table 5-7 rows 9a/9b: seven cycles per byte
+        // moved, of which the fetch is the first and these six are the rest. One instruction per
+        // byte — BlockMoveNext rewinds PC rather than looping, so the sequence below runs to
+        // MicroOp.End on every iteration and the next fetch re-enters it. Its own mode rather
+        // than an operation test, since nothing else on the part has this shape.
+        if (info.Mode == AddrMode.BlockMove)
+        {
+            ops.AddRange([
+                MicroOp.BlockMoveDestBank, MicroOp.BlockMoveSrcBank,
+                MicroOp.BlockMoveRead, MicroOp.BlockMoveWrite,
+                MicroOp.BlockMoveInternal, MicroOp.BlockMoveNext,
+            ]);
+            return;
+        }
+
         // Everything else on the 65816 forms an effective address and then reads or writes it.
         // Routed by mode and access rather than by an ever-growing list of operations: the
         // emitter's own `default:` throw is the tripwire for a mode with no sequence, and
         // keeping every addressed opcode on one path is what makes it a real tripwire rather
         // than one that only fires for operations somebody remembered to list here.
         EmitAddressed816(ops, info);
+    }
+
+    /// <summary>
+    /// The 65816's hand-written sequences: the pushes and pulls, the calls and returns, the
+    /// interrupts, and the three stack-addressing pushes. Switched on
+    /// <see cref="OpcodeInfo.Operation"/> rather than on the mode, because
+    /// <see cref="AddrMode.Stack"/> covers instructions of one, two, three and four bytes and
+    /// only the operation tells them apart — the same shape <see cref="EmitStack"/> has for
+    /// the eight-bit cores, and the same shape <c>Disassembler.DecodeStack</c> relies on.
+    /// </summary>
+    private static void EmitControlFlow816(List<MicroOp> ops, OpcodeInfo info)
+    {
+        switch (info.Operation)
+        {
+            // Cycle 2 is one internal cycle at PBR,PC+1 that also forms the value; the high
+            // slot is skipped when the push is one byte wide. Research document §14.1, row 22c.
+            case Op.Pha or Op.Php or Op.Phx or Op.Phy or Op.Phb or Op.Phd or Op.Phk:
+                ops.AddRange([
+                    MicroOp.StackPushInternal816, MicroOp.PushHigh816, MicroOp.PushLow816,
+                ]);
+                break;
+
+            // TWO internal cycles, both at PBR,PC+1 — that asymmetry with the push is the whole
+            // of the one-cycle difference between rows 22b and 22c, and the datasheet flags it
+            // in row 22b's own label ("Different than N6502") rather than in a note. Both are
+            // ImpliedInternal816, XBA's cycle, because row 22b drives the identical address on
+            // each; measured against 28.n, whose cycles 2 and 3 are both PBR,PC+1 and neither
+            // is a stack address. PullLow816 ends the instruction when the pull is one byte
+            // wide, so the high slot costs nothing.
+            case Op.Pla or Op.Plp or Op.Plx or Op.Ply or Op.Plb or Op.Pld:
+                ops.AddRange([
+                    MicroOp.ImpliedInternal816, MicroOp.ImpliedInternal816,
+                    MicroOp.PullLow816, MicroOp.PullHigh816,
+                ]);
+                break;
+
+            // BRK and COP: research document §14.2, Table 5-7 row 22j — eight cycles native,
+            // seven in emulation, where BrkPad816 skips the program-bank push (note 7). The two
+            // differ in nothing but the vector Cpu.Vector816 picks from Op.Brk versus Op.Cop,
+            // which is why one arm serves both. Cycles 3 to 8 are row 22a's verbatim, so the
+            // five micro-ops from PushPbr816 down are the hardware interrupt sequence's own —
+            // see the constructor's IrqEntry section.
+            case Op.Brk or Op.Cop:
+                ops.AddRange([
+                    MicroOp.BrkPad816, MicroOp.PushPbr816,
+                    MicroOp.PushPch816, MicroOp.PushPcl816, MicroOp.PushPInt816,
+                    MicroOp.VectorLo816, MicroOp.VectorHi816,
+                ]);
+                break;
+
+            // ---- Phase 7d task 7: the jumps, the calls and the returns. Research document
+            // §14.6. Four operations here address memory more than one way, so these arms read
+            // info.Mode as well as info.Operation — JMP has three forms, JSR and JML two each,
+            // and only the mode tells them apart.
+
+            // Row 1b: three cycles, the destination assembled from two operand fetches.
+            case Op.Jmp when info.Mode == AddrMode.Stack:
+                ops.AddRange([MicroOp.FetchAddrLo, MicroOp.JmpAbs816]);
+                break;
+
+            // Row 3b: five cycles, a two-byte pointer in bank 0. NOT the eight-bit
+            // JmpIndLo/JmpIndHi pair — that one reproduces the NMOS page-wrap bug, which Clark
+            // §5.4 states this part does not have.
+            case Op.Jmp when info.Mode == AddrMode.Indirect:
+                ops.AddRange([
+                    MicroOp.FetchAddrLo, MicroOp.FetchAddrHi,
+                    MicroOp.JmpIndLo816, MicroOp.JmpIndHi816,
+                ]);
+                break;
+
+            // Row 3a: row 3b plus the pointer's third byte, which becomes the program bank.
+            case Op.Jml when info.Mode == AddrMode.AbsoluteIndirectLong:
+                ops.AddRange([
+                    MicroOp.FetchAddrLo, MicroOp.FetchAddrHi,
+                    MicroOp.JmpIndLo816, MicroOp.JmpIndHi816, MicroOp.JmlIndBank816,
+                ]);
+                break;
+
+            // Row 4b: row 1b's two fetches, then the bank byte. Reached through Emit816's
+            // operation test, ahead of AddrMode.AbsoluteLong's addressed sequence.
+            case Op.Jml:
+                ops.AddRange([MicroOp.FetchAddrLo, MicroOp.FetchAddrHi, MicroOp.JmpLong816]);
+                break;
+
+            // Row 2a: six cycles, an unconditional indexing cycle, and a pointer in bank K.
+            case Op.Jmp:
+                ops.AddRange([
+                    MicroOp.FetchAddrLo, MicroOp.FetchAddrHi, MicroOp.JmpAbsXInternal816,
+                    MicroOp.JmpAbsXLo816, MicroOp.JmpAbsXHi816,
+                ]);
+                break;
+
+            // Row 1c: six cycles. JsrFetchHi816 leaves PC on the last operand byte, which is
+            // both the address the internal cycle drives and the value the two pushes take —
+            // Clark §6.2.2.1's "one less than the address of the next instruction".
+            case Op.Jsr when info.Mode == AddrMode.Stack:
+                ops.AddRange([
+                    MicroOp.FetchAddrLo, MicroOp.JsrFetchHi816, MicroOp.ImpliedInternal816,
+                    MicroOp.PushPch816, MicroOp.JsrPushPcl816,
+                ]);
+                break;
+
+            // Row 2b, and the one sequence in this task whose SHAPE is the finding: the two
+            // pushes are cycles 3 and 4, before cycle 5 fetches AAH (§14.6 answer 3). Nothing
+            // else on the part interleaves a push into the middle of operand fetching. The
+            // pushed value is PC after the AAL fetch alone, which is already the instruction's
+            // own address plus 2, so no adjustment is needed anywhere.
+            case Op.Jsr:
+                ops.AddRange([
+                    MicroOp.FetchAddrLo, MicroOp.PushPch816, MicroOp.PushPcl816,
+                    MicroOp.FetchAddrHi, MicroOp.JmpAbsXInternal816,
+                    MicroOp.JmpAbsXLo816, MicroOp.JmpAbsXHi816,
+                ]);
+                break;
+
+            // Row 4c: eight cycles, and the second place a sequence's order is the finding. The
+            // OLD program bank is pushed at cycle 4, before cycle 6 reads the new one; cycle 5
+            // is an internal cycle at a stack address, which no other instruction but RTS has.
+            case Op.Jsl:
+                ops.AddRange([
+                    MicroOp.FetchAddrLo, MicroOp.FetchAddrHi,
+                    MicroOp.PushPbr816, MicroOp.StackInternal816, MicroOp.JslBank816,
+                    MicroOp.PushPch816, MicroOp.JsrPushPcl816,
+                ]);
+                break;
+
+            // Row 22g: seven cycles native, six in emulation, where RtiPullPch816 skips the
+            // program-bank pull (note 7). P comes FIRST — §14.6 answer 6 — and is restored
+            // without the shared PullP's ~Flag.B mask, which is the index-width bit here.
+            case Op.Rti:
+                ops.AddRange([
+                    MicroOp.ImpliedInternal816, MicroOp.ImpliedInternal816,
+                    MicroOp.PullP816, MicroOp.PullPcl816, MicroOp.RtiPullPch816,
+                    MicroOp.RtiPullPbr816,
+                ]);
+                break;
+
+            // Row 22h: six cycles, the last an internal cycle at the stack byte just pulled.
+            case Op.Rts:
+                ops.AddRange([
+                    MicroOp.ImpliedInternal816, MicroOp.ImpliedInternal816,
+                    MicroOp.PullPcl816, MicroOp.ReturnPullPch816, MicroOp.StackInternal816,
+                ]);
+                break;
+
+            // Row 22i: also six cycles, but for a different reason — the sixth is the bank pull,
+            // not RTS's internal cycle, and RTL is three bytes in BOTH modes (no note 7 on the
+            // row, and Clark gives a flat 6).
+            case Op.Rtl:
+                ops.AddRange([
+                    MicroOp.ImpliedInternal816, MicroOp.ImpliedInternal816,
+                    MicroOp.PullPcl816, MicroOp.ReturnPullPch816, MicroOp.PullPbr816,
+                ]);
+                break;
+
+            // ---- Phase 7d task 8: the three stack-addressing pushes. Research document §14.7,
+            // Table 5-7 rows 22d, 22e and 22f. All three end in the same unconditional
+            // PushHigh816/PushLow816 pair — sixteen bits whatever m and x say (Clark §6.8.1) —
+            // and differ only in how the four, five or three cycles before it form the value.
+
+            // Row 22d: five cycles, and the shortest of the three. Two operand fetches and two
+            // writes, with no internal cycle at all: PEA is the one instruction on the part that
+            // pushes without one, because the value needs no computing.
+            case Op.Pea:
+                ops.AddRange([
+                    MicroOp.FetchAddrLo, MicroOp.PeaFetchHi816,
+                    MicroOp.PushHigh816, MicroOp.PushLow816,
+                ]);
+                break;
+
+            // Row 22e: six cycles, seven when DL != $00 — the ONLY opcode in this phase carrying
+            // a `w` term (research document §14.8), and the only direct-page instruction in it.
+            // The first two micro-ops are the plain direct-page prefix, penalty slot included,
+            // exactly as every dp addressing mode uses them.
+            case Op.Pei:
+                ops.AddRange([
+                    MicroOp.FetchDpOffset, MicroOp.DirectPagePenalty,
+                    MicroOp.PtrReadLo816, MicroOp.PeiReadHigh816,
+                    MicroOp.PushHigh816, MicroOp.PushLow816,
+                ]);
+                break;
+
+            // Row 22f: six cycles. Two displacement bytes, then one internal cycle that performs
+            // the add — the same shape BRL has, and for the same reason, but the result is pushed
+            // rather than jumped to.
+            case Op.Per:
+                ops.AddRange([
+                    MicroOp.FetchAddrLo, MicroOp.FetchAddrHi, MicroOp.PerCompute816,
+                    MicroOp.PushHigh816, MicroOp.PushLow816,
+                ]);
+                break;
+
+            default:
+                throw new InvalidOperationException(
+                    $"{info.Mnemonic}: {info.Operation} has no 65816 control-flow sequence.");
+        }
     }
 
     /// <summary>

@@ -159,4 +159,117 @@ internal enum Op : byte
     /// 8-bit result regardless of <c>m</c> — research document §13.5. 65816 only.
     /// </summary>
     Xba,
+
+    /// <summary>
+    /// Push and pull the data bank register, and push the program bank register. One byte
+    /// each, regardless of <c>m</c> and <c>x</c>; <c>PLB</c> sets <c>N</c> and <c>Z</c> from
+    /// the eight-bit value, and there is no <c>PLK</c> — the program bank is changed only by
+    /// a long jump, a long call, a long return or an interrupt. 65816 only.
+    /// </summary>
+    Phb, Phk, Plb,
+
+    /// <summary>
+    /// Push and pull the direct register. Always sixteen bits — <c>D</c> has no narrow form —
+    /// and <c>PLD</c>'s <c>N</c> and <c>Z</c> come from all sixteen. 65816 only.
+    /// </summary>
+    Phd, Pld,
+
+    /// <summary>
+    /// The co-processor software interrupt, <c>$02</c>. Two bytes and <c>8-e</c> cycles, exactly
+    /// as <see cref="Brk"/> is: it shares Table 5-7's row 22j with it and differs only in which
+    /// vector it reads (research document §14.2). 65816 only.
+    /// </summary>
+    Cop,
+
+    /// <summary>
+    /// The reserved no-operation, <c>$42</c>. Two bytes and two cycles, and its second byte is
+    /// never read — the cycle that would fetch it is an internal cycle (research document
+    /// §14.2/§3.4, measured against all 20,000 vectors; Clark §6.7's "The second byte is read,
+    /// but ignored" is wrong). WDC guarantees the opcode will never be given a meaning on this
+    /// part. 65816 only.
+    /// </summary>
+    Wdm,
+
+    /// <summary>
+    /// The two hardware interrupts, as operations. Neither is an opcode: <c>FetchOpcode</c>
+    /// assigns one of them when it diverts into the interrupt sequence instead of fetching, so
+    /// that the sequence's shared micro-ops can tell an <c>IRQ</c> from an <c>NMI</c> from a
+    /// <c>BRK</c>. Three separate things depend on knowing which: which vector
+    /// <c>Cpu.Vector816</c> selects, whether the pushed <c>P</c> has bit 4 forced clear in
+    /// emulation mode (datasheet note 11 — hardware interrupts only, not <see cref="Brk"/> or
+    /// <see cref="Cop"/>), and whether the pushes wrap inside page one (Clark §5.22 —
+    /// <em>all</em> interrupts do, see <c>Cpu.StackWrapsInPageOne</c>). Every core assigns
+    /// them; only the 65816 reads them.
+    /// </summary>
+    Irq, Nmi,
+
+    /// <summary>
+    /// The two block moves, <c>$54</c> and <c>$44</c>. One instruction per byte moved: seven
+    /// cycles that read <c>SBA,X</c>, write <c>DBA,Y</c>, decrement the sixteen-bit accumulator
+    /// and then rewind <c>PC</c> onto the opcode unless the count has run out, so the next fetch
+    /// re-executes the same instruction. <see cref="Mvn"/> increments both index registers and
+    /// <see cref="Mvp"/> decrements them; that direction is the only thing either micro-op
+    /// sequence reads this member for. Research document §14.3. 65816 only — these appear in no
+    /// eight-bit table.
+    /// </summary>
+    Mvn, Mvp,
+
+    /// <summary>
+    /// The long branch, <c>$82</c>. <see cref="Bra"/> with a signed sixteen-bit displacement:
+    /// three bytes, a flat four cycles in both modes, and no conditional cycle of any kind —
+    /// there is no not-taken case and no page-cross penalty (research document §14.5, datasheet
+    /// Table 5-7 row 21 and Clark §6.2.1.2). Like every branch on this part it wraps inside the
+    /// program bank and never carries into <c>PBR</c>. A separate member from <see cref="Bra"/>
+    /// only because the displacement's width decides the sequence, not the condition. 65816
+    /// only.
+    /// </summary>
+    Brl,
+
+    /// <summary>
+    /// The long jump, <c>$5C</c> (<c>JML $llhhbb</c>) and <c>$DC</c> (<c>JML [$nnnn]</c>). A
+    /// <see cref="Jmp"/> that also loads <c>PBR</c> — from the instruction's fourth byte for
+    /// <c>$5C</c>, and from a three-byte bank-0 pointer's own third byte for <c>$DC</c>
+    /// (research document §14.6, Table 5-7 rows 4b and 3a). A separate member from
+    /// <see cref="Jmp"/> so <c>MicroOpTable.Emit816</c> can route <c>$5C</c> away from
+    /// <see cref="AddrMode.AbsoluteLong"/>'s load sequence on the operation alone. 65816 only.
+    /// </summary>
+    Jml,
+
+    /// <summary>
+    /// The long call, <c>$22</c>. <see cref="Jsr"/> plus a bank: it pushes the <em>old</em>
+    /// program bank first, then the sixteen-bit address of its own last byte, and jumps to a
+    /// 24-bit destination (Clark §6.2.2.1, Table 5-7 row 4c). New to the 65816, so its pushes
+    /// do <b>not</b> wrap inside page one in emulation mode — see
+    /// <c>Cpu.StackWrapsInPageOne</c>. 65816 only.
+    /// </summary>
+    Jsl,
+
+    /// <summary>
+    /// The long return, <c>$6B</c>. <see cref="Rts"/> plus a bank: three bytes pulled in both
+    /// modes — <c>PCL</c>, <c>PCH</c>, then <c>PBR</c> — with the <c>+1</c> applied to the
+    /// program counter alone, wrapping inside the pulled bank (Clark §6.2.2.2). New to the
+    /// 65816, so it does not wrap inside page one either. 65816 only.
+    /// </summary>
+    Rtl,
+
+    /// <summary>
+    /// The three stack-addressing pushes: <c>PEA</c> (<c>$F4</c>), <c>PEI</c> (<c>$D4</c>) and
+    /// <c>PER</c> (<c>$62</c>). All three push a sixteen-bit value <b>whatever <c>m</c> and
+    /// <c>x</c> say</b> — Clark §6.8.1, "PEA, PEI, and PER all push a 16-bit value onto the
+    /// stack", and, for the one that most invites doubt, "Note, however, that PEI always pushes a
+    /// 16-bit value no matter what the value of the m flag (or, for that matter the x flag) is."
+    /// They differ only in where the value comes from: <see cref="Pea"/> takes it from its own
+    /// two operand bytes and touches no memory at all, <see cref="Pei"/> reads it from the direct
+    /// page in bank 0, and <see cref="Per"/> computes it as the address of the next instruction
+    /// plus a signed sixteen-bit displacement. Research document §14.7, Table 5-7 rows 22d, 22e
+    /// and 22f.
+    /// <para>
+    /// All three are <b>new</b> to the 65816, so none of them wraps inside page one in emulation
+    /// mode — Clark §5.22's predicate covers interrupts and "old" instructions only, and none of
+    /// these three appears in <c>Cpu.StackWrapsInPageOne</c>. Measured across their emulation-mode
+    /// vectors: <c>$62</c> has 34 out-of-page-one stack writes, <c>$D4</c> 41 and <c>$F4</c> 51.
+    /// 65816 only.
+    /// </para>
+    /// </summary>
+    Pea, Pei, Per,
 }

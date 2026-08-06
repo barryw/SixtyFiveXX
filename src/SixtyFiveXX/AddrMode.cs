@@ -30,7 +30,11 @@ internal enum AddrMode : byte
     /// <summary>Absolute, indexed by Y. Reads may cost an extra cycle on a page cross.</summary>
     AbsoluteY,
 
-    /// <summary>Indirect, used only by JMP. Reproduces the NMOS page-wrap bug.</summary>
+    /// <summary>
+    /// Indirect, used only by JMP. Reproduces the NMOS page-wrap bug on the NMOS cores; the
+    /// 65816 shares the notation and not the bug, because the sequence is emitted per variant
+    /// (research document §14.6, Clark §5.4).
+    /// </summary>
     Indirect,
 
     /// <summary>
@@ -173,6 +177,37 @@ internal enum AddrMode : byte
     /// <c>DBR</c>.
     /// </summary>
     StackRelativeIndirectY,
+
+    /// <summary>
+    /// <c>MVN</c>/<c>MVP</c> — two operand bytes, each a bank: the destination bank first in
+    /// the instruction stream, then the source bank. The instruction re-executes itself once
+    /// per byte moved by rewinding <c>PC</c>, so a single fetch can run for tens of thousands
+    /// of cycles. 65816 only.
+    /// </summary>
+    /// <remarks>
+    /// The operand order is confirmed rather than assumed: research document §14.3 quotes
+    /// datasheet §7.18 ("the Data Bank Register [becomes] the value of the second byte of the
+    /// instruction (destination bank address)") and Clark §5.19's <c>MVN #$12,#$34</c>
+    /// assembling to <c>$54 $34 $12</c>, and then measures it — <c>54 n 1</c>'s byte at
+    /// <c>PC+1</c> is <c>$3D</c> and its final <c>DBR</c> is <c>$3D</c>, while the byte at
+    /// <c>PC+2</c> is the bank of the source read. That is the reverse of the assembler
+    /// syntax's operand order.
+    /// </remarks>
+    BlockMove,
+
+    /// <summary>
+    /// A signed sixteen-bit branch displacement, measured from the byte after the instruction.
+    /// Reaches anywhere in the current program bank and never changes <c>PBR</c>. Used only by
+    /// <c>BRL</c>. 65816 only.
+    /// </summary>
+    RelativeLong,
+
+    /// <summary>
+    /// <c>[abs]</c> — a three-byte pointer fetched from bank 0 at the sixteen-bit operand
+    /// address. Used only by <c>JML</c>, and the only jump that takes its destination bank
+    /// from memory rather than from the instruction stream. 65816 only.
+    /// </summary>
+    AbsoluteIndirectLong,
 
     /// <summary>Not implemented by this variant.</summary>
     Undefined,

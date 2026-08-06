@@ -115,6 +115,16 @@ public static class Disassembler
             // immediate because that is both what it is and what assemblers accept.
             Op.Brk => new Instruction(info.Mnemonic, $"#${Operand8(bus, address, 1):X2}", 2),
             Op.Jmp or Op.Jsr => new Instruction(info.Mnemonic, $"${Operand16(bus, address):X4}", 3),
+
+            // COP, PEA, PEI and PER: 65816-only stack opcodes that share AddrMode.Stack with
+            // the arms above but match none of their shapes — COP takes a signature byte like
+            // BRK, PEA and PER take an absolute-sized operand, PEI a zero-page-sized one. Not
+            // decoded here for the same reason the class header gives for every other 65816
+            // mode this switch does not cover: phase 7e owns 65816 disassembly whole, and a
+            // decoder for four of its opcodes without the rest is worse than a loud gap.
+            Op.Cop or Op.Pea or Op.Pei or Op.Per =>
+                throw new NotSupportedException($"No operand format for {info.Mnemonic} yet — phase 7e."),
+
             _ => new Instruction(info.Mnemonic, "", 1),
         };
 

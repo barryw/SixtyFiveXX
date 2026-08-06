@@ -22,6 +22,9 @@
 - **This phase adds no public API.** `PublicSurfaceTests.ExpectedPublicTypes` must be **unchanged**.
 - **Vectors:** `SingleStepTests/65816`, `v1/{opcode:x2}.e.json` and `.n.json`, roughly 11 MB per opcode across both modes. This phase pulls about **500 MB**. Never commit a vector file.
 - **Running the conformance suite: pass an explicit 600000 ms timeout on the Bash call.** The default is 120 seconds and the suite takes 3–6 minutes per framework; in phase 7c that default silently auto-backgrounded a run and stalled a task with everything uncommitted.
+- **If a vector fails, do not tune anything.** Do not adjust a number, a pin, a cycle count or a table entry until the vector goes green. Report the failing opcode, the vector file and index, and the expected-versus-actual line.
+  - **What is allowed instead**, established by task 2 and binding from task 3 on: diagnosing the failure to a rule stated by a **named primary source**, implementing that rule, and validating it against every vector in the task's scope. Task 2 did exactly this and was right — Clark §5.22's "for all interrupts and 'old' instructions" predicate, which research §14.1 had omitted while §14.7 already applied it.
+  - **The condition, which task 2 was not asked for and which is now required:** a task that derives a rule this way **must amend the research document in the same task**, and must report the deviation. A hardware rule that lives only in a C# comment is a rule the next task cannot find. Task 2's first attempt recorded a justification that was wrong — that `COP` contradicted the rule — and that wrong reason was the comment task 3 would have read.
 - **Commit before running any probe.** Reverting a deliberate mutation with `git checkout -- <file>` destroyed an implementer's uncommitted work once.
 - **Restore probe files with `git checkout --`, never `mv file.bak file`** — the latter preserves an old mtime and defeats MSBuild's staleness detection, which cost a phase-7c task two phantom failures.
 - **The `task-brief` script writes a fixed filename.** Rename each brief to `p7d-task-N-brief.md` immediately after extracting it, or it silently overwrites the previous phase's.
@@ -862,13 +865,17 @@ git commit -m "feat: 65816 stack plumbing, the thirteen pushes and pulls, and th
 - Modify: `tests/SixtyFiveXX.Conformance/Harte816Tests.cs` (225 → 228)
 
 **Interfaces:**
-- Consumes: `PushStack816`, `StackAddress816`, `EmitControlFlow816` from task 2.
+- Consumes: `PushStack816`, `StackAddress816`, `EmitControlFlow816` and `StackWrapsInPageOne` from task 2.
+
+**Task 2 left you a rule you must extend, not rediscover.** In emulation mode the stack access address depends on the *instruction*, not only on `S`: Clark §5.22, verbatim — "For all interrupts and 'old' instructions, when the e flag is 1, the address of the data for an 8-bit push is `0,1,SL` … Otherwise, … `0,S`." `Cpu.StackWrapsInPageOne` is the explicit operation list expressing it. **`BRK` and `COP` are interrupts and therefore wrap; add `Op.Brk` and `Op.Cop` to that list.** Measured, not inferred: `BRK`/`COP` have zero out-of-page-one stack accesses across their vectors, while `JSL` has 103, `RTL` 196, `PER` 34 and `PEA` 51 — those five are "new" and must stay off the list when tasks 7 and 8 reach them. `$22 e 61` writes `$0000FF` from `S = $0100` if you want the discriminating case.
 - Produces: `private int Vector816(Op reason)` — the one place native and emulation vector addresses are chosen; `MicroOp.VectorLo816`, `MicroOp.VectorHi816`, which task 7's `RTI` counterpart mirrors.
 - Produces: `Op.Cop`, `Op.Wdm`.
 
 - [ ] **Step 1: Read research §14.2 and transcribe its cycle table into the task report**
 
 Before writing code, write out the four sequences — `BRK`, `COP`, `IRQ`, `NMI` — in both modes, cycle by cycle, from §14.2. If §14.2 leaves any of them silent, **stop and say so**; do not infer a 65816 interrupt sequence from the 6502's.
+
+**Know before you start what the vectors can and cannot check.** §14.2 measured it: the SingleStepTests set is one file per opcode per mode and contains **no interrupt-line stimulus at all**, so `IRQ` and `NMI` have no vectors. `BRK` and `COP` share cycles 3–8 with Table 5-7's row 22a and those cycles *are* arbitrated by `$00` and `$02`'s files — but the two leading `IO` cycles at `PBR,PC`, the recognition timing, and the `NMI`/`IRQ` vector selection are certified by **unit tests only**. Budget for that in step 2 rather than discovering it at step 8. §14.2 also records that the sources are silent on whether the NMOS NMI-hijack anomaly exists on this part: **it must not be carried over from the 8-bit cores on the strength of their behaviour.** If you implement a hijack, cite something; if you do not, say why in the report.
 
 - [ ] **Step 2: Write the failing tests**
 
@@ -1110,7 +1117,45 @@ The rewind belongs in the last micro-op of the sequence, which must **not** call
 
 `Emit816` needs a `BlockMove` branch alongside the `Stack` one.
 
-- [ ] **Step 6: Run everything, raise `ExpectedImplementedOpcodes` to 230, both TFMs, commit**
+- [ ] **Step 6: Relax the harness's instruction-boundary assertion for these two opcodes**
+
+**Research §14.3 measured this and it changes the gate:** `$54.n`'s cycle arrays are 9,999 × 100 entries and one × 98; `$44.n` is 9,997 × 100 plus one each of 63, 28 and 14. **The 100-cycle vectors stop mid-instruction** — `54 n 1` starts with `A = $EF9B`, 61,340 bytes to move, and its recorded final state is fourteen bytes in. `Harte816Tests` line 180 asserts `cpu.AtInstructionBoundary` after ticking, and that assertion fails on 9,999 of 10,000 `$54` vectors **however correct the core is**.
+
+Everything else the harness does is already right for these files: the tick loop already runs exactly `test.Cycles.Length` cycles, and `AssertRegisters`/`AssertMemory`/`AssertCycles` compare against the vector's own recorded final state, which is the mid-instruction state. So the change is to that one assertion and nothing else.
+
+Add a named set and skip only that assertion for it:
+
+```csharp
+    /// <summary>
+    /// The block moves, whose vectors are truncated at 100 cycles with a final state part-way
+    /// through the move — research document §14.3, measured from the files rather than inferred.
+    /// A block move runs seven cycles per byte and moves up to 65,536 bytes, so no fixed-length
+    /// vector could contain a whole one.
+    /// </summary>
+    /// <remarks>
+    /// ONLY the instruction-boundary assertion is skipped. Every cycle's address, value and
+    /// eight-character pin string is still compared, and so are the final registers and memory —
+    /// against the mid-instruction state the vector actually records. For $54 that is a hundred
+    /// arbitrated cycles of a real block move per vector, rewind included, across 10,000 vectors:
+    /// stronger coverage than most opcodes in this core get, not weaker.
+    /// </remarks>
+    private static readonly HashSet<int> VectorsTruncatedMidInstruction = [0x54, 0x44];
+```
+
+and at the assertion:
+
+```csharp
+            if (!VectorsTruncatedMidInstruction.Contains(opcode))
+            {
+                Assert.True(cpu.AtInstructionBoundary,
+                    $"{test.Name}: instruction did not finish within the vector's " +
+                    $"{test.Cycles.Length} cycles.");
+            }
+```
+
+**No vector file is excluded and no vector is skipped.** Say exactly that in the task report, because the phase gate is worded "all 512 files, no exclusions".
+
+- [ ] **Step 7: Run everything, raise `ExpectedImplementedOpcodes` to 230, both TFMs, commit**
 
 Expected: conformance **1770**. Bump the README to 230.
 
@@ -1118,7 +1163,7 @@ Expected: conformance **1770**. Bump the README to 230.
 git commit -m "feat: 65816 MVN and MVP"
 ```
 
-**Gate:** conformance **1770**, both TFMs, 40,000 new vectors green.
+**Gate:** conformance **1770**, both TFMs, 40,000 new vectors green — every cycle, register and memory assertion, with the instruction-boundary assertion alone relaxed for `$54` and `$44` and the reason cited to research §14.3.
 
 ---
 
@@ -1153,7 +1198,22 @@ Add the `Op.Wai`/`Op.Stp` arm to `Emit816`, ahead of the implied branch, mirrori
         Set(0xDB, "STP", AddrMode.Implied, Op.Stp, Access.None);
 ```
 
-- [ ] **Step 4: Run everything, raise `ExpectedImplementedOpcodes` to 232, both TFMs, commit**
+- [ ] **Step 4: Teach the harness a null-address cycle**
+
+**Research §14.4 measured this and it changes the gate:** all 40,000 `$CB`/`$DB` vectors are four entries, and the fourth is `[null, null, "--------"]` — no address, no value, and not even a read/write character in the pin string. The harness cannot read that cycle today: `AssertCycles` calls `raw[0].GetInt32()`, which throws on a JSON null. It also asserts `cpu.AtInstructionBoundary`, and a core that is correctly holding is not at a boundary.
+
+Two changes, both narrow:
+
+1. **`AssertCycles` handles a null address and a null pin string.** When `raw[0]` is null, the expected cycle is "the core drove no address and performed no access". Match it against whatever the core records for a held cycle; if the core cannot express that today, that is the finding — report it before inventing an encoding.
+2. **Add `$CB` and `$DB` to `VectorsTruncatedMidInstruction`**, which task 4 introduced, and widen its doc comment: it now means "vectors whose final entry is not an instruction boundary", covering both the block moves' truncation and the halts' hold.
+
+**Task 4 found that skipping the boundary assertion is necessary but NOT sufficient, and you inherit that.** `Harte816Tests` builds one core per file and reloads only `cpu.State` between vectors — registers, not the micro-op position. A vector that ends off an instruction boundary therefore leaks a half-finished sequence into the *next* vector in the same file: `54 n 2` resumed `54 n 1`'s unfinished block move, rewound `PC` from the wrong place and executed twelve `BRK`s in bank 0. Task 4's remedy is to construct a fresh `Cpu` before the state load when the previous vector left the core off a boundary. **`$CB` and `$DB` end off a boundary by definition — a held core is not at one — so both changes apply to them too.** The fresh-core construction is already there; confirm it covers your two opcodes rather than assuming it does.
+
+Everything else stays asserted: the three executed cycles' addresses, values and pin strings, and the recorded final state.
+
+**What the vectors cannot check, and what must therefore be unit-tested:** §14.4 records that the hold itself, the wake on `IRQB`/`NMIB`, `WAI`'s `i`-flag special case and `STP`'s reset-only exit are absent from the vector set entirely. Those four rules are the whole difference between these opcodes and a three-cycle `NOP`, so step 2's unit tests are the only certification they get. Say so in the task report.
+
+- [ ] **Step 5: Run everything, raise `ExpectedImplementedOpcodes` to 232, both TFMs, commit**
 
 Expected: conformance **1774**. Bump the README to 232.
 
@@ -1161,7 +1221,7 @@ Expected: conformance **1774**. Bump the README to 232.
 git commit -m "feat: 65816 WAI and STP"
 ```
 
-**Gate:** conformance **1774**, both TFMs, 40,000 new vectors green.
+**Gate:** conformance **1774**, both TFMs, 40,000 new vectors green, and unit tests covering the four rules the vectors do not model.
 
 ---
 
@@ -1247,7 +1307,9 @@ git commit -m "feat: 65816 branches, including BRA and BRL"
 - Modify: `tests/SixtyFiveXX.Conformance/Harte816Tests.cs` (242 → 253)
 
 **Interfaces:**
-- Consumes: `PushStack816`, `PullStack816` from task 2; `VectorHi816`'s `PBR` handling as the model for `RTI`'s `PBR` pull.
+- Consumes: `PushStack816`, `PullStack816` and `StackWrapsInPageOne` from task 2; `VectorHi816`'s `PBR` handling as the model for `RTI`'s `PBR` pull.
+
+**The emulation-mode wrap list, per Clark §5.22 — "for all interrupts and 'old' instructions".** `JSR`, `RTS` and `RTI` are old instructions and wrap within page one: **add `Op.Jsr`, `Op.Rts` and `Op.Rti` to `Cpu.StackWrapsInPageOne`.** `JSL` and `RTL` are new to the 65816 and do **not** wrap — measured, 103 and 196 out-of-page-one stack accesses respectively across their vectors — so they stay off the list. Getting this backwards produces exactly the three red emulation-mode files task 2 saw.
 - Produces: `AddrMode.AbsoluteIndirectLong`, `Op.Jml`, `Op.Jsl`, `Op.Rtl`.
 
 - [ ] **Step 1: Read research §14.6 and write its seven answers into the task report**
@@ -1337,6 +1399,8 @@ git commit -m "feat: 65816 jumps, calls and returns"
 **Interfaces:**
 - Consumes: `PushStack816` and the push micro-ops from task 2. `StackIsWide()` gains three arms.
 
+**All three are new to the 65816, so none of them wraps within page one in emulation mode** — Clark §5.22's predicate covers only interrupts and "old" instructions. **Do not add `Op.Pea`, `Op.Pei` or `Op.Per` to `Cpu.StackWrapsInPageOne`.** Measured across their vectors: `PER` 34 and `PEA` 51 out-of-page-one stack accesses. Research §14.7 already stated this for `PEA`/`PEI` before §14.1 was amended to agree.
+
 - [ ] **Step 1: Read research §14.7**
 
 All three push two bytes regardless of `m`. Confirm that, and confirm what `PER`'s displacement is measured from — an off-by-one there is invisible to every test that does not compute the expected address independently.
@@ -1366,29 +1430,11 @@ Expected: **FAIL**, `UndefinedOpcodeException` for `$F4`.
         Set(0x62, "PER", AddrMode.Stack, Op.Per, Access.None);
 ```
 
-- [ ] **Step 6: Run everything, raise `ExpectedImplementedOpcodes` to 256, both TFMs, commit**
+- [ ] **Step 6: Retire the undefined-opcode probe test and replace it, in this same task**
 
-Expected: conformance **1822**. Bump the README to 256, and say the 65816 is complete.
+The moment the table reaches 256, `W65C816StateTests.UnimplementedOpcode_Throws` has no probe byte left — it derives one from the first `Op.Undefined` entry and calls `Assert.Fail` with an explanatory message when there is none. **Delete it and add its replacement in the same commit**, so the suite never goes red and no commit exists in which nothing asserts the tables are full.
 
-**`W65C816StateTests.UnimplementedOpcode_Throws` fails here** — it derives its probe byte from the first `Op.Undefined` entry and there is no longer one, so it calls `Assert.Fail` with an explanatory message by design. **Leave it failing and hand it to task 9**, which deletes it and replaces it. Do not delete it here: task 9's replacement test is the thing that has to prove the table is full, and landing the deletion without the replacement leaves a window with neither.
-
-Because of that, **this task's unit run is expected to report exactly one failure**, and the commit message must say so.
-
-```bash
-git commit -m "feat: 65816 PEA, PEI and PER — 256 of 256 opcodes"
-```
-
-**Gate:** conformance **1822**, both TFMs, 60,000 new vectors green, and exactly one known unit failure — `UnimplementedOpcode_Throws` — named in the task report.
-
----
-
-### Task 9: Whole-branch review, the undefined-opcode path, and the full 512-file gate
-
-**Files:** whatever the review finds, plus `tests/SixtyFiveXX.Tests/W65C816StateTests.cs`, `tests/SixtyFiveXX.Tests/MicroOpTableTests.cs`, `README.md`, and the spec's Phase 7d Gate section.
-
-- [ ] **Step 1: Retire the probe test and replace it**
-
-Delete `W65C816StateTests.UnimplementedOpcode_Throws`. Add to `MicroOpTableTests.cs`:
+Delete `W65C816StateTests.UnimplementedOpcode_Throws`. Add to `tests/SixtyFiveXX.Tests/MicroOpTableTests.cs`:
 
 ```csharp
     /// <summary>
@@ -1422,13 +1468,31 @@ The six type names above are the actual file names in `src/SixtyFiveXX/Variants/
 
 `UndefinedOpcodeException` and `FetchOpcode`'s guard that throws it **stay**. The type is public API in a released package, so removing it is a breaking change that buys nothing, and the guard is the defensive path for exactly the hole this new test detects. Leave its remarks count-free.
 
-- [ ] **Step 2: Produce the branch diff**
+- [ ] **Step 7: Run everything, raise `ExpectedImplementedOpcodes` to 256, both TFMs, commit**
+
+Expected: conformance **1822**, and the unit suite **green** — no known failures. Bump the README to 256, and say the 65816 is complete.
+
+```bash
+git commit -m "feat: 65816 PEA, PEI and PER — 256 of 256 opcodes"
+```
+
+**Gate:** conformance **1822**, unit suite green with no known failures, both TFMs, 60,000 new vectors green.
+
+---
+
+### Task 9: Whole-branch review and the full 512-file gate
+
+**Files:** whatever the review finds, plus `README.md` and the spec's Phase 7d Gate section.
+
+The undefined-opcode path was settled in task 8: the probe test is gone and `MicroOpTableTests.EveryVariantDefinesAll256Opcodes` replaced it in the same commit, so no commit on this branch has either a red suite or an unguarded table. `UndefinedOpcodeException` and its fetch guard stay.
+
+- [ ] **Step 1: Produce the branch diff**
 
 ```bash
 git diff main...HEAD > .superpowers/sdd/p7d-review.diff
 ```
 
-- [ ] **Step 3: Review against this checklist**
+- [ ] **Step 2: Review against this checklist**
 
 Each item is a failure this project has actually had:
 
@@ -1444,19 +1508,19 @@ Each item is a failure this project has actually had:
 - **No count in a doc comment that will drift.** Three sites were deliberately made count-free; do not reintroduce one.
 - **`PublicSurfaceTests` untouched**, and no vector file or cache directory staged.
 
-- [ ] **Step 4: Fix Critical and Important findings, each as its own commit**
+- [ ] **Step 3: Fix Critical and Important findings, each as its own commit**
 
 Minor findings are either fixed or recorded in the ledger with the reason for not fixing. Do not silently drop one.
 
-- [ ] **Step 5: Update the README**
+- [ ] **Step 4: Update the README**
 
 The 65816 section says 256 of 256 and lists the phase's groups. The support-matrix row was deliberately made count-free — leave it that way.
 
-- [ ] **Step 6: Add the Verified paragraph to the spec, and mark the phase-table row**
+- [ ] **Step 5: Add the Verified paragraph to the spec, and mark the phase-table row**
 
 Under §"Phase 7d" Gate, in the shape 7a, 7b, 7c and 7c′ already use: the measured counts, both TFMs, and any rule with no vector coverage that is pinned only by a unit test. Then mark the phase-split table's **7d** row complete.
 
-- [ ] **Step 7: Run the full gate on an idle machine**
+- [ ] **Step 6: Run the full gate on an idle machine**
 
 ```bash
 uptime
@@ -1467,7 +1531,7 @@ dotnet test tests/SixtyFiveXX.Tests -c Release --filter "Category=Performance"
 
 Expected: conformance **1822** on both TFMs — all 512 files, 5,120,000 vectors — the unit suite green on both, and a throughput figure above the 50 MHz floor. Pass an explicit 600000 ms timeout on the conformance call. If the throughput gate fails, check `uptime` before believing it.
 
-- [ ] **Step 8: Record the phase in the ledger**
+- [ ] **Step 7: Record the phase in the ledger**
 
 Append a phase-7d section to `.superpowers/sdd/progress.md`: per-task commits, what each gate measured, every defect the vectors found that review did not, every defect review found that the vectors could not, every research gap §14 recorded as open, and the carry-forward list for 7e.
 
