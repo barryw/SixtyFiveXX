@@ -288,11 +288,11 @@ The parts that earn it a place:
 
 ## 3. Where the sources disagree, and what wins
 
-Five conflicts have surfaced. The first two were found while extracting §2, and in both the outlier is the
+Six conflicts have surfaced. The first two were found while extracting §2, and in both the outlier is the
 book, and a later reader holding only the book would otherwise "correct" the implementation into a bug.
-§3.3–§3.5 were added on 2026-08-05 by phase 7d task 1; in those three the outlier is a *primary* source
-contradicting itself or contradicting the vectors, which is the more dangerous shape, because §4's
-precedence rules do not help when a source is its own outlier.
+§3.3–§3.5 were added on 2026-08-05 by phase 7d task 1, and §3.6 on 2026-08-06 by phase 7d task 7; in those
+four the outlier is a *primary* source contradicting itself or contradicting the vectors, which is the more
+dangerous shape, because §4's precedence rules do not help when a source is its own outlier.
 
 ### 3.1 The bit positions of the m and x flags — the book is wrong
 
@@ -408,6 +408,21 @@ row. The datasheet contradicts itself two pages earlier: its own opcode matrix p
 **Resolution: `$DB`.** Harmless if the opcode table is built from the matrix or from Clark; a silent
 clobbering of `CLD` if it is built from Table 5-5. Recorded because Table 5-5 is the table one naturally
 reaches for — it is the one that carries the flag-effect columns.
+
+### 3.6 `(abs,X)`'s pointer-read pins in Table 5-7 rows 2a/2b — the datasheet is wrong
+
+Added 2026-08-06, phase 7d task 7. Rows 2a (`JMP (abs,X)`, `$7C`) and 2b (`JSR (abs,X)`, `$FC`) print
+`VDA=0 VPA=1` on both pointer-read cycles — row 2a's cycles 5 and 6, row 2b's cycles 7 and 8 — which pins
+them as program-stream reads. All 40,000 `$7C`/`$FC` vectors read **`d--r`** instead: `VDA` asserted, `VPA`
+clear, exactly like every other pointer read on the part. Rows 3a/3b, printing `VDA=1 VPA=0` on the bank-0
+pointer reads, are correct and unaffected; the error is confined to the two indexed-indirect rows. Failing
+evidence, from the run that caught it: `7c e 1: cycle 4 expected [$72CB6A, $11, "d--remx-"], got
+[$72CB6A, $11, "-p-remx-"]`, and the same on `7c n 1`, `fc e 1` and `fc n 1`.
+
+**Resolution: the vectors win, per §4 rule 4.** The implementation follows them, not the datasheet. Same
+shape as §3.4 — a primary source's stated bus behaviour overruled by pin strings — and as §13.1's row 16b
+and §14.1's rows 22a/22c. Full write-up, including the discriminating run and the 40,000-vector count, at
+§14.6.
 
 ## 4. Source precedence
 
@@ -2884,7 +2899,7 @@ three. Clark's example is a single-point check: `S = $01FB`, `e = 0`, `$0001FC..
 
 **Amended 2026-08-06, phase 7d task 7 — three things this section got wrong or left open, all measured.**
 
-**(a) Rows 2a and 2b's pointer-read pins are wrong.** Both rows print `VDA=0 VPA=1` on `(abs,X)`'s two
+**(a) Rows 2a and 2b's pointer-read pins are wrong — recorded as a source conflict at §3.6.** Both rows print `VDA=0 VPA=1` on `(abs,X)`'s two
 pointer cycles — row 2a's 5 and 6, row 2b's 7 and 8 — which would make them program-stream reads. All
 40,000 `$7C`/`$FC` vectors read **`d--r`**: `VDA` asserted, `VPA` clear, exactly like every other pointer
 read on the part. The implementation follows the vectors. Failing evidence, from the run that caught it:
@@ -2917,14 +2932,15 @@ unobservable except in the pin string. The final `P` is the pulled byte verbatim
 emulation (all 10,000 `40.e`) — the same two forced bits §14.1 measured for `PLP`, and the same defect-1
 rule: no `~Flag.B` mask anywhere.
 
-**Coverage notes for the eleven, measured from the files.** `$6C` has **35 vectors per mode** whose
-pointer low byte is `$FF`, so the absence of the NMOS page-wrap bug is directly arbitrated; it has **no**
-vector whose pointer crosses the bank 0 boundary, and `$DC` has exactly one, so Clark §5.4's
-`$00FFFF → $000000` wrap rests almost entirely on the citation. `$7C` has 2,512 vectors per mode whose
-indexed pointer wraps inside bank K. `$6B` has **no** vector that pulls `$FFFF`, so Clark §6.2.2.2's *"if
-$FF, $FF, and $12 are pulled from the stack, the instruction at $120000 (rather than $130000) will be
-executed next"* — that `RTL`'s `+1` does not carry into the pulled bank — has **zero vector coverage** and
-is certified by unit test alone.
+**Coverage notes for the eleven, measured from the files.** `$6C` has **36** vectors in `.e` and **35** in
+`.n` whose pointer low byte is `$FF`, so the absence of the NMOS page-wrap bug is directly arbitrated. Two
+of the `.e` vectors carry pointer `$FFFF` itself, so Clark §5.4's `$00FFFF → $000000` wrap is now
+**measured, not merely cited**: `6c e 4469` and `6c e 6042` both read `$00FFFF`, then `$000000` — the same
+two addresses as Clark's own worked example. `$DC` has one vector whose pointer crosses the boundary, at
+its own third byte. `$7C` has 2,512 vectors per mode whose indexed pointer wraps inside bank K. `$6B` has
+**no** vector that pulls `$FFFF`, so Clark §6.2.2.2's *"if $FF, $FF, and $12 are pulled from the stack, the
+instruction at $120000 (rather than $130000) will be executed next"* — that `RTL`'s `+1` does not carry
+into the pulled bank — has **zero vector coverage** and is certified by unit test alone.
 
 ### 14.7 `PEA`, `PEI`, `PER`
 

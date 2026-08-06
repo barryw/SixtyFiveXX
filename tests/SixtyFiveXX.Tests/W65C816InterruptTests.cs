@@ -434,4 +434,44 @@ public class W65C816InterruptTests
         cpu.Step();                     // the handler's first instruction runs
         Assert.Equal(0x4401, cpu.State.PC);
     }
+
+    // ---- RTI's split commit: I lands early enough for RTI's own boundary poll.
+
+    /// <summary>
+    /// <c>RTI</c> commits six of its eight pulled status bits — <c>I</c> among them —
+    /// at <c>PullP816</c>'s cycle, three cycles before the last one, and holds back only the
+    /// two width bits (<c>PullP816</c>'s remarks). <c>Cpu.Tick</c>'s interrupt poll always uses
+    /// register state from <em>before</em> the current cycle's own <c>Execute</c>, so a bit that
+    /// only becomes live on an instruction's last cycle is invisible to that same cycle's poll —
+    /// exactly <c>CLI</c>'s one-instruction delay. Committing <c>I</c> three cycles early is what
+    /// lets a level-held IRQ, unmasked by the pulled <c>P</c>, be recognised at <b>this</b>
+    /// <c>RTI</c>'s own boundary instead of one instruction later. Nothing in the vector set can
+    /// tell the two timings apart — <c>SingleStepTests</c> carries no interrupt-line stimulus at
+    /// all (§14.2's gap 1) — so a regression here would show up only as a pin-string difference
+    /// on <c>$40</c>'s conformance vectors, never as a failure.
+    /// </summary>
+    [Fact]
+    public void NativeRtiPullingIClear_RecognisesAHeldIrqOnItsOwnBoundary()
+    {
+        var (cpu, ram) = Machine(emulation: false);
+        ram[0xC000] = 0x40;             // RTI
+        cpu.State.I = true;             // masked going in, as if still inside a handler
+        cpu.State.S = 0x01FB;
+        ram[0x0001FC] = 0x00;           // P: everything clear, including I
+        ram[0x0001FD] = 0x00;           // PCL  -> return to $00C000, the shared NOP
+        ram[0x0001FE] = 0xC0;           // PCH
+        ram[0x0001FF] = 0x00;           // PBR  -> bank 0
+        cpu.SetIrq(true);               // held for the whole test
+
+        cpu.Step();                     // RTI itself
+        Assert.False(cpu.State.I);
+        Assert.Equal(0xC000, cpu.State.PC);
+
+        cpu.Step();                     // the very next boundary
+
+        // Recognised at RTI's own boundary: the CPU diverts straight into the interrupt-entry
+        // sequence and never fetches the NOP RTI returned to. A one-instruction-late core would
+        // land on $C001 here instead, having run that NOP first.
+        Assert.Equal(0x4400, cpu.State.PC);
+    }
 }

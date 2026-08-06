@@ -2084,8 +2084,9 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 // Rows 3b/3a cycle 5, at 0,AA+1 — a sixteen-bit increment inside bank 0, with no
                 // page qualification at all. This is the cycle that would carry the NMOS
                 // JMP ($xxFF) bug if it were copied from MicroOp.JmpIndHi; Clark §5.4 says
-                // outright that this part does not have it, and $6c's 35 pointer-low-byte-$FF
-                // vectors per mode arbitrate it.
+                // outright that this part does not have it, and $6c's 36 (.e) / 35 (.n)
+                // pointer-low-byte-$FF vectors arbitrate it — including the $00FFFF -> $000000
+                // bank-0 wrap itself, measured directly from 6c e 4469 and 6c e 6042.
                 _s.PC = (ushort)((ReadBus((_ptr + 1) & 0xFFFF) << 8) | _tmp);
                 break;
 

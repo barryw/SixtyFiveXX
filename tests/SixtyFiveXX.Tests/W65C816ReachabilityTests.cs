@@ -28,9 +28,9 @@ public class W65C816ReachabilityTests
     /// <c>ReadBus((_s.PC - 1) &amp; 0xFFFF)</c> body and were the same kind of grep miss, added
     /// here after a review caught the first two but not these four. Members the grep hits but
     /// that compute neither kind of address are deliberately absent: <c>ImpliedDummy</c> and
-    /// <c>ImmExec</c> already call <c>PcAddress()</c> and are bank-aware; <c>JmpIndLo</c>,
-    /// <c>BitBranchDummy</c> and <c>BitBranchFixup</c> read <c>_ptr</c> or <c>_addr</c>; and
-    /// <c>JamHold</c> drives the literal <c>$FFFF</c>/<c>$FFFE</c> jam pattern.
+    /// <c>ImmExec</c> already call <c>PcAddress()</c> and are bank-aware; <c>BitBranchDummy</c>
+    /// and <c>BitBranchFixup</c> read <c>_ptr</c> or <c>_addr</c>; and <c>JamHold</c> drives the
+    /// literal <c>$FFFF</c>/<c>$FFFE</c> jam pattern.
     /// </para>
     /// <para>
     /// <b>The four indirect-<c>JMP</c> micro-ops are on the list for a second reason, and it is
