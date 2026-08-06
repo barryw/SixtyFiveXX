@@ -206,6 +206,30 @@ public class W65C816InterruptTests
         Assert.Equal(0x01FD, cpu.State.S);      // and never left page one
     }
 
+    /// <summary>
+    /// A hardware interrupt is on Clark §5.22's wrapping list too, and no vector reaches this —
+    /// the helper's fixed <c>S = $01FF</c> keeps every one of <see cref="Machine"/>'s hardware
+    /// pushes inside page one anyway, so this sets <c>S</c> to the same boundary-crossing value
+    /// <see cref="EmulationInterruptPushesWrapInsidePageOne"/> uses for <c>BRK</c>. Deleting
+    /// <c>Op.Irq or Op.Nmi</c> from <c>StackWrapsInPageOne</c> makes this fail: SH would stay
+    /// $01 and the three pushes would land at $01FF, $01FE, $01FD instead of wrapping.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]     // IRQ
+    [InlineData(true)]      // NMI
+    public void EmulationHardwareInterruptPushesWrapInsidePageOne(bool nmi)
+    {
+        var (cpu, ram) = Machine(emulation: true);
+        cpu.State.S = 0x0100;
+        if (nmi) cpu.SetNmi(true); else cpu.SetIrq(true);
+
+        StepIntoTheHandler(cpu);
+
+        Assert.Equal(0xC0, ram[0x000100]);      // PCH at the top of the descent
+        Assert.Equal(0x01, ram[0x0001FF]);      // PCL, SL having wrapped $00 -> $FF
+        Assert.Equal(0x01FD, cpu.State.S);      // and never left page one
+    }
+
     // ---- WDM.
 
     /// <summary>

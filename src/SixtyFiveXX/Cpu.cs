@@ -489,6 +489,11 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
         // stage-1 recognition is deferred to T1 phase 1 of the handler's first
         // instruction. The guarantee that falls out of it is the visible one — at least
         // one handler instruction always executes before another interrupt is serviced.
+        // The 65816's own BRK/COP/IRQ/NMI sequences end on VectorHi816, not this micro-op,
+        // and research document §14.2 records that omission as a deliberate decision — this
+        // part has no such blackout after those four. Its reset sequence is the exception:
+        // MicroOpTable's ResetEntry shares the 8-bit VectorLo/VectorHi pair on every variant,
+        // so this line still fires for the 65816 after a reset.
         if (micro == MicroOp.VectorHi) _intPoll = false;
 
         _mpc++;

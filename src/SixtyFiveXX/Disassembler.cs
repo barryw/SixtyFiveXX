@@ -112,10 +112,8 @@ public static class Disassembler
         info.Operation switch
         {
             // The byte after BRK is fetched and discarded, never executed. Written as an
-            // immediate because that is both what it is and what assemblers accept. The 65816's
-            // COP has the identical shape — Table 5-7's row 22j covers both, and its signature
-            // byte is the one a co-processor handler reads back off the stack.
-            Op.Brk or Op.Cop => new Instruction(info.Mnemonic, $"#${Operand8(bus, address, 1):X2}", 2),
+            // immediate because that is both what it is and what assemblers accept.
+            Op.Brk => new Instruction(info.Mnemonic, $"#${Operand8(bus, address, 1):X2}", 2),
             Op.Jmp or Op.Jsr => new Instruction(info.Mnemonic, $"${Operand16(bus, address):X4}", 3),
             _ => new Instruction(info.Mnemonic, "", 1),
         };

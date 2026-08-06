@@ -2344,6 +2344,15 @@ so the first handler instruction does not run. Bounded and non-looping: `IRQ` ca
 is set two cycles before the boundary, and the `NMI` latch is consumed on dispatch. If a source is ever
 found, the fix is one clause in `Cpu.Tick`.
 
+**This is not a claim that the part has no blackout anywhere.** Reset shares the 8-bit
+`MicroOp.VectorLo`/`VectorHi` pair on every variant including the 65816 (`MicroOpTable`'s
+`ResetEntry`, both spellings agreeing cycle for cycle) — deliberately, per that table's own
+comment, because it is correct on every variant. `Cpu.Tick`'s `if (micro == MicroOp.VectorHi)
+_intPoll = false;` therefore still fires for this part after a reset, exactly as it does for the
+5 eight-bit cores. So: no blackout after `BRK`/`COP`/`IRQ`/`NMI` (this section's finding above),
+but a blackout after reset (an artifact of the shared reset micro-ops, not a separate decision).
+Observed, not re-derived from a source.
+
 **3. One gap closed as a side effect.** `Cpu.Tick` carried a "KNOWN GAP, 65816 only" comment since phase
 7b: the pins of the interrupt-entry cycle that `FetchOpcode` performs in place of an opcode fetch were
 unknown, because §9 has no interrupt rows. Row 22a's cycle 1 supplies them — `VDA=1 VPA=1` at `PBR,PC`,
