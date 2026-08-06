@@ -24,20 +24,46 @@ namespace SixtyFiveXX;
 /// </remarks>
 public static class Disassembler
 {
+    /// <inheritdoc cref="Decode{TBus, TVariant}(in TBus, int, bool, bool)"/>
+    /// <remarks>
+    /// Both operand widths are taken as eight-bit. That is exactly right for the five 8-bit
+    /// cores, which have no width flags at all, and is the 65816's reset state — but on that
+    /// part it is an assumption, not a fact, and a caller decoding native-mode code with
+    /// 16-bit registers must use the overload that says so.
+    /// </remarks>
+    public static Instruction Decode<TBus, TVariant>(in TBus bus, int address)
+        where TBus : struct, IBus
+        where TVariant : struct, ICpuVariant =>
+        Decode<TBus, TVariant>(bus, address, wideAccumulator: false, wideIndex: false);
+
     /// <summary>Decodes the instruction at <paramref name="address"/>.</summary>
     /// <typeparam name="TBus">The bus to read from.</typeparam>
     /// <typeparam name="TVariant">The core whose opcode table decides what the bytes mean.</typeparam>
     /// <param name="bus">Memory to decode from. Read only, and never written.</param>
-    /// <param name="address">Where the opcode sits. Wrapped to 16 bits, as the bus wraps.</param>
+    /// <param name="address">
+    /// Where the opcode sits. Wrapped to the width the variant fetches over: 16 bits on the
+    /// eight-bit cores, 24 on the 65816, which fetches from <c>PBR:PC</c> across 16 MB.
+    /// </param>
+    /// <param name="wideAccumulator">
+    /// True when the accumulator and memory are 16 bits — the 65816's <c>m = 0</c>. Decides
+    /// the length of <c>LDA #</c> and its siblings, which the byte stream does not encode.
+    /// Named for the width rather than for the flag because <c>m = 1</c> means <em>eight</em>
+    /// bits, and a parameter called <c>m</c> would invert under the reader.
+    /// </param>
+    /// <param name="wideIndex">
+    /// True when X and Y are 16 bits — the 65816's <c>x = 0</c>. Decides the length of
+    /// <c>LDX #</c>, <c>LDY #</c>, <c>CPX #</c> and <c>CPY #</c>.
+    /// </param>
     /// <returns>The mnemonic, its operand text, and the bytes consumed.</returns>
-    public static Instruction Decode<TBus, TVariant>(in TBus bus, int address)
+    public static Instruction Decode<TBus, TVariant>(
+        in TBus bus, int address, bool wideAccumulator, bool wideIndex)
         where TBus : struct, IBus
         where TVariant : struct, ICpuVariant
     {
         // The same table the engine resolved, reached the same way. A variant wired into
         // one path and forgotten in the other throws there rather than decoding as
         // something else here.
-        var info = MicroOpTable.For<TVariant>().Info[bus.Read(address & 0xFFFF)];
+        var info = MicroOpTable.For<TVariant>().Info[bus.Read(address & AddressMask<TVariant>())];
 
         // Each arm reads exactly the operand bytes its instruction has. Reading all three up
         // front would be shorter, but it would touch addresses the instruction never touches
@@ -47,40 +73,50 @@ public static class Disassembler
         {
             AddrMode.Implied => new Instruction(info.Mnemonic, "", 1),
             AddrMode.Accumulator => new Instruction(info.Mnemonic, "A", 1),
-            AddrMode.Immediate => new Instruction(info.Mnemonic, $"#${Operand8(bus, address, 1):X2}", 2),
+            AddrMode.Immediate =>
+                new Instruction(info.Mnemonic, $"#${Operand8<TBus, TVariant>(bus, address, 1):X2}", 2),
 
-            AddrMode.ZeroPage => new Instruction(info.Mnemonic, $"${Operand8(bus, address, 1):X2}", 2),
-            AddrMode.ZeroPageX => new Instruction(info.Mnemonic, $"${Operand8(bus, address, 1):X2},X", 2),
-            AddrMode.ZeroPageY => new Instruction(info.Mnemonic, $"${Operand8(bus, address, 1):X2},Y", 2),
+            AddrMode.ZeroPage =>
+                new Instruction(info.Mnemonic, $"${Operand8<TBus, TVariant>(bus, address, 1):X2}", 2),
+            AddrMode.ZeroPageX =>
+                new Instruction(info.Mnemonic, $"${Operand8<TBus, TVariant>(bus, address, 1):X2},X", 2),
+            AddrMode.ZeroPageY =>
+                new Instruction(info.Mnemonic, $"${Operand8<TBus, TVariant>(bus, address, 1):X2},Y", 2),
 
-            AddrMode.Absolute => new Instruction(info.Mnemonic, $"${Operand16(bus, address):X4}", 3),
-            AddrMode.AbsoluteX => new Instruction(info.Mnemonic, $"${Operand16(bus, address):X4},X", 3),
-            AddrMode.AbsoluteY => new Instruction(info.Mnemonic, $"${Operand16(bus, address):X4},Y", 3),
+            AddrMode.Absolute =>
+                new Instruction(info.Mnemonic, $"${Operand16<TBus, TVariant>(bus, address):X4}", 3),
+            AddrMode.AbsoluteX =>
+                new Instruction(info.Mnemonic, $"${Operand16<TBus, TVariant>(bus, address):X4},X", 3),
+            AddrMode.AbsoluteY =>
+                new Instruction(info.Mnemonic, $"${Operand16<TBus, TVariant>(bus, address):X4},Y", 3),
 
             // The NMOS page-wrap bug and its CMOS fix are the same three bytes and the same
             // notation; they differ only in where the second vector byte is fetched from.
             AddrMode.Indirect or AddrMode.IndirectFixed =>
-                new Instruction(info.Mnemonic, $"(${Operand16(bus, address):X4})", 3),
+                new Instruction(info.Mnemonic, $"(${Operand16<TBus, TVariant>(bus, address):X4})", 3),
             AddrMode.AbsoluteIndexedIndirect =>
-                new Instruction(info.Mnemonic, $"(${Operand16(bus, address):X4},X)", 3),
+                new Instruction(info.Mnemonic, $"(${Operand16<TBus, TVariant>(bus, address):X4},X)", 3),
 
             AddrMode.ZeroPageIndirect =>
-                new Instruction(info.Mnemonic, $"(${Operand8(bus, address, 1):X2})", 2),
+                new Instruction(info.Mnemonic, $"(${Operand8<TBus, TVariant>(bus, address, 1):X2})", 2),
             AddrMode.IndexedIndirect =>
-                new Instruction(info.Mnemonic, $"(${Operand8(bus, address, 1):X2},X)", 2),
+                new Instruction(info.Mnemonic, $"(${Operand8<TBus, TVariant>(bus, address, 1):X2},X)", 2),
             AddrMode.IndirectIndexed =>
-                new Instruction(info.Mnemonic, $"(${Operand8(bus, address, 1):X2}),Y", 2),
+                new Instruction(info.Mnemonic, $"(${Operand8<TBus, TVariant>(bus, address, 1):X2}),Y", 2),
 
             // Shown as the address landed on, not the displacement encoded. The base is the
             // byte after the instruction, which is why the length is added before the offset.
             AddrMode.Relative => new Instruction(
-                info.Mnemonic, $"${BranchTarget(address, 2, Operand8(bus, address, 1)):X4}", 2),
+                info.Mnemonic,
+                $"${BranchTarget(address, 2, Operand8<TBus, TVariant>(bus, address, 1)):X4}",
+                2),
 
             // BBR/BBS: a page-zero address, then a displacement measured from the end of a
             // three-byte instruction.
             AddrMode.ZeroPageRelative => new Instruction(
                 info.Mnemonic,
-                $"${Operand8(bus, address, 1):X2},${BranchTarget(address, 3, Operand8(bus, address, 2)):X4}",
+                $"${Operand8<TBus, TVariant>(bus, address, 1):X2}," +
+                $"${BranchTarget(address, 3, Operand8<TBus, TVariant>(bus, address, 2)):X4}",
                 3),
 
             // The 65C02's undefined opcodes are NOPs, but not uniform ones: these two shapes
@@ -88,12 +124,12 @@ public static class Disassembler
             // the bytes, so the operand is shown rather than hidden.
             AddrMode.NopSingleCycle => new Instruction(info.Mnemonic, "", 1),
             AddrMode.NopAbsolute or AddrMode.NopAbsoluteExtra =>
-                new Instruction(info.Mnemonic, $"${Operand16(bus, address):X4}", 3),
+                new Instruction(info.Mnemonic, $"${Operand16<TBus, TVariant>(bus, address):X4}", 3),
 
             // An opcode this variant does not implement still occupies its one byte.
             AddrMode.Undefined => new Instruction(info.Mnemonic, "", 1),
 
-            AddrMode.Stack => DecodeStack(info, bus, address),
+            AddrMode.Stack => DecodeStack<TBus, TVariant>(info, bus, address),
 
             // Never a silent default. Phase 4 shipped a switch that quietly handed an
             // unmapped variant the NMOS profile, and the only signal was a conformance
@@ -107,14 +143,17 @@ public static class Disassembler
     /// the pushes and pulls at one byte, <c>BRK</c> at two, and the absolute <c>JMP</c> and
     /// <c>JSR</c> at three. The operation tells them apart.
     /// </summary>
-    private static Instruction DecodeStack<TBus>(OpcodeInfo info, in TBus bus, int address)
-        where TBus : struct, IBus =>
+    private static Instruction DecodeStack<TBus, TVariant>(OpcodeInfo info, in TBus bus, int address)
+        where TBus : struct, IBus
+        where TVariant : struct, ICpuVariant =>
         info.Operation switch
         {
             // The byte after BRK is fetched and discarded, never executed. Written as an
             // immediate because that is both what it is and what assemblers accept.
-            Op.Brk => new Instruction(info.Mnemonic, $"#${Operand8(bus, address, 1):X2}", 2),
-            Op.Jmp or Op.Jsr => new Instruction(info.Mnemonic, $"${Operand16(bus, address):X4}", 3),
+            Op.Brk =>
+                new Instruction(info.Mnemonic, $"#${Operand8<TBus, TVariant>(bus, address, 1):X2}", 2),
+            Op.Jmp or Op.Jsr =>
+                new Instruction(info.Mnemonic, $"${Operand16<TBus, TVariant>(bus, address):X4}", 3),
 
             // COP, PEA, PEI and PER: 65816-only stack opcodes that share AddrMode.Stack with
             // the arms above but match none of their shapes — COP takes a signature byte like
@@ -128,13 +167,44 @@ public static class Disassembler
             _ => new Instruction(info.Mnemonic, "", 1),
         };
 
-    /// <summary>Reads an operand byte, wrapping at the top of memory as the bus does.</summary>
-    private static int Operand8<TBus>(in TBus bus, int address, int offset) where TBus : struct, IBus =>
-        bus.Read((address + offset) & 0xFFFF);
+    /// <summary>Reads an operand byte, wrapping where <see cref="OperandAddress{TVariant}"/> says.</summary>
+    private static int Operand8<TBus, TVariant>(in TBus bus, int address, int offset)
+        where TBus : struct, IBus
+        where TVariant : struct, ICpuVariant =>
+        bus.Read(OperandAddress<TVariant>(address, offset));
 
-    /// <summary>Reads a little-endian operand word, wrapping at the top of memory.</summary>
-    private static int Operand16<TBus>(in TBus bus, int address) where TBus : struct, IBus =>
-        bus.Read((address + 1) & 0xFFFF) | (bus.Read((address + 2) & 0xFFFF) << 8);
+    /// <summary>Reads a little-endian operand word, wrapping the same way.</summary>
+    private static int Operand16<TBus, TVariant>(in TBus bus, int address)
+        where TBus : struct, IBus
+        where TVariant : struct, ICpuVariant =>
+        bus.Read(OperandAddress<TVariant>(address, 1)) |
+        (bus.Read(OperandAddress<TVariant>(address, 2)) << 8);
+
+    /// <summary>
+    /// How much of the decode address is significant: 16 bits for the eight-bit cores, 24 for
+    /// the 65816, which fetches from <c>PBR:PC</c> across 16 MB.
+    /// </summary>
+    /// <remarks>
+    /// Guarded by the same compile-time <c>TVariant.Variant</c> test <see cref="Cpu{TBus, TVariant}"/>
+    /// uses for <c>PcAddress</c>: the constant is fixed per closed generic type, so the JIT sees
+    /// <c>if (false)</c> and folds this to the bare <c>0xFFFF</c> for the five 8-bit cores. Their
+    /// decode path is therefore the same instruction it was before the 65816 existed.
+    /// </remarks>
+    private static int AddressMask<TVariant>() where TVariant : struct, ICpuVariant =>
+        TVariant.Variant == CpuVariant.W65C816 ? 0xFFFFFF : 0xFFFF;
+
+    /// <summary>
+    /// Where an operand byte lives. On the 65816 the program counter wraps within the program
+    /// bank and never carries into the next one (research document §2.2/§2.4), so the bank is
+    /// preserved and only the low 16 bits advance — the same shape <c>Cpu.HighByteAddressBank0</c>
+    /// gives the engine. On the eight-bit cores it is a plain 16-bit wrap, which is what this
+    /// method folds to there.
+    /// </summary>
+    private static int OperandAddress<TVariant>(int address, int offset)
+        where TVariant : struct, ICpuVariant =>
+        TVariant.Variant == CpuVariant.W65C816
+            ? (address & 0xFF0000) | ((address + offset) & 0xFFFF)
+            : (address + offset) & 0xFFFF;
 
     /// <summary>
     /// Where a branch lands: the byte after the instruction, plus the signed displacement.

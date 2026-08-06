@@ -21,9 +21,12 @@ namespace SixtyFiveXX;
 /// the address they land on rather than the displacement they encode.
 /// </param>
 /// <param name="Length">
-/// Bytes consumed, 1 to 3. This is what the <em>processor</em> consumes, which is why
-/// <c>BRK</c> is 2: the byte after the opcode is fetched and discarded, and a caller
-/// walking memory by <see cref="Length"/> has to skip it the same way.
+/// Bytes consumed, 1 to 4. This is what the <em>processor</em> consumes, which is why
+/// <c>BRK</c> is 2: the byte after the opcode is fetched and discarded, and a caller walking
+/// memory by <see cref="Length"/> has to skip it the same way. Four occurs only on the
+/// 65816 — <c>LDA $123456,X</c> and <c>JSL</c> — and on that part the length of an immediate
+/// instruction also depends on the width flags passed to
+/// <see cref="Disassembler.Decode{TBus, TVariant}(in TBus, int, bool, bool)"/>.
 /// </param>
 public readonly record struct Instruction(string Mnemonic, string Operand, int Length)
 {

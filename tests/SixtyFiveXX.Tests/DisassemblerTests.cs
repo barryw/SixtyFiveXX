@@ -360,4 +360,70 @@ public class DisassemblerTests
                 $"disassembly would lose sync here.");
         }
     }
+
+    /// <summary>
+    /// The 65816 fetches from PBR:PC across 16 MB. Decoding at $12C000 must read the opcode
+    /// at $12C000, not at $00C000 — the mask Decode applied before this task.
+    /// </summary>
+    [Fact]
+    public void W65C816_DecodesInTheBankItIsGiven()
+    {
+        var ram = new BankedBus();
+        ram[0x12C000] = 0xEA;           // NOP in bank $12
+        ram[0x00C000] = 0xA9;           // LDA # in bank 0, to prove the bank is not masked away
+
+        var decoded = Disassembler.Decode<RefBus, W65C816Variant>(new RefBus(ram), 0x12C000);
+
+        Assert.Equal("NOP", decoded.Mnemonic);
+    }
+
+    /// <summary>
+    /// An operand fetch wraps within the program bank, never into the next one: PC rolls
+    /// $FFFF to $0000 without touching PBR (research document §2.2/§2.4).
+    /// </summary>
+    [Fact]
+    public void W65C816_OperandFetchWrapsInsideTheBank()
+    {
+        var ram = new BankedBus();
+        ram[0x12FFFF] = 0x4C;           // JMP abs, with its operand wrapping to $120000
+        ram[0x120000] = 0x34;
+        ram[0x120001] = 0x12;
+
+        var decoded = Disassembler.Decode<RefBus, W65C816Variant>(new RefBus(ram), 0x12FFFF);
+
+        Assert.Equal("$1234", decoded.Operand);
+    }
+
+    /// <summary>
+    /// The width-carrying overload exists and the old signature still compiles unchanged,
+    /// defaulting to eight-bit widths. This is the compatibility promise the spec makes.
+    /// </summary>
+    /// <remarks>
+    /// Two halves, because the 6502 alone cannot prove the claim. There both flags are false
+    /// whatever the overload does — the part has no width flags — so equality proves only that
+    /// one overload delegates to the other, not that the default <em>means</em> eight-bit. The
+    /// 65816 half is where the default is a real choice: <c>LDA #</c> is two bytes at
+    /// <c>m = 1</c> and three at <c>m = 0</c>, so a length of 2 through the width-less overload
+    /// is the documented default observed rather than assumed. It passes trivially today —
+    /// <see cref="AddrMode.Immediate"/> still decodes at a fixed two bytes — and stops being
+    /// trivial the moment a later task makes that length depend on the flag, which is exactly
+    /// when a silently flipped default would otherwise slip through.
+    /// </remarks>
+    [Fact]
+    public void TheWidthlessOverload_StillCompilesAndMeansEightBit()
+    {
+        var ram = new byte[0x10000];
+        ram[0x1000] = 0xA9;             // LDA #
+        ram[0x1001] = 0x34;
+
+        var implicitWidths = Disassembler.Decode<FlatBus, Mos6502Variant>(new FlatBus(ram), 0x1000);
+        var explicitWidths = Disassembler.Decode<FlatBus, Mos6502Variant>(
+            new FlatBus(ram), 0x1000, wideAccumulator: false, wideIndex: false);
+
+        Assert.Equal(implicitWidths, explicitWidths);
+
+        var narrow = Disassembler.Decode<FlatBus, W65C816Variant>(new FlatBus(ram), 0x1000);
+
+        Assert.Equal(2, narrow.Length);
+    }
 }
