@@ -110,8 +110,8 @@ public class Harte816Tests(ITestOutputHelper output)
     /// <c>80.n</c> only three-cycle ones, while <c>10.e</c> and <c>80.e</c> both contain
     /// four-cycle ones — the taken-branch page-cross cycle is emulation-mode-only, exactly as
     /// datasheet Note 6 says. <c>82</c> is a flat four cycles in both modes. They also cover the
-    /// bank boundary, which was expected to be a gap and measured not to be: 5,076 of the 200,000
-    /// — 99 <c>rel8</c> and 4,977 <c>rel16</c> — have a destination outside
+    /// bank boundary, which was expected to be a gap and measured not to be: 5,078 of the 200,000
+    /// — 101 <c>rel8</c> and 4,977 <c>rel16</c> — have a destination outside
     /// <c>$0000</c>-<c>$FFFF</c> before the wrap, and every one records the wrapped <c>PC</c>
     /// with <c>PBR</c> unchanged. <c>W65C816ControlFlowTests</c> pins the same rule at the
     /// specific addresses Clark §4 works through.

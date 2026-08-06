@@ -2703,11 +2703,17 @@ nothing in rows 20 and 21 needed correcting. Three things the transcription alon
    vector, so the 65816 needs branch micro-ops of its own — and, because the un-fixed `PC` is never driven
    on this part, it can do the whole displacement add in one cycle rather than half of it.
    Row 21's cycle 4 is the same rule one byte along: `PBR,PC+2`, the high displacement byte's own address.
-3. **The bank boundary is covered by the vectors, not a gap.** 5,076 of the 200,000 — 99 `rel8` and 4,977
+3. **The bank boundary is covered by the vectors, not a gap.** 5,078 of the 200,000 — 101 `rel8` and 4,977
    `rel16` — have `base + displacement` outside `$0000`-`$FFFF`, and every one records the wrapped `PC`
    with `PBR` unchanged. `rel16` wraps in about a quarter of its vectors, since a 16-bit displacement from
    an arbitrary `PC` usually can. The natural assumption — that a ±128 displacement from a random `PC`
    would never reach `$xxFFFF` in ten thousand tries — is wrong for `rel8` too, at roughly 1 in 1,800.
+   **The first count of this came out 5,076 (99 `rel8`), two short — an easy way to undercount by
+   exactly the cases the measurement exists to find.** The counting script used an unmasked `PC + 2` as
+   `base`, so the two `rel8` vectors whose opcode sits at `$xxFFFE`/`$xxFFFF` — where the next-instruction
+   address has *already* wrapped the bank before the displacement is even added — scored as in-range and
+   were silently dropped: `pc=$FFFF disp=-106 → final.pc=$FF97` and `pc=$FFFE disp=-71 → final.pc=$FFB9`.
+   Mask the base to 16 bits before adding the displacement, not after.
 
 ### 14.6 The jumps, the calls and the returns
 

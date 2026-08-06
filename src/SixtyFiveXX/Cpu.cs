@@ -2011,7 +2011,9 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             case MicroOp.BranchLong816:
                 // Row 21's cycle 4, at PBR,PC+2 — the high displacement byte's own address, the
                 // same "last operand byte" rule row 20 follows. _addr holds the signed 16-bit
-                // displacement FetchAddrLo and FetchAddrHi assembled.
+                // displacement FetchAddrLo and FetchAddrHi assembled. Recomputed here rather than
+                // stashed the way BranchTaken816 stashes the equivalent PBR,PC+1 above: BRL has
+                // only this one internal cycle, so there is no second cycle to hand a stash to.
                 InternalCycle((_s.PBR << 16) | ((_s.PC - 1) & 0xFFFF));
                 _s.PC = (ushort)(_s.PC + (short)_addr);
                 break;

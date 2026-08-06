@@ -18,7 +18,7 @@ namespace SixtyFiveXX.Tests;
 /// lands.</item>
 /// <item>The displacement add wraps inside the program bank and never carries into <c>PBR</c>
 /// (§14.5 answer 3 — Clark §5.1.2 and §4's two worked examples, one per width). The vectors
-/// cover this well — 5,076 of the 200,000 have a destination outside <c>$0000</c>-<c>$FFFF</c>
+/// cover this well — 5,078 of the 200,000 have a destination outside <c>$0000</c>-<c>$FFFF</c>
 /// before the wrap — so what these tests add is not coverage but locality: they pin the rule at
 /// Clark's own worked addresses, where a failure names the boundary instead of naming one
 /// vector out of ten thousand.</item>
@@ -138,6 +138,25 @@ public class W65C816ControlFlowTests
 
         Assert.Equal(3, cpu.Step());
         Assert.Equal(0x2100, cpu.State.PC);
+    }
+
+    /// <summary>
+    /// The page is measured against the byte after the branch (<c>$2100</c>, low byte
+    /// <c>$00</c>), which this does not cross, even though the opcode itself sits at
+    /// <c>$20FE</c> (low byte <c>$FE</c>). A page-cross test that measured against the
+    /// opcode's own address instead would call this a cross and add the emulation-mode
+    /// page-cross cycle — the mutant this case exists to catch.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void BranchNearTheTopOfThePage_StillNeverPaysThePageCrossCycle(bool emulation)
+    {
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x7E, 0x20FE, emulation, Bra, 0x02);
+
+        Assert.Equal(3, cpu.Step());
+        Assert.Equal(0x2102, cpu.State.PC);      // $2100 + 2, no cross
     }
 
     // ---------------------------------------------------------------- the bus cycles

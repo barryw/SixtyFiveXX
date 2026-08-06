@@ -1085,7 +1085,7 @@ internal enum MicroOp : byte
     /// never touched, so <c>$13FFFE</c> plus a forward displacement lands in bank <c>$13</c>,
     /// not <c>$14</c> — Clark §5.1.2 and §4, and §5.18's <c>K : PC+2+$LL</c>. The vectors do
     /// reach that boundary, contrary to what a random <c>PC</c> and a ±128 displacement suggest:
-    /// 99 of the 180,000 <c>rel8</c> vectors have a destination outside <c>$0000</c>-<c>$FFFF</c>
+    /// 101 of the 180,000 <c>rel8</c> vectors have a destination outside <c>$0000</c>-<c>$FFFF</c>
     /// before the wrap, and every one records the wrapped <c>PC</c> with <c>PBR</c> unchanged.
     /// </para>
     /// <para>

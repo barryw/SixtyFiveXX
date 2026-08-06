@@ -116,7 +116,7 @@ certified by unit test. Then the ten branches — `BPL`, `BMI`, `BVC`, `BVS`, `B
 and *not* in native mode, where a taken branch is a flat three cycles wherever it lands: the one
 behaviour here that differs from all five eight-bit cores. `BRL` reaches the whole bank with a
 signed sixteen-bit displacement and is a flat four cycles in both modes. Every branch's
-displacement add wraps inside the program bank and never carries into `PBR`, which 5,076 of the
+displacement add wraps inside the program bank and never carries into `PBR`, which 5,078 of the
 200,000 branch vectors exercise directly.
 `ADC` and `SBC` are cycle- and result-correct in decimal mode at both operand widths, including
 16-bit BCD, which no source documents — the correction algorithm was measured from the vectors.
