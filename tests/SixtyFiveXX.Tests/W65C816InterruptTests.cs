@@ -211,8 +211,12 @@ public class W65C816InterruptTests
     /// the helper's fixed <c>S = $01FF</c> keeps every one of <see cref="Machine"/>'s hardware
     /// pushes inside page one anyway, so this sets <c>S</c> to the same boundary-crossing value
     /// <see cref="EmulationInterruptPushesWrapInsidePageOne"/> uses for <c>BRK</c>. Deleting
-    /// <c>Op.Irq or Op.Nmi</c> from <c>StackWrapsInPageOne</c> makes this fail: SH would stay
-    /// $01 and the three pushes would land at $01FF, $01FE, $01FD instead of wrapping.
+    /// <c>Op.Irq or Op.Nmi</c> from <c>StackWrapsInPageOne</c> makes this fail: from
+    /// <c>S = $0100</c> the three pushes would land at $0100, $00FF and $00FE, walking straight
+    /// out of the bottom of page one. <c>Cpu.StackAddress816</c>
+    /// is a bare <c>S</c> and forces nothing on its own — only the <em>decrement</em> differs
+    /// between wrapping and not, which is why the boundary is the only place the two can be
+    /// told apart.
     /// </summary>
     [Theory]
     [InlineData(false)]     // IRQ
