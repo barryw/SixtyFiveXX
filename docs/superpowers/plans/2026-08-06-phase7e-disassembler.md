@@ -465,6 +465,10 @@ git commit -m "fix: force the encoding width so absolute operands under \$100 ro
 **Interfaces:**
 - Consumes: `OperandAddress<TVariant>`, `AddressMask<TVariant>` and the two width parameters from task 2; `WidthPrefix(int operand, int operandBytes)` from task 3, which the `AbsoluteLong` and `AbsoluteLongX` arms call with `3`.
 
+**`BranchTarget` is yours, and task 2 left it deliberately.** It still masks to 16 bits and is now the only address computation in `Disassembler` that is not variant-aware. Before task 2 that was moot — the opcode address was masked to bank 0, so everything was consistently bank 0 — but task 2 made non-zero banks reachable and the gap with them: a `BRA` decoded at `$12C000` renders its target with the bank dropped. Task 2 left it because fixing the arithmetic without deciding how a banked target is *rendered* just produces a differently-wrong string, and that rendering is this task's call. **No round-trip can catch this** — the harness lays every opcode out in bank 0 — so it needs a unit test of its own.
+
+Research §14.5 established the behaviour to render: a taken branch's displacement add wraps **within the program bank** and never carries into `PBR`, so the target is `bank:target16` and the bank is always the instruction's own.
+
 - [ ] **Step 1: Read research §15.1 and §15.2 and check this plan's mode table against them**
 
 **Where §15 and this plan disagree, §15 governs** — it was measured against the assembler and this table was written before it. Record any deviation in the task report.
