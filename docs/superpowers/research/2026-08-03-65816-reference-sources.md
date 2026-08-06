@@ -2478,6 +2478,54 @@ Added 2026-08-05 by phase 7d task 1, by reading `54.n.json` (37,853,698 bytes, 1
 > `[$BC9514,$54]`, `[$BC9515,$B7]`, `[$BC9516,$8F]`, `[$8F00A6,$8B]`, `[$B70005,$8B]`, two `IO` at
 > `$B70005`. Final: `PC = $9517`, `A = $FFFF`, `X = $00A7`, `Y = $0006`, `DBR = $B7`.
 
+#### Measured, not cited: the index registers move at the operative width
+
+Added 2026-08-05 by phase 7d task 4. **No source states this.** Clark §6.6 calls `X` and `Y` "the 16-bit
+source address" and "the 16-bit destination address" and never mentions `x`; Table 5-7's annotations say
+only "x,y Increment" and "x,y Decrement". The files settle it:
+
+> **With `x = 1` both index registers are eight bits and wrap inside the low byte.** `54 n 63`
+> (`P = $78`, so `x = 1`) starts at `X = $F3` and its source reads run `…$B300FE`, `$B300FF`,
+> `$B30000` — wrapping to `$00`, not carrying to `$0100` — and its final `X` is `$01` after fourteen
+> increments. `54 n 81` and `54 n 123` repeat it from `$F5` and `$F9`. `44 n 23` is the same in the other
+> direction: `X = $0D` down through `$F80000` and out to a final `$FF`.
+>
+> **With `x = 0` both are sixteen bits and wrap at the bank boundary**, which is Clark §5.1.2's rule
+> observed rather than cited: `54 n 4275` (`P = $E2`, `x = 0`) writes `$C9FFFD`, `$C9FFFE`, `$C9FFFF`,
+> `$C90000` and ends at `Y = $000B`; `44 n 4731` reads `$000000` then `$00FFFF` and ends at
+> `X = $FFF6`. **Neither address ever leaves its bank.**
+>
+> **What is NOT settled: whether a nonzero index high byte survives with `x = 1`.** No vector in either
+> file has `x = 1` with `XH` or `YH` nonzero — 0 of 40,000 — so nothing arbitrates between zeroing the
+> high byte and preserving it. The implementation zeroes it, through the same `Cpu.X8`/`Cpu.Y8` setters
+> `INX`/`DEX` already use, on the same reasoning recorded there: hardware holds `XH`/`YH` at `$00` for as
+> long as `x` is set (§7), so there is nothing to preserve on the part.
+>
+> **The status register is never written.** `P` is identical in the initial and final state of all 20,000
+> native vectors, so no block move sets `N`, `Z` or anything else.
+
+#### What the exemption actually costs the harness — two changes, not one
+
+Added 2026-08-05 by phase 7d task 4, correcting this section's own earlier implication (and gap 12's) that
+skipping `AtInstructionBoundary` was the whole of it.
+
+> Skipping the assertion is necessary and not sufficient. `Harte816Tests` builds **one core per file** and
+> reloads only `cpu.State` between vectors — which assigns the architectural registers and **not the
+> micro-op sequence position**. Every other opcode ends its vector at an instruction boundary, so that has
+> always been safe. A truncated block-move vector does not: it leaves the core part-way through its
+> sequence, and the next vector then *resumes the previous vector's half-finished move* instead of
+> fetching its own opcode.
+>
+> Measured: with only the assertion skipped, `54 n 1` passes and `54 n 2` fails — five cycles of vector
+> 1's fifteenth iteration run against vector 2's registers, `PC` is rewound by 3 from the wrong place, and
+> the core lands on `$00` in bank 0 and executes twelve `BRK`s inside the remaining budget. The reported
+> divergence (`PC:0002 … S:FE7D … PBR:00`) names none of that; it looks like an interrupt storm.
+>
+> The fix is to return the core to a boundary before each vector — `if (!cpu.AtInstructionBoundary)`,
+> rebuild it — which is a no-op for the other 457 files. **Any future opcode whose vectors are truncated
+> mid-instruction needs both changes**, and the second is the one that is invisible until a second vector
+> in the same file runs.
+
 ### 14.4 `WAI` and `STP` — from the datasheet, and from `$CB.n.json` and `$DB.n.json` read directly
 
 Transcribed from Table 5-7 rows 19c and 19d (p. 40). Both rows print **3 cycles**, and both print, below
@@ -2952,7 +3000,7 @@ as §12.6 and §13.6.
 | 9 | **The stack's bank-0 wrap at `S == $0000` is cited but not measured.** Clark §5.1.2 and §5.22 state it plainly and Table 5-7 writes the bank as a literal `0` on every stack cycle. But the `08.n` and `28.n` vector sets contain **no vector with `S <= $0001` or `S >= $FFFE`** | **Recorded, cited only.** The emulation-mode page-one wrap *is* measured (`02 e 1`). Noted so a later reader knows a green `PHP`/`PLP` run does not prove the native wrap |
 | 10 | **Table 5-7's note column is misaligned on rows 22a and 22c**, verified against 400 dpi renderings: row 22a prints note `(7)` beside cycle 2 rather than the `PBR` push at cycle 3, and row 22c prints note `(1)` beside cycle 2 rather than the conditional push at `3a` | **Resolved, not open.** Both resolved by cross-row comparison (22j and 22b put the same notes unambiguously) and by §7.11/Clark. Recorded in the form §13.1 uses for row 16b, because the extracted text and the rendered page show the same offset and a reader checking either alone would see it |
 | 11 | **`WAI` and `STP` cannot be fully certified by vectors.** The files model the three executed cycles and then a `[null, null, "--------"]` sentinel; the hold, the wake, `WAI`'s `i`-flag special case and `STP`'s reset-only exit are absent | **CLOSED as a question, open as coverage.** Measured, §14.4. The three cycles are arbitrated; everything else is unit-test territory, and the harness needs a null-address cycle kind and an `AtInstructionBoundary` exemption before those two opcodes can be added to `Harte816Tests` at all |
-| 12 | **`MVN`/`MVP` vectors are truncated at 100 cycles** and their final state is mid-instruction | **CLOSED as a question, open as coverage.** Measured, §14.3. `Harte816Tests`' `AtInstructionBoundary` assertion will fail on 9,999 of 10,000 `54 n` vectors regardless of how correct the core is. Either the harness gets a per-opcode exemption or these two are unit-tested |
+| 12 | **`MVN`/`MVP` vectors are truncated at 100 cycles** and their final state is mid-instruction | **CLOSED, 2026-08-05, phase 7d task 4.** Measured, §14.3. `Harte816Tests`' `AtInstructionBoundary` assertion fails on 9,999 of 10,000 `54 n` vectors regardless of how correct the core is, so it is skipped for `$54`/`$44` alone — every cycle, register and memory assertion still runs against the vector's own mid-instruction final state, no file is excluded and no vector is skipped. **The truncation costs the harness a second change the row did not predict**, and any future truncated opcode will need it too: see §14.3's "What the exemption actually costs" |
 | 13 | **Whether any of the 44 behaves differently in emulation mode beyond the documented `e` terms and the forced `m = 1`/`x = 1`.** Clark's §6 preamble *"In general, in emulation mode … the 65C816 has the same behavior as 65C02"* is the only general statement, and §12.6 records that it turned out **wrong** for decimal `SBC` | **Open by policy**, exactly as §13.6 gap 5 leaves it. Treat as hypothesis; the vectors arbitrate |
 
 **Not gaps, so nobody re-opens them:** the stack's bank-0 confinement as a *rule* (§14.1, Clark §5.1.2 and
