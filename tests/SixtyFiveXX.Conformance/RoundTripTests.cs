@@ -87,6 +87,70 @@ public class RoundTripTests(ITestOutputHelper output)
         Assert.NotEqual(expected, Assemble(corrupted, "6502i"));
     }
 
+    /// <summary>
+    /// The one case the five round-trips above <em>structurally cannot reach</em>: an absolute
+    /// operand under <c>$0100</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="OperandLo"/> and <see cref="OperandHi"/> put every absolute operand in that
+    /// listing at <c>$1234</c>, where the shortest encoding is the one the disassembler meant,
+    /// so those five gates pass whether the width is forced or not. Below <c>$0100</c> it is
+    /// not: 64tass assembles <c>LDA $0012</c> as the two-byte direct-page <c>a5 12</c>, and
+    /// research §15.4 counted 53 opcodes on each NMOS part and 42 on each 65C02 that render
+    /// text reassembling to a different instruction. The defect sat there from phase 6a to
+    /// phase 7e because nothing looked below the boundary.
+    /// </para>
+    /// <para>
+    /// <strong>So this is not redundant with the five above and must not be deleted as such.</strong>
+    /// The constants stay where they are — the pinned covered counts are a property of the
+    /// current layout — and this test reaches the gap instead.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AbsoluteOperandsBelowTheCollapseBoundary_RoundTrip()
+    {
+        BelowTheBoundary<Mos6502Variant>("6502i");
+        BelowTheBoundary<Mos6510Variant>("6502i");
+        BelowTheBoundary<Synertek65C02Variant>("w65c02");
+        BelowTheBoundary<Rockwell65C02Variant>("w65c02");
+        BelowTheBoundary<Wdc65C02Variant>("w65c02");
+    }
+
+    /// <summary>
+    /// $AD LDA abs, $BD LDA abs,X, $BE LDX abs,Y, $8D STA abs and $EE INC abs at the operand
+    /// $0012 — five three-byte opcodes every one of the five 8-bit cores decodes alike, and
+    /// all five collapse without the prefix. $B9 LDA abs,Y is here for the opposite reason:
+    /// there is no <c>LDA dp,Y</c>, so it never collapses and the prefix is redundant on it.
+    /// Redundant still has to assemble, which is the half of §15.2's finding that says
+    /// over-forcing costs nothing.
+    /// </summary>
+    private static void BelowTheBoundary<TVariant>(string cpu) where TVariant : struct, ICpuVariant
+    {
+        byte[] opcodes = [0xAD, 0xBD, 0xB9, 0xBE, 0x8D, 0xEE];
+
+        var ram = new byte[0x10000];
+        var source = new StringBuilder()
+            .AppendLine($"\t.cpu \"{CpuDirectivePlaceholder}\"")
+            .AppendLine($"\t*=${Origin:X4}");
+
+        for (var i = 0; i < opcodes.Length; i++)
+        {
+            var at = Origin + (i * 3);
+            ram[at] = opcodes[i];
+            ram[at + 1] = 0x12;
+            ram[at + 2] = 0x00;
+
+            var decoded = Disassembler.Decode<FlatBus, TVariant>(new FlatBus(ram), at);
+            Assert.True(decoded.Length == 3,
+                $"${opcodes[i]:X2} is not a three-byte instruction on {typeof(TVariant).Name}; " +
+                $"this test's fixed layout assumes it is.");
+            source.AppendLine('\t' + ForAssembler(decoded));
+        }
+
+        Assert.Equal(ram[Origin..(Origin + (opcodes.Length * 3))], Assemble(source.ToString(), cpu));
+    }
+
     private void RoundTrip<TVariant>(string cpu, int expectedCovered) where TVariant : struct, ICpuVariant
     {
         var (source, expected) = Build<TVariant>(expectedCovered);
