@@ -82,7 +82,7 @@ all fifteen 65816 addressing modes, plus `XCE`, `REP` and `SEP` — 32 opcodes i
 certified per-cycle in both emulation and native mode against 640,000 SingleStepTests
 vectors, including the full eight-character bus-qualifier pin string asserted on every cycle.
 
-**This is not a complete core.** 230 of the 65816's 256 opcodes are implemented — phase 7b's 32,
+**This is not a complete core.** 232 of the 65816's 256 opcodes are implemented — phase 7b's 32,
 plus phase 7c's bulk work, which added `ORA`, `AND`, `EOR`, `CMP`, `ADC` and `SBC` in all fifteen
 addressing forms each, `CPX` and `CPY` in three each, `BIT` in five, `LDX` and `LDY` in five each,
 `STX` and `STY` in three each, and `STZ` in four, plus phase 7c′'s read-modify-writes: `ASL`,
@@ -106,7 +106,12 @@ move is one instruction per byte: seven cycles that read `SBA,X`, write `DBA,Y`,
 sixteen-bit accumulator whatever `m` says, and then rewind `PC` onto their own opcode unless the
 count has run out, so the next fetch re-executes them. That is also what lets an `IRQ` or an
 `NMI` land between iterations rather than being locked out for the tens of thousands of cycles a
-long move takes.
+long move takes. Then the two halts, `WAI` and `STP`: three executed cycles each, then a hold that
+drives no address and performs no bus access at all. Their 40,000 vectors cover only those three
+cycles — every one ends in a `[null, null, "--------"]` sentinel, and the set models no hold, no
+wake and no reset anywhere — so the hold itself, the wake on `IRQB`/`NMIB`, `WAI`'s rule that the
+`i` flag blocks the interrupt being *taken* but never the wake, and `STP`'s reset-only exit are
+certified by unit test.
 `ADC` and `SBC` are cycle- and result-correct in decimal mode at both operand widths, including
 16-bit BCD, which no source documents — the correction algorithm was measured from the vectors.
 `BIT`'s immediate opcode is a genuinely different operation from its other four forms, not just

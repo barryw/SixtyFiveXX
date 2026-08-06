@@ -1036,6 +1036,30 @@ internal enum MicroOp : byte
     /// the interrupt poll every instruction already gets and with no special case anywhere.
     /// </remarks>
     BlockMoveNext,
+
+    /// <summary>
+    /// The 65816's <c>WAI</c> hold — the cycle after the three datasheet Table 5-7 row 19d
+    /// prints. Holds the sequence position, so it repeats until IRQ is asserted or an NMI is
+    /// latched; the <c>I</c> flag does not block the wake, only what happens afterwards
+    /// (Clark §6.9). The 65816 form of <see cref="WaiHold"/>, and different from it in one
+    /// respect: it performs <b>no bus access at all</b>, not even an internal cycle.
+    /// <para>
+    /// That is measured, not chosen. Research document §14.4 read all 20,000 <c>$CB</c>
+    /// vectors: every one is four entries, of which the fourth is
+    /// <c>[null, null, "--------"]</c> — no address, no value, and not even a read/write
+    /// character, in emulation mode as much as native. There is no address to drive and no
+    /// access to perform, so this drives none. It is nonetheless a real cycle: the clock ran,
+    /// and <c>Cpu.Tick</c> counts it.
+    /// </para>
+    /// </summary>
+    WaiHold816,
+
+    /// <summary>
+    /// The 65816's <c>STP</c> hold — row 19c's fourth entry, the same shape as
+    /// <see cref="WaiHold816"/> and with the same measured "no address, no access" cycle. The
+    /// only escape is <c>Cpu.Reset</c>: no interrupt releases it (datasheet §7.14, Clark §6.9).
+    /// </summary>
+    StpHold816,
 }
 
 /// <summary>
@@ -1108,14 +1132,23 @@ internal static class MicroOps
     /// by RDY must drive PC rather than the effective-address register.
     /// </summary>
     /// <remarks>
-    /// Only <c>WAI</c> and <c>STP</c> qualify. Every other read micro-op runs for a bounded
-    /// number of cycles, so the stale address the halt path drives for those is a single
-    /// wrong cycle — a known limitation recorded at the halt branch in <c>Cpu.Tick</c>.
-    /// These two are unbounded: a hold lasts until an interrupt or a reset, so the wrong
-    /// address would be driven for the entire wait. That matters most for exactly the case
-    /// <c>WAI</c> exists to serve, synchronising with hardware that also drives RDY.
+    /// Only <c>WAI</c> and <c>STP</c> qualify, on all four cores that have them. Every other
+    /// read micro-op runs for a bounded number of cycles, so the stale address the halt path
+    /// drives for those is a single wrong cycle — a known limitation recorded at the halt
+    /// branch in <c>Cpu.Tick</c>. These are unbounded: a hold lasts until an interrupt or a
+    /// reset, so the wrong address would be driven for the entire wait. That matters most for
+    /// exactly the case <c>WAI</c> exists to serve, synchronising with hardware that also
+    /// drives RDY.
+    /// <para>
+    /// The 65816's pair perform no bus access when live (see <see cref="MicroOp.WaiHold816"/>),
+    /// so this only decides the address a cycle halted by RDY re-drives. It is still PC there:
+    /// the halt path drives <em>some</em> address on every cycle it intercepts, and for an
+    /// unbounded hold the effective-address register — stale, since these are implied
+    /// instructions that never set it — would be the wrong one for the whole wait.
+    /// </para>
     /// </remarks>
-    public static bool HoldsAtPc(MicroOp op) => op is MicroOp.WaiHold or MicroOp.StpHold;
+    public static bool HoldsAtPc(MicroOp op) =>
+        op is MicroOp.WaiHold or MicroOp.StpHold or MicroOp.WaiHold816 or MicroOp.StpHold816;
 
     private static readonly BusPins[] Pins = BuildPinsTable();
 
@@ -1354,6 +1387,13 @@ internal static class MicroOps
     /// rather than a program one; research document §14.3 flags exactly that. Two members rather
     /// than one repeated, because the second also performs the iteration's register update and
     /// the rewind.
+    /// <see cref="MicroOp.WaiHold816"/> and <see cref="MicroOp.StpHold816"/> are phase 7d task
+    /// 5's two, and the only members here that perform no access on the <em>live</em> path
+    /// either — they drive no address at all, which is what research document §14.4 measured in
+    /// all 40,000 <c>$CB</c>/<c>$DB</c> vectors' <c>[null, null, "--------"]</c> final entry.
+    /// They are in this table for what it actually gates: <c>Cpu.Tick</c>'s RDY halt path would
+    /// otherwise fake a <em>read</em> at PC for the entire wait, on a bus that may have read
+    /// side effects. An internal cycle there accesses nothing, which is the truthful halt.
     /// </summary>
     private static bool[] BuildInternalCycleTable()
     {
@@ -1370,6 +1410,7 @@ internal static class MicroOps
                      MicroOp.StackPushInternal816,
                      MicroOp.IntInternal816,
                      MicroOp.BlockMoveInternal, MicroOp.BlockMoveNext,
+                     MicroOp.WaiHold816, MicroOp.StpHold816,
                  })
         {
             internalCycles[(int)op] = true;

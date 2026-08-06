@@ -305,6 +305,219 @@ public class WaiStpTests
         Assert.False(cpu.IsWaiting);
     }
 
+    // ---- The 65816 ----
+    //
+    // The same two instructions on the 65816, and the same rules — which is why they are in
+    // this file rather than a new one. What differs is the coverage situation. SingleStepTests
+    // DOES ship $CB and $DB for the 65816: 40,000 vectors, all four entries long, of which
+    // research document §14.4 measured the fourth to be [null, null, "--------"] in every single
+    // one. So the three EXECUTED cycles are arbitrated by Harte816Tests — but the vector set
+    // models no hold, no wake, no interrupt and no reset anywhere in those 40,000 files.
+    //
+    // The four rules below are therefore in exactly the position the 65C02's are: nothing but
+    // these tests will catch a mistake in them. They are (1) that the core holds at all rather
+    // than running on like a three-cycle NOP, (2) that IRQB or NMIB wakes it, (3) that the wake
+    // is the SIGNAL and not the interrupt poll, so I set does not prevent it, and (4) that STP
+    // is escaped only by Reset.
+
+    /// <summary>
+    /// A 65816 with WAI or STP at $12C000, the native and emulation vectors all distinct, and
+    /// <c>m</c> and <c>x</c> deliberately opposed — neither instruction reads a
+    /// width-dependent register, and a sequence that consulted one anyway would show it here.
+    /// </summary>
+    private static (Cpu<RefBus, W65C816Variant> Cpu, BankedBus Ram) Machine816(bool emulation, byte opcode)
+    {
+        var ram = new BankedBus();
+        ram[0x12C000] = opcode;
+        ram[0x12C001] = 0xEA;                                       // the NOP after it
+        (ram[0xFFEA], ram[0xFFEB]) = (0x00, 0x33);                  // native NMI       -> $003300
+        (ram[0xFFEE], ram[0xFFEF]) = (0x00, 0x44);                  // native IRQ       -> $004400
+        (ram[0xFFFA], ram[0xFFFB]) = (0x00, 0x66);                  // emulation NMI    -> $006600
+        (ram[0xFFFC], ram[0xFFFD]) = (0x00, 0x70);                  // RESET            -> $007000
+        (ram[0xFFFE], ram[0xFFFF]) = (0x00, 0x77);                  // emulation IRQ    -> $007700
+
+        var cpu = Banked816TestMachine.Make(ram);
+        cpu.State.PBR = 0x12;
+        cpu.State.E = emulation;
+        cpu.State.P = Flag.U;
+        cpu.State.M = false;                                        // opposed on purpose
+        cpu.State.XFlag = true;
+        cpu.State.S = emulation ? (ushort)0x01FF : (ushort)0x1FFF;
+        return (cpu, ram);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void W65C816Wai_HoldsTheProcessorUntilAnInterruptIsSignalled(bool emulation)
+    {
+        var (cpu, _) = Machine816(emulation, 0xCB);
+
+        for (var i = 0; i < 50; i++) cpu.Tick();
+
+        Assert.True(cpu.IsWaiting);
+        Assert.Equal(0xC001, cpu.State.PC);          // consumed WAI itself, then held
+        Assert.Equal(0x12, cpu.State.PBR);           // and never left the bank
+        Assert.False(cpu.AtInstructionBoundary);     // held mid-sequence, not ended
+    }
+
+    [Theory]
+    [InlineData(0xCB)]
+    [InlineData(0xDB)]
+    public void W65C816Halt_RunsThreeCycles_ThenHoldsWithoutTouchingTheBus(int opcode)
+    {
+        // Research document §14.4, measured: the datasheet's three cycles are an opcode fetch
+        // and two internal cycles at PBR,PC+1, and the vectors' fourth entry is
+        // [null, null, "--------"] — no address, no value, not even a read/write character. So
+        // exactly one bus access happens (the fetch), and the hold adds none however long it
+        // lasts. This is the property Harte816Tests' cycle-count assertion rests on.
+        var (cpu, ram) = Machine816(emulation: false, (byte)opcode);
+
+        var cycles = cpu.Step();
+
+        Assert.Equal(4, cycles);                     // three executed, then the held one
+        Assert.Single(ram.Log);                      // the opcode fetch, and nothing else
+        Assert.Equal((0x12C000, (byte)opcode, false), ram.Log[0]);
+
+        for (var i = 0; i < 100; i++) cpu.Tick();
+
+        Assert.Single(ram.Log);                      // a hold drives no bus cycle at all
+        Assert.Equal(cycles + 100, cpu.Cycles);      // but the clock still runs
+    }
+
+    [Theory]
+    [InlineData(false, 0x004400)]
+    [InlineData(true, 0x007700)]
+    public void W65C816Wai_ReleasesOnIrqAndTakesTheInterrupt_WhenIIsClear(bool emulation, int handler)
+    {
+        var (cpu, _) = Machine816(emulation, 0xCB);
+
+        cpu.Step();
+        Assert.True(cpu.IsWaiting);
+
+        cpu.SetIrq(true);
+        cpu.Tick();
+        Assert.False(cpu.IsWaiting);
+        Assert.True(cpu.AtInstructionBoundary);      // the wake ENDS the instruction
+
+        cpu.Step();                                  // the interrupt sequence
+        Assert.Equal(handler & 0xFFFF, cpu.State.PC);
+        Assert.Equal(0x00, cpu.State.PBR);           // handlers run in bank 0
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void W65C816Wai_ReleasesOnIrqEvenWhenIIsSet_AndRunsTheNextInstruction(bool emulation)
+    {
+        // The i-flag special case, Clark §6.9 verbatim: "WAI when the i flag is 1 is a special
+        // case; specifically, when an IRQ occurs (after the WAI instruction), the 65C816 will
+        // continue with the next instruction rather than jumping to the interrupt vector." A
+        // model that waited on the interrupt POLL instead of the signal would hang here forever.
+        var (cpu, _) = Machine816(emulation, 0xCB);
+        cpu.State.I = true;
+
+        cpu.Step();
+        Assert.True(cpu.IsWaiting);
+
+        cpu.SetIrq(true);
+        cpu.Tick();
+        Assert.False(cpu.IsWaiting);
+
+        cpu.Step();                                  // the NOP at $12C001, not a handler
+        Assert.Equal(0xC002, cpu.State.PC);
+        Assert.Equal(0x12, cpu.State.PBR);
+    }
+
+    [Theory]
+    [InlineData(false, 0x003300)]
+    [InlineData(true, 0x006600)]
+    public void W65C816Wai_ReleasesOnNmi(bool emulation, int handler)
+    {
+        var (cpu, _) = Machine816(emulation, 0xCB);
+        cpu.State.I = true;                          // NMI is never blocked by I
+
+        cpu.Step();
+        Assert.True(cpu.IsWaiting);
+
+        cpu.SetNmi(true);
+        cpu.Tick();
+        Assert.False(cpu.IsWaiting);
+
+        cpu.Step();
+        Assert.Equal(handler & 0xFFFF, cpu.State.PC);
+    }
+
+    [Fact]
+    public void W65C816Wai_ReleasesOnAnIrqAssertedBeforeItEvenRuns()
+    {
+        // Level-sensitive, as on the 65C02: an interrupt already asserted must not cause a wait.
+        var (cpu, _) = Machine816(emulation: false, 0xCB);
+        cpu.State.I = true;
+        cpu.SetIrq(true);
+
+        cpu.Step();
+
+        Assert.False(cpu.IsWaiting);
+        Assert.True(cpu.AtInstructionBoundary);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void W65C816Stp_IsNotReleasedByAnyInterrupt(bool emulation)
+    {
+        var (cpu, _) = Machine816(emulation, 0xDB);
+
+        cpu.Step();
+        Assert.True(cpu.IsStopped);
+
+        cpu.SetIrq(true);
+        cpu.SetNmi(true);
+        for (var i = 0; i < 50; i++) cpu.Tick();
+
+        Assert.True(cpu.IsStopped);
+        Assert.Equal(0xC001, cpu.State.PC);
+        Assert.False(cpu.IsJammed);                  // a defined instruction, not a decode failure
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void W65C816Stp_IsClearedOnlyByReset(bool emulation)
+    {
+        var (cpu, _) = Machine816(emulation, 0xDB);
+
+        cpu.Step();
+        Assert.True(cpu.IsStopped);
+
+        cpu.Reset();
+        Assert.False(cpu.IsStopped);
+
+        cpu.Step();                                  // the reset sequence
+        Assert.Equal(0x7000, cpu.State.PC);
+        Assert.True(cpu.State.E);                    // and reset forces emulation mode
+    }
+
+    [Theory]
+    [InlineData(0xCB)]
+    [InlineData(0xDB)]
+    public void W65C816Halt_HeldByRdy_DrivesPbrPcRatherThanAStaleAddress(int opcode)
+    {
+        // The 65816 counterpart of the two 65C02 RDY tests above, and the reason both halts are
+        // on MicroOps.HoldsAtPc. The hold is unbounded, so the effective-address register — stale
+        // here, since neither instruction ever sets it — would be driven for the entire wait. The
+        // address must also carry the program bank: a bare sixteen-bit PC would read $00C001.
+        var (cpu, _) = Machine816(emulation: false, (byte)opcode);
+
+        cpu.Step();
+        cpu.SetRdy(false);
+        cpu.Tick();
+
+        Assert.Equal(0x12C001, cpu.LastAddress);
+        Assert.Equal(BusPins.None, cpu.LastPins);    // an internal cycle: the halt reads nothing
+    }
+
     // ---- The other sub-variants do not have them ----
 
     [Fact]

@@ -362,6 +362,13 @@ internal static class Opcodes65C816
 
         Set(0xEA, "NOP", AddrMode.Implied, Op.Nop, Access.None);
 
+        // The two halts. AddrMode.Implied, but MicroOpTable.Emit816 intercepts the operation
+        // ahead of the implied branch: both are three cycles rather than two, and both then hold
+        // (research document §14.4). Access.None and Width.None — neither touches memory or a
+        // width-dependent register.
+        Set(0xCB, "WAI", AddrMode.Implied, Op.Wai, Access.None);
+        Set(0xDB, "STP", AddrMode.Implied, Op.Stp, Access.None);
+
         // The stack. All AddrMode.Stack — the mode this codebase uses for hand-written
         // sequences — and all Width.None: they fetch no operand from memory, so each arm
         // tests its own flag. PHP/PHB/PHK/PLB move one byte whatever m and x say; PHD/PLD

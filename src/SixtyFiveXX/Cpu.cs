@@ -251,10 +251,13 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// <summary>Set by <c>JamHold</c>; cleared only by <see cref="Reset"/>.</summary>
     private bool _jammed;
 
-    /// <summary>Set by <c>StpHold</c>; cleared only by <see cref="Reset"/>.</summary>
+    /// <summary>Set by <c>StpHold</c> or <c>StpHold816</c>; cleared only by <see cref="Reset"/>.</summary>
     private bool _stopped;
 
-    /// <summary>Set by <c>WaiHold</c>; cleared by any interrupt signal, or by <see cref="Reset"/>.</summary>
+    /// <summary>
+    /// Set by <c>WaiHold</c> or <c>WaiHold816</c>; cleared by any interrupt signal, or by
+    /// <see cref="Reset"/>.
+    /// </summary>
     private bool _waiting;
 
     /// <summary>Current level on the IRQ pin. Level-sensitive, not latched.</summary>
@@ -324,14 +327,15 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     public bool IsJammed => _jammed;
 
     /// <summary>
-    /// True while <c>STP</c> has halted the processor. WDC only; nothing but
-    /// <see cref="Reset"/> clears it.
+    /// True while <c>STP</c> has halted the processor. The WDC 65C02 and the 65816 only;
+    /// nothing but <see cref="Reset"/> clears it.
     /// </summary>
     public bool IsStopped => _stopped;
 
     /// <summary>
-    /// True while <c>WAI</c> is holding the processor. WDC only. Cleared by IRQ being
-    /// asserted or an NMI latched, whether or not <c>I</c> allows the interrupt to be taken.
+    /// True while <c>WAI</c> is holding the processor. The WDC 65C02 and the 65816 only.
+    /// Cleared by IRQ being asserted or an NMI latched, whether or not <c>I</c> allows the
+    /// interrupt to be taken.
     /// </summary>
     public bool IsWaiting => _waiting;
 
@@ -2206,6 +2210,21 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
             case MicroOp.StpHold:
                 _stopped = true;
                 ReadBus(_s.PC);
+                _mpc--;                 // hold position: only Reset escapes
+                break;
+
+            case MicroOp.WaiHold816:
+                // The 65816's hold. Same wake rule as WaiHold — the interrupt SIGNAL, not the
+                // poll — and the same _mpc-- that keeps the core off an instruction boundary
+                // for as long as it holds. No bus access: research document §14.4 measured
+                // every one of the 20,000 $CB vectors ending in [null, null, "--------"], with
+                // no address and no read/write character at all. See MicroOp.WaiHold816.
+                if (_nmiPending || _irqLine) _waiting = false;
+                else { _waiting = true; _mpc--; }
+                break;
+
+            case MicroOp.StpHold816:
+                _stopped = true;
                 _mpc--;                 // hold position: only Reset escapes
                 break;
 

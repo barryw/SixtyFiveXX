@@ -447,6 +447,21 @@ internal sealed class MicroOpTable
             return;
         }
 
+        // WAI and STP. Research document §14.4, Table 5-7 rows 19d and 19c: three cycles each —
+        // the opcode fetch, then TWO IO cycles at PBR,PC+1, which is XBA's row 19b shape with no
+        // operation on either, hence ImpliedInternal816 twice. The hold is the fourth cycle, and
+        // §14.4 measured what the vectors record for it: [null, null, "--------"], no address and
+        // no access, in all 40,000. Ahead of the implied branch below, which would otherwise stop
+        // at two cycles and never hold at all.
+        if (info.Operation is Op.Wai or Op.Stp)
+        {
+            ops.AddRange([
+                MicroOp.ImpliedInternal816, MicroOp.ImpliedInternal816,
+                info.Operation == Op.Wai ? MicroOp.WaiHold816 : MicroOp.StpHold816,
+            ]);
+            return;
+        }
+
         // Every 65816 implied and accumulator-mode instruction is two cycles: the opcode fetch,
         // then one internal cycle at PBR,PC+1 (research document §9 row 19a, the shape XCE
         // already uses). They fetch no operand, so they declare no Width and never reach a

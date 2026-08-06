@@ -15,7 +15,7 @@ namespace SixtyFiveXX.Conformance;
 /// eight-character per-cycle pin string the 8-bit sets have nothing like — see
 /// <see cref="Harte816Case"/> and <see cref="Harte816Bus"/>.
 /// <para>
-/// Unlike <see cref="HarteTests{TVariant}"/>, this does not loop over all 256 opcodes. Only 230
+/// Unlike <see cref="HarteTests{TVariant}"/>, this does not loop over all 256 opcodes. Only 232
 /// of the 65816's opcodes are defined at all yet (<c>Opcodes65C816.Table</c>) — every one of
 /// them has a real sequence: <c>XCE</c>, <c>REP</c>, <c>SEP</c>, all fifteen addressing forms
 /// of <c>LDA</c>, <c>ORA</c>, <c>AND</c>, <c>EOR</c>, <c>CMP</c>, <c>ADC</c> and <c>SBC</c> plus
@@ -25,8 +25,8 @@ namespace SixtyFiveXX.Conformance;
 /// memory, two each of <c>TSB</c> and <c>TRB</c>, one each of <c>ASL</c>, <c>LSR</c>,
 /// <c>ROL</c>, <c>ROR</c>, <c>INC</c> and <c>DEC</c> on the accumulator, the twelve transfers,
 /// <c>XBA</c>, the seven flag instructions, <c>INX</c>/<c>INY</c>/<c>DEX</c>/<c>DEY</c>,
-/// <c>NOP</c>, the seven pushes and six pulls, <c>BRK</c>/<c>COP</c>/<c>WDM</c>, and the two block
-/// moves <c>MVN</c>/<c>MVP</c>. Looping over
+/// <c>NOP</c>, the seven pushes and six pulls, <c>BRK</c>/<c>COP</c>/<c>WDM</c>, the two block
+/// moves <c>MVN</c>/<c>MVP</c>, and the two halts <c>WAI</c>/<c>STP</c>. Looping over
 /// the full opcode space the way the 8-bit harness does would still require declaring the
 /// remaining "not yet covered" opcodes as a matter of routine, which is what the 8-bit harness's
 /// <c>OpcodesWithoutVectors</c> mechanism exists to flag as an exception, not a norm.
@@ -95,28 +95,48 @@ public class Harte816Tests(ITestOutputHelper output)
     /// records why. Phase 7d task 4 adds the two block moves, <c>MVN</c> (<c>$54</c>) and
     /// <c>MVP</c> (<c>$44</c>) — 228 + 2 = 230 — the only instructions in this engine that move
     /// <c>PC</c> backwards, and the only ones whose vectors are truncated mid-instruction; see
-    /// <see cref="VectorsTruncatedMidInstruction"/>.
+    /// <see cref="VectorsTruncatedMidInstruction"/>. Phase 7d task 5 adds the two halts,
+    /// <c>WAI</c> (<c>$CB</c>) and <c>STP</c> (<c>$DB</c>) — 230 + 2 = 232 — whose vectors cover
+    /// their three executed cycles and nothing else: research document §14.4 measured all 40,000
+    /// ending in a <c>[null, null, "--------"]</c> sentinel, with the hold, the wake on
+    /// <c>IRQB</c>/<c>NMIB</c>, <c>WAI</c>'s <c>i</c>-flag special case and <c>STP</c>'s
+    /// reset-only exit absent from the vector set entirely. <c>WaiStpTests</c> is the only
+    /// certification those four rules get.
     /// </summary>
-    private static readonly int ExpectedImplementedOpcodes = 230;
+    private static readonly int ExpectedImplementedOpcodes = 232;
 
     /// <summary>
-    /// The block moves, whose vectors are truncated at 100 cycles with a final state part-way
-    /// through the move — research document §14.3, measured from the files rather than inferred.
-    /// A block move runs seven cycles per byte and moves up to 65,536 bytes, so no fixed-length
-    /// vector could contain a whole one. <c>$54</c>'s cycle arrays are 9,999 of exactly 100
-    /// entries and one of 98; <c>$44</c>'s are 9,997 of 100 plus one each of 63, 28 and 14.
-    /// <c>54 n 1</c> begins with <c>A = $EF9B</c> — 61,340 bytes to move — and its recorded final
-    /// state is fourteen bytes in.
+    /// Opcodes whose vectors' final entry is not an instruction boundary, for either of the two
+    /// reasons this core has one.
+    /// <para>
+    /// <b>The block moves (<c>$54</c>, <c>$44</c>)</b> are truncated at 100 cycles with a final
+    /// state part-way through the move — research document §14.3, measured from the files rather
+    /// than inferred. A block move runs seven cycles per byte and moves up to 65,536 bytes, so no
+    /// fixed-length vector could contain a whole one. <c>$54</c>'s cycle arrays are 9,999 of
+    /// exactly 100 entries and one of 98; <c>$44</c>'s are 9,997 of 100 plus one each of 63, 28
+    /// and 14. <c>54 n 1</c> begins with <c>A = $EF9B</c> — 61,340 bytes to move — and its
+    /// recorded final state is fourteen bytes in.
+    /// </para>
+    /// <para>
+    /// <b>The halts (<c>$CB</c>, <c>$DB</c>)</b> are not truncated: they are complete, and the
+    /// instruction simply never ends. Research document §14.4 measured all 40,000 as four
+    /// entries whose fourth is <c>[null, null, "--------"]</c> — the sentinel for "and then the
+    /// processor stopped". A core that is correctly holding is by definition not at an
+    /// instruction boundary, so the assertion is as inapplicable here as it is to a half-finished
+    /// block move.
+    /// </para>
     /// </summary>
     /// <remarks>
     /// ONLY the instruction-boundary assertion is skipped. Every cycle's address, value and
     /// eight-character pin string is still compared, and so are the final registers and memory —
     /// against the mid-instruction state the vector actually records. For $54 that is a hundred
     /// arbitrated cycles of a real block move per vector, rewind included, across 10,000 vectors:
-    /// stronger coverage than most opcodes in this core get, not weaker. No vector file is
-    /// excluded and no vector is skipped.
+    /// stronger coverage than most opcodes in this core get, not weaker. For $CB and $DB it is
+    /// the three cycles the datasheet prints, plus the assertion in <see cref="AssertCycles"/>
+    /// that the core performed no fourth access. No vector file is excluded and no vector is
+    /// skipped.
     /// </remarks>
-    private static readonly HashSet<int> VectorsTruncatedMidInstruction = [0x54, 0x44];
+    private static readonly HashSet<int> VectorsTruncatedMidInstruction = [0x54, 0x44, 0xCB, 0xDB];
 
     /// <summary>
     /// Opcode bytes this phase has emitted a real <c>MicroOpTable.Emit816</c> sequence for —
@@ -186,8 +206,9 @@ public class Harte816Tests(ITestOutputHelper output)
             foreach (var entry in test.Initial.Ram) ram[entry[0]] = (byte)entry[1];
 
             // A vector every other opcode runs leaves the core at an instruction boundary, so
-            // the same core serves the whole file. The two block moves do not: their cycle
-            // arrays stop part-way through a sequence (see VectorsTruncatedMidInstruction), and
+            // the same core serves the whole file. The two block moves and the two halts do not:
+            // their cycle arrays stop part-way through a sequence — truncated for $54/$44,
+            // held forever for $CB/$DB (see VectorsTruncatedMidInstruction) — and
             // `cpu.State` assigns the architectural registers but NOT the micro-op position — so
             // without this the next vector would resume the previous vector's half-finished
             // block move instead of fetching its own opcode, and diverge in the fifth cycle.
@@ -276,13 +297,31 @@ public class Harte816Tests(ITestOutputHelper output)
         }
     }
 
+    /// <summary>
+    /// Compares the vector's cycles against the ones the core actually drove.
+    /// </summary>
+    /// <remarks>
+    /// A trailing <c>[null, null, "--------"]</c> entry is not a bus cycle. Research document
+    /// §14.4 measured every one of <c>$CB</c>'s and <c>$DB</c>'s 40,000 vectors ending in one —
+    /// no address, no value, and not even a read/write character, with the <c>e</c>, <c>m</c> and
+    /// <c>x</c> slots blank even in the emulation-mode files where <c>e</c> is 1. It marks "and
+    /// then the processor halted", which the core expresses by performing no bus access on the
+    /// held cycle (<c>MicroOp.WaiHold816</c>). So it has no counterpart in the log, and the
+    /// expected access count is the entries that ARE accesses — which is itself the assertion:
+    /// a hold that drove an address, or read the bus, would log a fourth access and fail here.
+    /// A null anywhere other than at the end still fails, on the count or on the address.
+    /// </remarks>
     private static void AssertCycles(
         Harte816Case test, List<Cycle816> actual, BusPins[] pins, (bool E, bool M, bool X)[] preFlags)
     {
-        Assert.True(test.Cycles.Length == actual.Count,
-            $"{test.Name}: expected {test.Cycles.Length} cycles, got {actual.Count}.");
+        var accesses = test.Cycles.Length;
+        while (accesses > 0 && test.Cycles[accesses - 1][0].ValueKind == JsonValueKind.Null) accesses--;
 
-        for (var i = 0; i < test.Cycles.Length; i++)
+        Assert.True(accesses == actual.Count,
+            $"{test.Name}: expected {accesses} bus cycles of the vector's " +
+            $"{test.Cycles.Length}, got {actual.Count}.");
+
+        for (var i = 0; i < accesses; i++)
         {
             var raw = test.Cycles[i];
             var expectedAddress = raw[0].GetInt32();
