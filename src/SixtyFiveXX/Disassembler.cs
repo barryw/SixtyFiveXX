@@ -23,6 +23,12 @@ namespace SixtyFiveXX;
 /// the other one rather than hidden.
 /// </para>
 /// <para>
+/// The decode address is bank-qualified on the 65816 — a 24-bit mask over <c>PBR:PC</c> —
+/// and 16-bit on the five 8-bit cores, folded at JIT time by the same compile-time
+/// <c>TVariant.Variant</c> test <see cref="Cpu{TBus, TVariant}"/> uses for <c>PcAddress</c>.
+/// Operand fetches wrap within the program bank and never carry into the next.
+/// </para>
+/// <para>
 /// <strong>Decoding reads the bus.</strong> On a flat memory map that is free; on a bus
 /// whose reads have side effects it is not, and the library cannot tell the difference.
 /// A caller disassembling live I/O space needs a bus that knows to stay quiet.

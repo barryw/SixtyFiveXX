@@ -42,14 +42,23 @@ instruction.ToString();  // "LDA $1234,X"
 ```
 
 Driven by the same opcode table the engine runs from, so mnemonic and operand text cannot
-drift from what the engine executes. For the five 8-bit cores, adding an opcode makes it
-decodable in the same commit that makes it executable, without exception. That does not yet
-hold for the 65816: most of its addressing modes have no operand-format case here, so many
-implemented opcodes throw `NotSupportedException` on decode, and `LDA #` decodes at a fixed
-2 bytes regardless of `m`, which is wrong once the accumulator is 16 bits. Disassembler
-support for the 65816 is phase 7e's job. Walk memory by `Length`.
-Branches show the address they land on rather than the displacement they encode, and `BRK`
-is two bytes because its second byte is fetched and discarded rather than executed.
+drift from what the engine executes. Adding an opcode makes it decodable in the same commit
+that makes it executable, without exception — on all six cores, the 65816 included. Walk
+memory by `Length` (1 to 4; four only on the 65816). Branches show the address they land on
+rather than the displacement they encode, and `BRK` is two bytes because its second byte is
+fetched and discarded rather than executed.
+
+On the 65816, `LDA #`/`LDX #`/`LDY #`/`CPX #`/`CPY #` change length with the accumulator or
+index width — and the byte stream doesn't carry those flags, so a second `Decode` overload
+takes them explicitly:
+
+```csharp
+Disassembler.Decode<FlatBus, W65C816Variant>(cpu.Bus, 0xC000, wideAccumulator: true, wideIndex: false);
+```
+
+The original overload assumes both widths are eight-bit — right for the five 8-bit cores and
+the 65816's reset state, an assumption elsewhere. The decode address is bank-qualified on the
+65816 (24-bit, `PBR:PC`) and 16-bit on the other five cores.
 
 `TBus` is a `struct` type parameter so the JIT specializes the core and inlines every
 memory access. Implement your own `struct` bus for address decoding, or wrap an
@@ -70,8 +79,8 @@ existing `IBus` reference in `RefBus` and pay one virtual call per access.
 IRQ and NMI (hardware-correct sampling, edge latching, and BRK/NMI hijacking), the RDY
 halt line, and the SO pin are complete, alongside `Reset()` and `BRK`.
 
-The 65816 is being built in five phases; four are done, and the core itself is finished — what
-phase 7e still owes is disassembler coverage, not opcodes. Phase 7a widened `CpuState` to carry
+The 65816 was built in five phases; the core and its disassembler are both finished.
+Phase 7a widened `CpuState` to carry
 the 65816's register file on **every** variant — 16-bit `A`, `X`, `Y` and `S`, plus `DP`,
 `DBR`, `PBR` and `E` — and added `IBus.Internal(int)` for the cycles that drive an address
 without accessing memory, which no 8-bit core has. The 8-bit cores use the low bytes and are
