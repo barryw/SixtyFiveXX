@@ -324,7 +324,7 @@ internal enum MicroOp : byte
 
     /// <summary>
     /// Placeholder for every 65816 sequence slot no task has filled in yet — see
-    /// <c>MicroOpTable</c>'s <c>NotYet816</c> field, the only place this is used.
+    /// <c>MicroOpTable</c>'s 65816 <c>IrqEntry</c> section, the only place this is used.
     /// Deliberately has no <c>case</c> in <c>Cpu.Execute</c>'s switch, so reaching one falls
     /// into that switch's own <c>default</c> arm and throws
     /// <see cref="NotImplementedException"/> naming this member, instead of silently

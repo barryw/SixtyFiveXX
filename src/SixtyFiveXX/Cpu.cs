@@ -572,12 +572,14 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// Clark states in the same passage.
     /// </summary>
     /// <remarks>
-    /// <b>Not in §14.1.</b> That section answers the wrap question from Clark §5.22's blanket
-    /// <em>"In emulation mode, SL will be decremented N times"</em> and does not carry §5.1.1's
-    /// old/new exception across to the five new push/pull opcodes. The vectors settle it and are
-    /// unambiguous: <c>ab e 75</c> starts at <c>S = $27FF</c> (forced to <c>$01FF</c>) and
-    /// <c>PLB</c> reads at <c>$000200</c>, not <c>$000100</c>, while <c>28 e 311</c> starts at
-    /// <c>$01FF</c> and <c>PLP</c> reads at <c>$000100</c>. <c>0b e 435</c> is the discriminating
+    /// <b>Not in §14.1, originally.</b> That section answered the wrap question only from Clark
+    /// §5.22's blanket <em>"In emulation mode, SL will be decremented N times"</em> and omitted
+    /// §5.1.1's/§5.22's old/new (and interrupt) exception for the five new push/pull opcodes; it
+    /// has since been amended, alongside this task's other fixes, to carry it. The vectors below
+    /// settled it independently and are unambiguous: <c>ab e 75</c> starts at <c>S = $27FF</c>
+    /// (forced to <c>$01FF</c>) and <c>PLB</c> reads at <c>$000200</c>, not <c>$000100</c>, while
+    /// <c>28 e 311</c> starts at <c>$01FF</c> and <c>PLP</c> reads at <c>$000100</c>.
+    /// <c>0b e 435</c> is the discriminating
     /// push: <c>PHD</c> from <c>S = $0100</c> writes at <c>$000100</c> and then <c>$0000FF</c>,
     /// below page one entirely. The rule as implemented here — old wraps, new does raw 16-bit
     /// arithmetic, and <see cref="StackSettle816"/> puts <c>SH</c> back to <c>$01</c> once the
@@ -585,12 +587,21 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// 260,000 vectors across the thirteen opcodes, in both modes, with no exceptions.
     /// <para>
     /// <b>Written as a list of operations, not as a general old/new predicate, deliberately.</b>
-    /// The old/new split holds exhaustively for these thirteen and is contradicted outside them:
-    /// <c>COP</c> is new to the 65816 and nonetheless wraps — <c>02 e 1</c> and <c>02 e 230</c>
-    /// both start at <c>S = $0100</c> after forcing and write <c>$000100</c>, <c>$0001FF</c>,
-    /// <c>$0001FE</c>, where a non-wrapping push would put the second byte at <c>$0000FF</c> the
-    /// way <c>PHD</c> does in <c>0b e 435</c>. A later task adding <c>JSL</c>, <c>RTL</c> or
-    /// <c>PER</c> should measure rather than infer.
+    /// Clark, "65C816 Opcodes" §5.22, settles the rule outright: <em>"For all interrupts and 'old'
+    /// instructions, when the e flag is 1, the address of the data for an 8-bit push is 0,1,SL …
+    /// Otherwise … 0,S."</em> The predicate is universal — interrupts and old instructions wrap
+    /// within page one when <c>e = 1</c>; everything else uses raw 16-bit <c>0,S</c> — so
+    /// <c>COP</c> was never a counter-example: it is new to the 65816, but it is also an
+    /// interrupt, and §5.22 names interrupts in the same clause as "old" instructions. Measured
+    /// across every stack opcode in the instruction set: <c>JSR</c> (old) and <c>BRK</c>/<c>COP</c>
+    /// (interrupts) have zero out-of-page-one stack accesses in emulation mode, while <c>JSL</c>
+    /// has 103, <c>RTL</c> 196, <c>PER</c> 34 and <c>PEA</c> 51 — for example <c>22 e 61</c> writes
+    /// <c>$0000FF</c> from <c>S = $0100</c>. All new, all non-wrapping; all old or interrupt, all
+    /// wrapping. The list below is that same predicate written as opcodes rather than as an
+    /// <see cref="AddrMode"/> flag, because it is cheap and needs no addressing-mode plumbing: when
+    /// a later task adds the interrupts and the remaining old instructions, this list gains
+    /// <c>Op.Brk</c>, <c>Op.Cop</c>, <c>Op.Jsr</c>, <c>Op.Rts</c> and <c>Op.Rti</c>, and leaves
+    /// <c>Op.Jsl</c>, <c>Op.Rtl</c>, <c>Op.Per</c>, <c>Op.Pea</c> and <c>Op.Pei</c> off.
     /// </para>
     /// </remarks>
     private bool StackWrapsInPageOne() => _op is Op.Pha or Op.Php or Op.Phx or Op.Phy

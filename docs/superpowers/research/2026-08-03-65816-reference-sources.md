@@ -1985,13 +1985,70 @@ Table 5-7 agrees cell by cell: every stack cycle in rows 22a–22j prints its ad
 confirmed, and §14.6 extends it: `JSL`'s and `RTL`'s three-byte stack accesses are `0,S`/`0,S-1`/`0,S-2`
 too.** Clark §5.22 also states the pointer arithmetic per mode: *"In emulation mode, SL will be decremented
 N times / In native mode, S will be decremented N times"* — so the native wrap is a 16-bit wrap inside
-bank 0 and the emulation wrap is an 8-bit wrap inside page one.
+bank 0 and the emulation wrap is, for *some* opcodes, an 8-bit wrap inside page one. Which opcodes is not a
+mode question at all — it is the "Otherwise" quoted above eliding its own antecedent, corrected next.
+
+**The emulation-mode page-one wrap is not universal, and the "Otherwise" quoted above was only ever half
+of Clark §5.22's rule.** In full, verbatim, the sentence that actually decides which stack accesses wrap:
+
+> For all interrupts and "old" instructions, when the e flag is 1, the address of the data for an 8-bit
+> push is:
+>
+>     +-----------+-----------+-----------+
+>     !     0     !     1     !    SL     ! data lo
+>     +-----------+-----------+-----------+
+>
+> Otherwise, the address of the data for an 8-bit push is:
+>
+>     +-----------+-----------+-----------+
+>     !     0     !           S           ! data lo
+>     +-----------+-----------+-----------+
+
+This is §5.1.1's old/new split (already quoted in §7 and in `Cpu.StackWrapsInPageOne`'s doc comment)
+restated for the stack specifically, and it names **interrupts** in the very same clause as "old"
+instructions — not as a separate case, as the same case. §14.7 already carries the specific instance of
+this for `PEA`/`PEI`, quoting Clark §5.1.1 directly: *"since PEI is a 'new' instruction, PEI $FF does not
+wrap at a page boundary"*; this is that same predicate's general form, and the two sections agree.
 
 *Not measured, and recorded as such.* The `08.n` and `28.n` vector sets contain **no** vector with
 `S <= $0001` or `S >= $FFFE`, so the bank-0 wrap at `S == $0000` is not exercised by `PHP` or `PLP` and this
 answer rests on the two citations above, not on a measurement. The emulation-mode page-one wrap *is*
 exercised, by an unrelated opcode: `02 e 1` (`COP`) starts with `S = $3000` and writes at `$0100`, `$01FF`,
-`$01FE` — `SH` forced to `$01`, then `SL` wrapping `$00 → $FF` within page one, exactly Clark §5.1.1 case B.
+`$01FE` — `SH` forced to `$01`, then `SL` wrapping `$00 → $FF` within page one. `COP` is new to the 65816,
+but §5.22's predicate never turned on age alone — `COP` is also an interrupt, and interrupts wrap. There is
+no tension between "`COP` is new" and "`COP` wraps"; there would only be tension if `COP` wrapped while
+some *other* new, non-interrupt instruction did not, and §14.7's `PEI` citation and the measurement below
+show that it does not.
+
+#### Measured — Clark §5.22's predicate, against every stack opcode measured so far, phase 7d task 2 review fix
+
+Added 2026-08-05, after a review of phase 7d task 2 caught this section's `COP` citation reading as a
+counter-example to the old/new split rather than as an instance of it. Everything below is measured
+against the SingleStepTests vectors, in addition to the §5.22 citation above, not instead of it.
+
+**The thirteen push/pull opcodes' own old/new split, from phase 7d task 2's implementation work** (see
+`Cpu.StackWrapsInPageOne`'s doc comment for the full accounting): `ab e 75` starts at `S = $27FF` (forced
+to `$01FF`) and `PLB` — new — reads at `$000200`, not `$000100`; `28 e 311` starts at `$01FF` and `PLP` —
+old — reads at `$000100`; `0b e 435` is the discriminating push, `PHD` — new — from `S = $0100` writing
+`$000100` then `$0000FF`, ending at `S = $01FE`, below page one entirely.
+
+**The same split holds across every other stack-touching opcode measured, including the interrupts and the
+opcodes JSL/RTL/PER/PEA add in later tasks:**
+
+| Opcode | §5.22 category | Out-of-page-one emulation-mode stack accesses |
+| --- | --- | --- |
+| `JSR` | old | 0 |
+| `BRK` | interrupt | 0 |
+| `COP` | interrupt | 0 |
+| `JSL` | new | 103 |
+| `RTL` | new | 196 |
+| `PER` | new | 34 |
+| `PEA` | new | 51 |
+
+> **Zero exceptions across all seven: old and interrupt opcodes never leave page one in emulation mode,
+> and new ones that touch the stack always can.** Discriminating example, the same shape as `0b e 435`'s
+> `PHD` above: `22 e 61` (`JSL`) writes `$0000FF` from `S = $0100` — below page one, exactly what a
+> non-wrapping push produces and exactly what a wrapping one cannot.
 
 **2. Are the pushes high byte first and the pulls low byte first? — Yes, both.** Row 22c writes `REG High`
 at `0,S` and then `REG Low` at `0,S-1`; row 22b reads `REG Low` at `0,S+1` and then `REG High` at `0,S+2`.

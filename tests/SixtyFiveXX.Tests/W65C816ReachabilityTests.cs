@@ -23,12 +23,23 @@ public class W65C816ReachabilityTests
     /// <c>NopAbsExtraRead</c> and <c>JmpAbsXDummy</c> are the two the grep's literal pattern
     /// misses and judgement adds: they read <c>(_s.PC - 1) &amp; 0xFFFF</c> and
     /// <c>(_s.PC - 2) &amp; 0xFFFF</c>, which is a bare sixteen-bit PC with the bank dropped
-    /// exactly as <c>ReadBus(_s.PC)</c> is. Members the grep hits but that compute neither kind
-    /// of address are deliberately absent: <c>ImpliedDummy</c> and <c>ImmExec</c> already call
-    /// <c>PcAddress()</c> and are bank-aware; <c>JmpIndLo</c>, <c>JmpIndHi</c>,
-    /// <c>JmpIndBugDummy</c>, <c>PtrJmpHi</c>, <c>BitBranchDummy</c> and <c>BitBranchFixup</c>
-    /// read <c>_ptr</c> or <c>_addr</c>; and <c>JamHold</c> drives the literal
-    /// <c>$FFFF</c>/<c>$FFFE</c> jam pattern.
+    /// exactly as <c>ReadBus(_s.PC)</c> is. <c>ReadPageCrossCmosArith</c>, <c>IndexFixupCmos</c>,
+    /// <c>ReadPageCrossCmos</c> and <c>RmwPageCrossCmos</c> have that identical
+    /// <c>ReadBus((_s.PC - 1) &amp; 0xFFFF)</c> body and were the same kind of grep miss, added
+    /// here after a review caught the first two but not these four. Members the grep hits but
+    /// that compute neither kind of address are deliberately absent: <c>ImpliedDummy</c> and
+    /// <c>ImmExec</c> already call <c>PcAddress()</c> and are bank-aware; <c>JmpIndLo</c>,
+    /// <c>JmpIndHi</c>, <c>JmpIndBugDummy</c>, <c>PtrJmpHi</c>, <c>BitBranchDummy</c> and
+    /// <c>BitBranchFixup</c> read <c>_ptr</c> or <c>_addr</c>; and <c>JamHold</c> drives the
+    /// literal <c>$FFFF</c>/<c>$FFFE</c> jam pattern.
+    /// </para>
+    /// <para>
+    /// This list is now the <b>only</b> loud tripwire on a 65816 sequence reaching one of these
+    /// bodies. <c>MicroOpTable.SequencesFor</c>'s <c>W65C816</c> arm used to be a throwing
+    /// placeholder and became <c>Nmos</c> once the part got its own <c>IrqEntry</c> and
+    /// <c>ResetEntry</c> sections (phase 7d task 2); an accidental read of the shared NMOS/CMOS
+    /// sequences that used to throw is now silent — it just runs NMOS or CMOS behaviour — so
+    /// this test, not a build-time failure, is what catches it.
     /// </para>
     /// </summary>
     private static readonly MicroOp[] EightBitOnly =
@@ -39,6 +50,8 @@ public class W65C816ReachabilityTests
         MicroOp.BitBranchFetch,
         MicroOp.JmpAbs, MicroOp.JsrFinish, MicroOp.RtsFinish,
         MicroOp.NopAbsExtraRead, MicroOp.JmpAbsXDummy,
+        MicroOp.ReadPageCrossCmosArith, MicroOp.IndexFixupCmos,
+        MicroOp.ReadPageCrossCmos, MicroOp.RmwPageCrossCmos,
         MicroOp.BrkPad, MicroOp.IntDummy,
         MicroOp.StackDummyRead, MicroOp.StackDummyReadInc, MicroOp.StackDummyReadDec,
         MicroOp.PushPch, MicroOp.PushPcl, MicroOp.PullPcl, MicroOp.PullPch,
