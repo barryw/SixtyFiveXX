@@ -15,23 +15,15 @@ namespace SixtyFiveXX.Conformance;
 /// eight-character per-cycle pin string the 8-bit sets have nothing like — see
 /// <see cref="Harte816Case"/> and <see cref="Harte816Bus"/>.
 /// <para>
-/// Unlike <see cref="HarteTests{TVariant}"/>, this does not loop over all 256 opcodes. Only 242
-/// of the 65816's opcodes are defined at all yet (<c>Opcodes65C816.Table</c>) — every one of
-/// them has a real sequence: <c>XCE</c>, <c>REP</c>, <c>SEP</c>, all fifteen addressing forms
-/// of <c>LDA</c>, <c>ORA</c>, <c>AND</c>, <c>EOR</c>, <c>CMP</c>, <c>ADC</c> and <c>SBC</c> plus
-/// <c>STA</c>'s fourteen, three each of <c>CPX</c> and <c>CPY</c>, <c>BIT</c>'s five, five each
-/// of <c>LDX</c> and <c>LDY</c>, three each of <c>STX</c> and <c>STY</c>, <c>STZ</c>'s four,
-/// four each of <c>ASL</c>, <c>LSR</c>, <c>ROL</c>, <c>ROR</c>, <c>INC</c> and <c>DEC</c> on
-/// memory, two each of <c>TSB</c> and <c>TRB</c>, one each of <c>ASL</c>, <c>LSR</c>,
-/// <c>ROL</c>, <c>ROR</c>, <c>INC</c> and <c>DEC</c> on the accumulator, the twelve transfers,
-/// <c>XBA</c>, the seven flag instructions, <c>INX</c>/<c>INY</c>/<c>DEX</c>/<c>DEY</c>,
-/// <c>NOP</c>, the seven pushes and six pulls, <c>BRK</c>/<c>COP</c>/<c>WDM</c>, the two block
-/// moves <c>MVN</c>/<c>MVP</c>, the two halts <c>WAI</c>/<c>STP</c>, and the ten branches
-/// <c>BPL</c>/<c>BMI</c>/<c>BVC</c>/<c>BVS</c>/<c>BCC</c>/<c>BCS</c>/<c>BNE</c>/<c>BEQ</c>,
-/// <c>BRA</c> and <c>BRL</c>. Looping over
-/// the full opcode space the way the 8-bit harness does would still require declaring the
-/// remaining "not yet covered" opcodes as a matter of routine, which is what the 8-bit harness's
-/// <c>OpcodesWithoutVectors</c> mechanism exists to flag as an exception, not a norm.
+/// The theory data is <b>derived</b> from the resolved table rather than looped over the full
+/// opcode space the way <see cref="HarteTests{TVariant}"/> does — see
+/// <see cref="ImplementedOpcodes"/>. That mattered while the part was being built a task at a
+/// time: looping over all 256 would have required declaring the not-yet-covered opcodes as a
+/// matter of routine, which is what the 8-bit harness's <c>OpcodesWithoutVectors</c> mechanism
+/// exists to flag as an exception, not a norm. As of phase 7d task 8 the two coincide — all 256
+/// opcodes are defined and every one of them has a real sequence — and the derivation stays,
+/// because it is what makes <see cref="ImplementedOpcodes_MatchesDeclaredCount"/> able to catch a
+/// sequence that regresses to empty.
 /// </para>
 /// </remarks>
 public class Harte816Tests(ITestOutputHelper output)
@@ -123,9 +115,18 @@ public class Harte816Tests(ITestOutputHelper output)
     /// 4, before it has finished fetching its operand; <c>JSL</c> pushes the <em>old</em> program
     /// bank at cycle 4, two cycles before it reads the new one; and <c>RTI</c> pulls <c>P</c>
     /// first and the program bank last, the latter in native mode only — the one opcode of the
-    /// eleven whose cycle count depends on <c>e</c>.
+    /// eleven whose cycle count depends on <c>e</c>. Phase 7d task 8, the last opcode task on the
+    /// part, adds the three stack-addressing pushes — <c>PEA</c> (<c>$F4</c>), <c>PEI</c>
+    /// (<c>$D4</c>) and <c>PER</c> (<c>$62</c>) — 253 + 3 = <b>256</b>, every opcode the 65816
+    /// has. Research document §14.7, Table 5-7 rows 22d, 22e and 22f. All three push sixteen bits
+    /// whatever <c>m</c> and <c>x</c> say, and all three are new to the part, so none wraps inside
+    /// page one in emulation mode — which their 60,000 vectors exercise directly: of the 20,000
+    /// emulation-mode stack writes each performs, 51 of <c>$F4</c>'s, 41 of <c>$D4</c>'s and 34 of
+    /// <c>$62</c>'s fall outside page one, where an "old" instruction's would have been folded
+    /// back into it. <c>$D4</c> is also the
+    /// only opcode in the phase with a conditional <c>w</c> cycle, its direct-page penalty.
     /// </summary>
-    private static readonly int ExpectedImplementedOpcodes = 253;
+    private static readonly int ExpectedImplementedOpcodes = 256;
 
     /// <summary>
     /// Opcodes whose vectors' final entry is not an instruction boundary, for either of the two

@@ -3010,6 +3010,24 @@ PEI $FF does not wrap at a page boundary (either the direct page part, or the (p
 part)"*. §7 already records this; it is repeated because `PEI` is the only direct-page instruction in this
 phase and the exception applies to it specifically.
 
+**Implemented, 2026-08-06, phase 7d task 8 — 60,000 of 60,000 vectors green on the first run, and with
+them the 65816 reaches 256 of 256 opcodes.** Every statement above went in unaltered; nothing in this
+section needed correcting against the vectors, which is why this block records no deviation. Three things
+it does record:
+
+- **The page-one measurement, extended to all three.** Counting the emulation-mode write cycles falling
+  outside `$000100`-`$0001FF`, over 20,000 stack writes per opcode: `$F4` **51**, `$D4` **41**, `$62`
+  **34**. §14.1's amended predicate lists none of them, and all 60,000 vectors agree. `$D4`'s 41 is new
+  here — §14.1 and the task brief had measured only `$F4` and `$62`.
+- **`PER`'s base is `PC+3` and the vectors cannot tell you so.** Every `$62` vector's pushed word is
+  consistent with the implementation that produced it, so the only defence against an off-by-one is the
+  source: Clark §5.14/§5.18, quoted above. `W65C816ControlFlowTests.Per_PushesTheNextInstructionsAddressPlusTheDisplacement`
+  computes the expected value from the instruction's own address and the literal 3 for exactly that reason.
+- **`PEI`'s low byte reuses `MicroOp.PtrReadLo816`, its high byte does not reuse `DpPtrReadHi`.** The
+  high-byte micro-op of the indirect direct-page modes page-wraps in emulation mode, as an "old" mode
+  must; `PEI`, being new, must not. `MicroOp.RmwRead` — the other obvious reuse for the low byte — would
+  have asserted `MLB`, which row 22e does not print. Both are the shape trap tasks 6 and 7 hit.
+
 ### 14.8 A cycle formula for every one of the 44
 
 Format and symbols are §5's and §13.3's, plus Clark's `t` (1 when a branch is taken). Every row carries two

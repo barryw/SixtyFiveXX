@@ -23,6 +23,14 @@ namespace SixtyFiveXX.Tests;
 /// Clark's own worked addresses, where a failure names the boundary instead of naming one
 /// vector out of ten thousand.</item>
 /// </list>
+/// <para>
+/// Phase 7d tasks 7 and 8 appended the rest of the part's control flow — the five jumps, three
+/// calls and three returns (research document §14.6), then <c>PEA</c>, <c>PEI</c> and <c>PER</c>
+/// (§14.7) — for the same reason rather than a new one: what is pinned here is the handful of
+/// rules a vector failure would report as one index out of ten thousand. Clark's own worked
+/// examples, the emulation-mode page-one wrap and which instructions it reaches, and — the one
+/// value no vector comparison can supply — the base <c>PER</c> measures its displacement from.
+/// </para>
 /// </summary>
 public class W65C816ControlFlowTests
 {
@@ -915,5 +923,182 @@ public class W65C816ControlFlowTests
         cpu.Tick();                          // cycle 4: the first stack read
 
         Assert.Equal(firstPull, cpu.LastAddress);
+    }
+
+    // ------------------------------------------------- PEA, PEI and PER (research §14.7)
+
+    private const byte Pea = 0xF4;
+    private const byte Pei = 0xD4;
+    private const byte Per = 0x62;
+
+    /// <summary>
+    /// <c>PEA</c> pushes its own two operand bytes, high first, and pushes <b>two of them with
+    /// <c>m = 1</c></b> — which is the assertion that makes "sixteen bits whatever the flags say"
+    /// (Clark §6.8.1) a real claim rather than a restatement of the default. <c>m</c> and
+    /// <c>x</c> are set to opposed values so a core that confused the two aliased bits would
+    /// fail rather than pass by accident. Five cycles, row 22d.
+    /// </summary>
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void Pea_PushesBothOperandBytesWhateverTheWidthFlagsSay(bool m, bool x)
+    {
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x12, 0x2000, emulation: false, Pea, 0x34, 0x12);
+        cpu.State.S = 0x01FF;
+        cpu.State.M = m;
+        cpu.State.XFlag = x;
+
+        Assert.Equal(5, cpu.Step());
+        Assert.Equal(0x12, ram[0x0001FF]);
+        Assert.Equal(0x34, ram[0x0001FE]);
+        Assert.Equal(0x01FD, cpu.State.S);
+        Assert.Equal(0x2003, cpu.State.PC);
+    }
+
+    /// <summary>
+    /// Clark §6.8.1, verbatim: "PEA #$1234 … simply pushes the value $1234, but does not access
+    /// memory location $1234 (in any bank)". Asserted from the bus log, because the value pushed
+    /// is identical either way — only the accesses tell an immediate apart from an absolute.
+    /// </summary>
+    [Fact]
+    public void Pea_NeverReadsTheAddressItsOperandLooksLike()
+    {
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x12, 0x2000, emulation: false, Pea, 0x34, 0x12);
+
+        cpu.Step();
+
+        Assert.DoesNotContain(ram.Log, a => (a.Address & 0xFFFF) == 0x1234);
+    }
+
+    /// <summary>
+    /// Clark §6.8.1: <c>PEI</c> "pushes the same 16-bit value that (assuming the m flag is 0)
+    /// LDA $12 loads into the accumulator, rather that the value that LDA ($12) loads" — the word
+    /// read from the direct page in <b>bank 0</b>, not the value that word points at. Both decoys
+    /// are laid: one where a dereference would read, one where a <c>DBR</c>-relative read would.
+    /// Six cycles here, <c>DL</c> being <c>$00</c>.
+    /// </summary>
+    [Fact]
+    public void Pei_PushesTheDirectPageWordAndNotWhatItPointsAt()
+    {
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x12, 0x2000, emulation: false, Pei, 0x40);
+        cpu.State.S = 0x01FF;
+        cpu.State.M = true;                  // 8-bit accumulator: PEI still pushes 16 bits
+        cpu.State.XFlag = false;
+        cpu.State.DP = 0x0100;
+        cpu.State.DBR = 0x7E;
+        ram[0x000140] = 0xCD;                // 0,D+DO
+        ram[0x000141] = 0xAB;                // 0,D+DO+1
+        ram[0x00ABCD] = 0x99;                // the decoy a dereference would push
+        ram[0x00ABCE] = 0x88;
+        ram[0x7E0140] = 0x11;                // the decoy a DBR-relative read would take
+        ram[0x7E0141] = 0x22;
+
+        Assert.Equal(6, cpu.Step());
+        Assert.Equal(0xAB, ram[0x0001FF]);
+        Assert.Equal(0xCD, ram[0x0001FE]);
+        Assert.Equal(0x01FD, cpu.State.S);
+        Assert.Equal(0x2002, cpu.State.PC);
+    }
+
+    /// <summary>
+    /// <c>PEI</c> is the only opcode in this phase carrying a <c>w</c> term — Clark's
+    /// <c>D4 2 6+w dir PEI</c>, and Table 5-7 row 22e's note 2 cycle, taken when <c>DL</c> is not
+    /// <c>$00</c>. Research document §14.8: the phase's only direct-page instruction, and so its
+    /// only <c>w</c>.
+    /// </summary>
+    [Theory]
+    [InlineData(0x0100, 6)]
+    [InlineData(0x0101, 7)]
+    public void Pei_CostsTheDirectPagePenaltyOnlyWhenTheLowByteOfDIsNonZero(int dp, int cycles)
+    {
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x12, 0x2000, emulation: false, Pei, 0x40);
+        cpu.State.DP = (ushort)dp;
+
+        Assert.Equal(cycles, cpu.Step());
+    }
+
+    /// <summary>
+    /// <b>The one value in this task that no test can copy from the implementation.</b> Clark
+    /// §5.14: "PER adds the immediate data to the address of the next instruction. This is the
+    /// same formula that relative16 addressing uses", and §5.18's relative16 is
+    /// <c>K : PC+3+$HHLL</c> with <c>PC</c> the opcode's own address. So the base is the
+    /// instruction's address plus its three bytes — computed here from <c>At</c> and the literal
+    /// 3, so that a core measuring from the opcode, from the last operand byte, or from anywhere
+    /// else fails by exactly the off-by-one it made. Six cycles, row 22f.
+    /// </summary>
+    [Theory]
+    [InlineData(0x0000)]                     // pushes the address of the next instruction itself
+    [InlineData(0x0007)]
+    [InlineData(0xFFFD)]                     // -3: lands back on the opcode
+    public void Per_PushesTheNextInstructionsAddressPlusTheDisplacement(int displacement)
+    {
+        const ushort At = 0x2000;
+
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x12, At, emulation: false,
+            Per, (byte)displacement, (byte)(displacement >> 8));
+        cpu.State.S = 0x01FF;
+        cpu.State.M = true;                  // 8-bit accumulator: PER still pushes 16 bits
+        cpu.State.XFlag = false;
+
+        var expected = (ushort)(At + 3 + displacement);
+
+        Assert.Equal(6, cpu.Step());
+        Assert.Equal(expected >> 8, ram[0x0001FF]);
+        Assert.Equal(expected & 0xFF, ram[0x0001FE]);
+        Assert.Equal(0x01FD, cpu.State.S);
+        Assert.Equal(0x12, cpu.State.PBR);   // nothing is jumped to and no bank is pushed
+    }
+
+    /// <summary>
+    /// The sum wraps inside the program bank and never carries into <c>PBR</c> — Clark §5.1.2,
+    /// "the Program Counter … is confined to bank K". A <c>PER</c> at <c>$12:FFFE</c> has its next
+    /// instruction at <c>$12:0001</c> already, before any displacement is added.
+    /// </summary>
+    [Fact]
+    public void Per_WrapsInsideTheProgramBank()
+    {
+        const ushort At = 0xFFFE;
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x12, At, emulation: false, Per, 0x10, 0x00);
+        cpu.State.S = 0x01FF;
+
+        var expected = (ushort)((At + 3 + 0x0010) & 0xFFFF);   // $0011, not $010011
+
+        cpu.Step();
+
+        Assert.Equal(expected >> 8, ram[0x0001FF]);
+        Assert.Equal(expected & 0xFF, ram[0x0001FE]);
+        Assert.Equal(0x12, cpu.State.PBR);
+    }
+
+    /// <summary>
+    /// All three are <b>new</b> to the 65816, so Clark §5.22's "for all interrupts and 'old'
+    /// instructions" does not reach them and their pushes run straight out of page one:
+    /// from <c>S = $0100</c> the second byte lands at <c>$0000FF</c>, not <c>$0001FF</c>. The
+    /// counterweight is <see cref="JsrInEmulationMode_WrapsItsPushesInsidePageOne"/>, where an
+    /// old instruction at the same <c>S</c> does wrap. <c>S</c> still settles back into page one,
+    /// emulation mode having no storage for <c>SH</c>.
+    /// </summary>
+    [Theory]
+    [InlineData(Pea)]
+    [InlineData(Pei)]
+    [InlineData(Per)]
+    public void TheStackAddressPushesInEmulationMode_DoNotWrapInsidePageOne(byte opcode)
+    {
+        var ram = new BankedBus();
+        var cpu = Machine(ram, 0x12, 0x2000, emulation: true, opcode, 0x40, 0x00);
+        cpu.State.S = 0x0100;
+
+        cpu.Step();
+
+        Assert.Equal(2, ram.Log.Count(a => a.Write));
+        Assert.Contains(ram.Log, a => a.Write && a.Address == 0x000100);
+        Assert.Contains(ram.Log, a => a.Write && a.Address == 0x0000FF);
+        Assert.Equal(0x01FE, cpu.State.S);
     }
 }

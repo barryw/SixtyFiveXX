@@ -65,12 +65,13 @@ existing `IBus` reference in `RefBus` and pay one virtual call per access.
 | 65C02 Rockwell | Complete | Harte SingleStepTests + Klaus 65C02 extended |
 | 65C02 WDC | Complete | Harte SingleStepTests + Klaus 65C02 extended |
 | 6510 | Complete | The 6502 suites for the inherited opcodes + VICE `cpuport/test1` for the `$00`/`$01` port |
-| 65816 | Phases 7b–7c: partial (see below) | Harte SingleStepTests/65816, per-cycle, including bus-qualifier pins |
+| 65816 | Complete — all 256 opcodes | Harte SingleStepTests/65816, per-cycle, including bus-qualifier pins |
 
 IRQ and NMI (hardware-correct sampling, edge latching, and BRK/NMI hijacking), the RDY
 halt line, and the SO pin are complete, alongside `Reset()` and `BRK`.
 
-The 65816 is being built in five phases; two are done. Phase 7a widened `CpuState` to carry
+The 65816 is being built in five phases; four are done, and the core itself is finished — what
+phase 7e still owes is disassembler coverage, not opcodes. Phase 7a widened `CpuState` to carry
 the 65816's register file on **every** variant — 16-bit `A`, `X`, `Y` and `S`, plus `DP`,
 `DBR`, `PBR` and `E` — and added `IBus.Internal(int)` for the cycles that drive an address
 without accessing memory, which no 8-bit core has. The 8-bit cores use the low bytes and are
@@ -82,7 +83,7 @@ all fifteen 65816 addressing modes, plus `XCE`, `REP` and `SEP` — 32 opcodes i
 certified per-cycle in both emulation and native mode against 640,000 SingleStepTests
 vectors, including the full eight-character bus-qualifier pin string asserted on every cycle.
 
-**This is not a complete core.** 253 of the 65816's 256 opcodes are implemented — phase 7b's 32,
+**The 65816 is complete.** All 256 opcodes are implemented — phase 7b's 32,
 plus phase 7c's bulk work, which added `ORA`, `AND`, `EOR`, `CMP`, `ADC` and `SBC` in all fifteen
 addressing forms each, `CPX` and `CPY` in three each, `BIT` in five, `LDX` and `LDY` in five each,
 `STX` and `STY` in three each, and `STZ` in four, plus phase 7c′'s read-modify-writes: `ASL`,
@@ -124,15 +125,20 @@ pointer from bank 0 and does *not* reproduce the NMOS page-wrap bug the 6502 cor
 address at cycles 3 and 4, before it has finished fetching its own operand, and `JSL` pushes the
 *old* program bank two cycles before it reads the new one. `RTI` pulls the status register first
 and the program bank last, in native mode only, and — unlike `RTS` and `RTL` — adds nothing to the
-address it pulled.
+address it pulled. Then the last three bytes of the instruction set: `PEA`, `PEI` and `PER`. All
+three push sixteen bits whatever `m` and `x` say. `PEA` pushes its own operand and reads no memory
+at all; `PEI` pushes a word read from the direct page in bank 0, not the value that word points
+at; and `PER` pushes the address of the *next* instruction plus a signed sixteen-bit displacement,
+wrapping inside the program bank. All three are new to the part, so — unlike `JSR`, `RTS` and `RTI`
+— their stack accesses do not wrap inside page one in emulation mode.
 `ADC` and `SBC` are cycle- and result-correct in decimal mode at both operand widths, including
 16-bit BCD, which no source documents — the correction algorithm was measured from the vectors.
 `BIT`'s immediate opcode is a genuinely different operation from its other four forms, not just
 a narrower addressing mode: it sets Z alone, leaving N and V untouched. `LDX` and `STX` bring
 `dp,Y`, the one addressing mode phase 7c adds and the only one no other instruction on the part
 uses. `TSB` and `TRB` set Z from the AND of `A` and memory, like `BIT`, but leave N and V
-untouched, unlike `BIT`. Every other opcode throws `UndefinedOpcodeException`. Phase 7d adds
-control flow, the stack and interrupts.
+untouched, unlike `BIT`. No opcode throws `UndefinedOpcodeException` on this core any more —
+`Opcodes65C816.Table` has no undefined entry left.
 
 **The state widening is a breaking change**: `CpuState.A`, `X`, `Y` and `S` are now `ushort`
 rather than `byte`.

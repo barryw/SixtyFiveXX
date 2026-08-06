@@ -89,35 +89,14 @@ public class W65C816StateTests
         Assert.Equal(0xC002, cpu.State.PC);  // consumed 2 bytes, not 3 — an 8-bit immediate
     }
 
-    /// <summary>
-    /// The probe byte is <b>derived from the table</b>, not hard-coded. It was <c>$EA</c> until
-    /// phase 7c′ implemented <c>NOP</c>, at which point the test broke on a premise that had
-    /// silently expired; replacing it with another literal would only move the expiry to the
-    /// commit that implements that one. Deriving it means the test retires itself honestly:
-    /// once phase 7d defines all 256 opcodes there is no undefined byte left, and
-    /// <see cref="Assert.Fail"/> says so in words rather than failing as a mystery.
-    /// </summary>
-    [Fact]
-    public void UnimplementedOpcode_Throws()
-    {
-        var undefined = -1;
-        for (var opcode = 0; opcode < 256 && undefined < 0; opcode++)
-            if (Opcodes65C816.Table[opcode].Operation == Op.Undefined) undefined = opcode;
-
-        if (undefined < 0)
-        {
-            Assert.Fail("Every 65816 opcode is now defined, so this test has nothing to probe. " +
-                        "Delete it, and check that UndefinedOpcodeException still has a caller.");
-        }
-
-        var ram = new byte[0x10000];
-        ram[0xC000] = (byte)undefined;
-
-        var cpu = new Cpu<FlatBus, W65C816Variant>(new FlatBus(ram));
-        cpu.State.PC = 0xC000;
-
-        Assert.Throws<UndefinedOpcodeException>(() => cpu.Step());
-    }
+    // UnimplementedOpcode_Throws lived here until phase 7d task 8. It derived its probe byte
+    // from the first Op.Undefined entry in Opcodes65C816.Table and called Assert.Fail when there
+    // was none, so that it would retire itself in words rather than as a mystery — which is what
+    // it did the moment this task took the 65816 to 256 of 256. Its replacement is
+    // MicroOpTableTests.EveryVariantDefinesAll256Opcodes, added in the same commit so the suite
+    // never went red and no commit exists in which nothing asserted the tables were full. The
+    // replacement is also the stronger test: it fails for a hole in ANY variant's table, not
+    // only the one variant that happened to have one.
 
     /// <summary>
     /// WDC datasheet reset initialisation table (p. 15, §2.25; research document §10): the

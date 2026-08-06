@@ -678,6 +678,14 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// <em>and addressing modes</em>" wording would predict the opposite; the vectors settle it,
     /// and research document §14.6 records the measurement.
     /// </para>
+    /// <para>
+    /// Phase 7d task 8 added <b>nothing</b>: <c>PEA</c>, <c>PEI</c> and <c>PER</c> are all new to
+    /// the 65816 and so all three fall under §5.22's "Otherwise … <c>0,S</c>". Recorded here
+    /// rather than left as an absence, because this is the last opcode task on the part and an
+    /// empty diff is otherwise indistinguishable from a forgotten one. Measured across their
+    /// emulation-mode vectors: <c>$62</c> has 34 out-of-page-one stack writes, <c>$D4</c> 41 and
+    /// <c>$F4</c> 51, of 20,000 each. Research document §14.7.
+    /// </para>
     /// </remarks>
     private bool StackWrapsInPageOne() => _op is Op.Pha or Op.Php or Op.Phx or Op.Phy
                                                 or Op.Pla or Op.Plp or Op.Plx or Op.Ply
@@ -777,12 +785,23 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
     /// <see cref="MicroOp.PullLow816"/> — appear in no 8-bit core's table, so no guard on
     /// <c>TVariant.Variant</c> is needed to keep <c>_s.M</c> and <c>_s.XFlag</c> (which alias
     /// the 8-bit cores' <c>U</c> and <c>B</c> bits) from being read there.
+    /// <para>
+    /// <c>PEA</c>, <c>PEI</c> and <c>PER</c> are on the list and are <b>not</b> consulted at run
+    /// time, which is deliberate rather than an oversight. All three push sixteen bits whatever
+    /// <c>m</c> and <c>x</c> say (Clark §6.8.1), so their sequences emit
+    /// <see cref="MicroOp.PushHigh816"/> unconditionally and reach neither caller above; the
+    /// conditional-slot machinery exists for the seven pushes and six pulls, whose high byte
+    /// really is optional. They are listed anyway because this predicate is the one place the
+    /// question "does this stack operation move sixteen bits?" is answered for the whole part,
+    /// and an operation that answers it with the <c>false</c> of a default arm is a trap for the
+    /// next caller added.
+    /// </para>
     /// </remarks>
     private bool StackIsWide() => _op switch
     {
         Op.Pha or Op.Pla => !_s.M,
         Op.Phx or Op.Plx or Op.Phy or Op.Ply => !_s.XFlag,
-        Op.Phd or Op.Pld => true,
+        Op.Phd or Op.Pld or Op.Pea or Op.Pei or Op.Per => true,
         _ => false,             // PHP, PHB, PHK, PLB — always one byte
     };
 
@@ -2196,6 +2215,35 @@ public sealed partial class Cpu<TBus, TVariant> where TBus : struct, IBus where 
                 // Row 22i cycle 6 — RTL, which has no status byte to commit.
                 _s.PBR = PullStack816();
                 StackSettle816();
+                break;
+
+            // Phase 7d task 8: the three stack-addressing pushes. Research document §14.7,
+            // Table 5-7 rows 22d, 22e and 22f. Each forms a sixteen-bit value its own way and
+            // then hands it to the shared PushHigh816/PushLow816 pair — unconditionally, since
+            // all three push two bytes whatever m and x say (Clark §6.8.1).
+
+            case MicroOp.PeaFetchHi816:
+                // Row 22d cycle 3. The operand is a value, not an address: nothing reads $AAHL.
+                _addr |= ReadBus(PcAddress()) << 8;
+                _s.PC++;
+                _data16 = (ushort)_addr;
+                break;
+
+            case MicroOp.PeiReadHigh816:
+                // Row 22e cycle 4, at 0,D+DO+1. HighByteAddressBank0 wraps within bank 0 and
+                // never at a page boundary — Clark §5.1.1 states that outright for PEI, which
+                // is new to the part.
+                _data16 = (ushort)((ReadBus(HighByteAddressBank0()) << 8) | _tmp);
+                break;
+
+            case MicroOp.PerCompute816:
+                // Row 22f cycle 4: an IO at the last operand byte's own address, PC-1 by now.
+                // The displacement is added to the address of the NEXT instruction — Clark
+                // §5.14/§5.18, PC+3 for a three-byte instruction, which is the live PC here
+                // because both fetches have already advanced it. Sixteen bits, wrapping inside
+                // the program bank; no bank byte is pushed.
+                InternalCycle((_s.PBR << 16) | ((_s.PC - 1) & 0xFFFF));
+                _data16 = (ushort)(_s.PC + _addr);
                 break;
 
             case MicroOp.StackDummyRead:

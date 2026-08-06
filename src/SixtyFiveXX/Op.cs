@@ -251,4 +251,25 @@ internal enum Op : byte
     /// 65816, so it does not wrap inside page one either. 65816 only.
     /// </summary>
     Rtl,
+
+    /// <summary>
+    /// The three stack-addressing pushes: <c>PEA</c> (<c>$F4</c>), <c>PEI</c> (<c>$D4</c>) and
+    /// <c>PER</c> (<c>$62</c>). All three push a sixteen-bit value <b>whatever <c>m</c> and
+    /// <c>x</c> say</b> — Clark §6.8.1, "PEA, PEI, and PER all push a 16-bit value onto the
+    /// stack", and, for the one that most invites doubt, "Note, however, that PEI always pushes a
+    /// 16-bit value no matter what the value of the m flag (or, for that matter the x flag) is."
+    /// They differ only in where the value comes from: <see cref="Pea"/> takes it from its own
+    /// two operand bytes and touches no memory at all, <see cref="Pei"/> reads it from the direct
+    /// page in bank 0, and <see cref="Per"/> computes it as the address of the next instruction
+    /// plus a signed sixteen-bit displacement. Research document §14.7, Table 5-7 rows 22d, 22e
+    /// and 22f.
+    /// <para>
+    /// All three are <b>new</b> to the 65816, so none of them wraps inside page one in emulation
+    /// mode — Clark §5.22's predicate covers interrupts and "old" instructions only, and none of
+    /// these three appears in <c>Cpu.StackWrapsInPageOne</c>. Measured across their emulation-mode
+    /// vectors: <c>$62</c> has 34 out-of-page-one stack writes, <c>$D4</c> 41 and <c>$F4</c> 51.
+    /// 65816 only.
+    /// </para>
+    /// </summary>
+    Pea, Pei, Per,
 }

@@ -694,6 +694,43 @@ internal sealed class MicroOpTable
                 ]);
                 break;
 
+            // ---- Phase 7d task 8: the three stack-addressing pushes. Research document §14.7,
+            // Table 5-7 rows 22d, 22e and 22f. All three end in the same unconditional
+            // PushHigh816/PushLow816 pair — sixteen bits whatever m and x say (Clark §6.8.1) —
+            // and differ only in how the four, five or three cycles before it form the value.
+
+            // Row 22d: five cycles, and the shortest of the three. Two operand fetches and two
+            // writes, with no internal cycle at all: PEA is the one instruction on the part that
+            // pushes without one, because the value needs no computing.
+            case Op.Pea:
+                ops.AddRange([
+                    MicroOp.FetchAddrLo, MicroOp.PeaFetchHi816,
+                    MicroOp.PushHigh816, MicroOp.PushLow816,
+                ]);
+                break;
+
+            // Row 22e: six cycles, seven when DL != $00 — the ONLY opcode in this phase carrying
+            // a `w` term (research document §14.8), and the only direct-page instruction in it.
+            // The first two micro-ops are the plain direct-page prefix, penalty slot included,
+            // exactly as every dp addressing mode uses them.
+            case Op.Pei:
+                ops.AddRange([
+                    MicroOp.FetchDpOffset, MicroOp.DirectPagePenalty,
+                    MicroOp.PtrReadLo816, MicroOp.PeiReadHigh816,
+                    MicroOp.PushHigh816, MicroOp.PushLow816,
+                ]);
+                break;
+
+            // Row 22f: six cycles. Two displacement bytes, then one internal cycle that performs
+            // the add — the same shape BRL has, and for the same reason, but the result is pushed
+            // rather than jumped to.
+            case Op.Per:
+                ops.AddRange([
+                    MicroOp.FetchAddrLo, MicroOp.FetchAddrHi, MicroOp.PerCompute816,
+                    MicroOp.PushHigh816, MicroOp.PushLow816,
+                ]);
+                break;
+
             default:
                 throw new InvalidOperationException(
                     $"{info.Mnemonic}: {info.Operation} has no 65816 control-flow sequence.");

@@ -435,6 +435,15 @@ internal enum MicroOp : byte
     /// <c>(dp),Y</c>) and three-byte ones (<c>[dp]</c>, <c>[dp],Y</c>) alike, since the first
     /// pointer byte is read identically either way. Research document §9's "(Direct,X)" cycle 4,
     /// "(Direct)"/"(Direct),Y" cycle 3, and "[Direct]"/"[Direct],Y" cycle 3.
+    /// <para>
+    /// Phase 7d task 8 added a caller that is not an addressing mode: <c>PEI</c>'s cycle 3.
+    /// "Push Effective Indirect address" reads a two-byte pointer from the direct page in bank 0
+    /// and pushes it instead of dereferencing it, and Table 5-7 row 22e names those two bytes
+    /// <c>AAL</c>/<c>AAH</c> exactly as the indirect modes' rows do — same address, same
+    /// <see cref="BusPins.Vda"/>. Its high byte is <see cref="PeiReadHigh816"/> rather than
+    /// <see cref="DpPtrReadHi"/>, which page-wraps in emulation mode as an "old" mode must and
+    /// <c>PEI</c>, being new, must not.
+    /// </para>
     /// </summary>
     PtrReadLo816,
 
@@ -1336,6 +1345,49 @@ internal enum MicroOp : byte
     /// members rather than one with a run-time operation test: see <see cref="PullP816"/>.
     /// </summary>
     RtiPullPbr816,
+
+    /// <summary>
+    /// <c>PEA</c>'s cycle 3 — row 22d: the second operand byte, at <c>PBR,PC+2</c>, and the
+    /// sixteen-bit value it completes moved into the push register. An ordinary operand fetch on
+    /// the bus (<see cref="BusPins.Vpa"/>, exactly as the <see cref="FetchAddrLo"/> before it),
+    /// separate from <see cref="FetchAddrHi"/> only because <see cref="PushHigh816"/> and
+    /// <see cref="PushLow816"/> read <c>_data16</c> and the operand fetches build <c>_addr</c>.
+    /// The value is <b>not</b> used as an address: Clark §6.8.1, "PEA #$1234 … simply pushes the
+    /// value $1234, but does not access memory location $1234 (in any bank)".
+    /// </summary>
+    PeaFetchHi816,
+
+    /// <summary>
+    /// <c>PEI</c>'s cycle 4 — row 22e: the high byte of the sixteen-bit value, read at
+    /// <c>0,D+DO+1</c>, and the completed word moved into the push register. Bank 0 with a
+    /// sixteen-bit wrap and <b>no page wrap</b>, which is <c>Cpu.HighByteAddressBank0</c>'s
+    /// formula and is right here for the reason Clark §5.1.1 gives outright: "since PEI is a
+    /// 'new' instruction, PEI $FF does not wrap at a page boundary (either the direct page part,
+    /// or the (pushing onto the) stack part)". Its low byte is <see cref="PtrReadLo816"/>.
+    /// </summary>
+    PeiReadHigh816,
+
+    /// <summary>
+    /// <c>PER</c>'s cycle 4 — row 22f: an <c>IO</c> at <c>PBR,PC+2</c>, the last operand byte's
+    /// own address, and with it the address that gets pushed.
+    /// </summary>
+    /// <remarks>
+    /// <b>The displacement is measured from the address of the next instruction</b>, not from the
+    /// opcode and not from the last operand byte — research document §14.7, and Clark §5.14
+    /// verbatim: "PER adds the immediate data to the address of the next instruction. This is the
+    /// same formula that relative16 addressing uses for the destination address". §5.18's
+    /// relative16 formula is <c>K : PC+3+$HHLL</c> with <c>PC</c> the opcode's own address, and
+    /// <c>PER</c> is three bytes, so the base is <c>PC+3</c> — which is exactly the live <c>PC</c>
+    /// by the time this runs, both operand fetches having advanced it. Row 22f's
+    /// <c>PCH+Offset+Carry</c>/<c>PCL+Offset</c> is the same arithmetic written as two bytes and
+    /// does not disambiguate which <c>PC</c> the datasheet means; Clark does.
+    /// <para>
+    /// The sum wraps inside sixteen bits and never reaches <c>PBR</c> (Clark §5.1.2, "the Program
+    /// Counter … is confined to bank K"), and no bank byte is pushed — unlike <c>JSL</c>, this
+    /// instruction transfers control nowhere and the value is just a number.
+    /// </para>
+    /// </remarks>
+    PerCompute816,
 }
 
 /// <summary>
@@ -1544,6 +1596,10 @@ internal static class MicroOps
                      // for FetchAddrLo/FetchAddrHi, which the same sequences already use.
                      MicroOp.JmpAbs816, MicroOp.JmpLong816,
                      MicroOp.JsrFetchHi816, MicroOp.JslBank816,
+                     // PEA's second operand byte: research document §14.7's row 22d prints
+                     // VDA=0 VPA=1 on it, the same as the FetchAddrLo before it. PER's two
+                     // displacement bytes are FetchAddrLo/FetchAddrHi, already here.
+                     MicroOp.PeaFetchHi816,
                  })
         {
             pins[(int)op] = BusPins.Vpa;
@@ -1598,6 +1654,10 @@ internal static class MicroOps
                      MicroOp.PullP816, MicroOp.PullPcl816,
                      MicroOp.ReturnPullPch816, MicroOp.RtiPullPch816,
                      MicroOp.PullPbr816, MicroOp.RtiPullPbr816,
+                     // PEI's direct-page word: row 22e prints VDA=1 VPA=0 on both bytes — a
+                     // data access, not a program one — and no MLB, this being no part of a
+                     // read-modify-write. Its low byte is PtrReadLo816, already here.
+                     MicroOp.PeiReadHigh816,
                  })
         {
             pins[(int)op] = BusPins.Vda;
@@ -1707,6 +1767,11 @@ internal static class MicroOps
     /// cycle at a <em>stack</em> address, which only <c>JSL</c>'s cycle 5 and <c>RTS</c>'s cycle
     /// 6 have. The block moves' pair are the only other internal cycles here that drive
     /// something other than a program address.
+    /// <see cref="MicroOp.PerCompute816"/> is phase 7d task 8's one, and the last member added to
+    /// this table — row 22f's cycle 4, an <c>IO</c> at the last operand byte's own address, the
+    /// same shape <see cref="MicroOp.BranchLong816"/> has for <c>BRL</c>'s sixteen-bit add.
+    /// <c>PEA</c> and <c>PEI</c> add nothing here: <c>PEA</c> has no internal cycle at all, and
+    /// <c>PEI</c>'s conditional one is <see cref="MicroOp.DirectPagePenalty"/>, already here.
     /// </summary>
     private static bool[] BuildInternalCycleTable()
     {
@@ -1726,6 +1791,7 @@ internal static class MicroOps
                      MicroOp.WaiHold816, MicroOp.StpHold816,
                      MicroOp.BranchTaken816, MicroOp.BranchFixup816, MicroOp.BranchLong816,
                      MicroOp.JmpAbsXInternal816, MicroOp.StackInternal816,
+                     MicroOp.PerCompute816,
                  })
         {
             internalCycles[(int)op] = true;

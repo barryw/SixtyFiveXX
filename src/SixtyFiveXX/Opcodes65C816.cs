@@ -76,18 +76,20 @@ namespace SixtyFiveXX;
 /// this phase adds, <see cref="AddrMode.AbsoluteIndirectLong"/>, and the two entries that make
 /// <c>MicroOpTable.Emit816</c>'s routing order load-bearing: <c>$5C</c> and <c>$22</c> take
 /// <see cref="AddrMode.AbsoluteLong"/>, the mode <c>LDA long</c> uses, so they are routed on
-/// their <em>operation</em> before any mode test runs.
+/// their <em>operation</em> before any mode test runs; and phase 7d task 8's three: the
+/// stack-addressing pushes <c>PEA</c> (<c>$F4</c>), <c>PEI</c> (<c>$D4</c>) and <c>PER</c>
+/// (<c>$62</c>) — 253 + 3 = <b>256</b>, the whole instruction set (research document §14.7).
 /// <para>
-/// The remaining 3 entries are <see cref="OpcodeInfo.Undefined"/> and throw
-/// <see cref="UndefinedOpcodeException"/> on fetch: the three stack-addressing pushes
-/// <c>PEA</c> (<c>$F4</c>), <c>PEI</c> (<c>$D4</c>) and <c>PER</c> (<c>$62</c>) — research
-/// document §14.8's table of all 44, less this task's eleven and the thirty-three tasks 2 to 6
-/// landed.
+/// <b>No entry is <see cref="OpcodeInfo.Undefined"/>.</b> The 65816 defines all 256 opcodes and
+/// this table now does too. <see cref="UndefinedOpcodeException"/> and <c>Cpu.FetchOpcode</c>'s
+/// guard that throws it both remain: the type is public API, and the guard is the defensive path
+/// for exactly the hole <c>MicroOpTableTests.EveryVariantDefinesAll256Opcodes</c> exists to
+/// detect. Reaching it is now a bug in this file, not a byte WDC left unassigned.
 /// </para>
 /// </remarks>
 internal static class Opcodes65C816
 {
-    /// <summary>Opcode byte to descriptor. 253 entries defined, 3 undefined.</summary>
+    /// <summary>Opcode byte to descriptor. All 256 entries defined.</summary>
     public static readonly OpcodeInfo[] Table = BuildTable();
 
     private static OpcodeInfo[] BuildTable()
@@ -459,6 +461,19 @@ internal static class Opcodes65C816
         Set(0x40, "RTI", AddrMode.Stack, Op.Rti, Access.None);
         Set(0x60, "RTS", AddrMode.Stack, Op.Rts, Access.None);
         Set(0x6B, "RTL", AddrMode.Stack, Op.Rtl, Access.None);
+
+        // The three stack-addressing pushes. All push two bytes whatever m says: PEA pushes
+        // its own operand, PEI pushes a sixteen-bit value read from the direct page, and PER
+        // pushes an address formed from a signed sixteen-bit displacement.
+        //
+        // AddrMode.Stack on all three, including PEI, whose operand really is a direct-page
+        // offset: the mode field routes to MicroOpTable.EmitControlFlow816's hand-written
+        // sequences, and AddrMode.DirectPage would route PEI to EmitAddressed816 and give it a
+        // load's tail. Width.None for the reason the other AddrMode.Stack entries have it, and
+        // more strongly — there is no width to declare when the answer never depends on a flag.
+        Set(0xF4, "PEA", AddrMode.Stack, Op.Pea, Access.None);
+        Set(0xD4, "PEI", AddrMode.Stack, Op.Pei, Access.None);
+        Set(0x62, "PER", AddrMode.Stack, Op.Per, Access.None);
 
         return t;
     }
