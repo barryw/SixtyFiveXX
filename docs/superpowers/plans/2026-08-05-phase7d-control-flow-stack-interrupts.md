@@ -22,6 +22,9 @@
 - **This phase adds no public API.** `PublicSurfaceTests.ExpectedPublicTypes` must be **unchanged**.
 - **Vectors:** `SingleStepTests/65816`, `v1/{opcode:x2}.e.json` and `.n.json`, roughly 11 MB per opcode across both modes. This phase pulls about **500 MB**. Never commit a vector file.
 - **Running the conformance suite: pass an explicit 600000 ms timeout on the Bash call.** The default is 120 seconds and the suite takes 3–6 minutes per framework; in phase 7c that default silently auto-backgrounded a run and stalled a task with everything uncommitted.
+- **If a vector fails, do not tune anything.** Do not adjust a number, a pin, a cycle count or a table entry until the vector goes green. Report the failing opcode, the vector file and index, and the expected-versus-actual line.
+  - **What is allowed instead**, established by task 2 and binding from task 3 on: diagnosing the failure to a rule stated by a **named primary source**, implementing that rule, and validating it against every vector in the task's scope. Task 2 did exactly this and was right — Clark §5.22's "for all interrupts and 'old' instructions" predicate, which research §14.1 had omitted while §14.7 already applied it.
+  - **The condition, which task 2 was not asked for and which is now required:** a task that derives a rule this way **must amend the research document in the same task**, and must report the deviation. A hardware rule that lives only in a C# comment is a rule the next task cannot find. Task 2's first attempt recorded a justification that was wrong — that `COP` contradicted the rule — and that wrong reason was the comment task 3 would have read.
 - **Commit before running any probe.** Reverting a deliberate mutation with `git checkout -- <file>` destroyed an implementer's uncommitted work once.
 - **Restore probe files with `git checkout --`, never `mv file.bak file`** — the latter preserves an old mtime and defeats MSBuild's staleness detection, which cost a phase-7c task two phantom failures.
 - **The `task-brief` script writes a fixed filename.** Rename each brief to `p7d-task-N-brief.md` immediately after extracting it, or it silently overwrites the previous phase's.
@@ -862,7 +865,9 @@ git commit -m "feat: 65816 stack plumbing, the thirteen pushes and pulls, and th
 - Modify: `tests/SixtyFiveXX.Conformance/Harte816Tests.cs` (225 → 228)
 
 **Interfaces:**
-- Consumes: `PushStack816`, `StackAddress816`, `EmitControlFlow816` from task 2.
+- Consumes: `PushStack816`, `StackAddress816`, `EmitControlFlow816` and `StackWrapsInPageOne` from task 2.
+
+**Task 2 left you a rule you must extend, not rediscover.** In emulation mode the stack access address depends on the *instruction*, not only on `S`: Clark §5.22, verbatim — "For all interrupts and 'old' instructions, when the e flag is 1, the address of the data for an 8-bit push is `0,1,SL` … Otherwise, … `0,S`." `Cpu.StackWrapsInPageOne` is the explicit operation list expressing it. **`BRK` and `COP` are interrupts and therefore wrap; add `Op.Brk` and `Op.Cop` to that list.** Measured, not inferred: `BRK`/`COP` have zero out-of-page-one stack accesses across their vectors, while `JSL` has 103, `RTL` 196, `PER` 34 and `PEA` 51 — those five are "new" and must stay off the list when tasks 7 and 8 reach them. `$22 e 61` writes `$0000FF` from `S = $0100` if you want the discriminating case.
 - Produces: `private int Vector816(Op reason)` — the one place native and emulation vector addresses are chosen; `MicroOp.VectorLo816`, `MicroOp.VectorHi816`, which task 7's `RTI` counterpart mirrors.
 - Produces: `Op.Cop`, `Op.Wdm`.
 
@@ -1300,7 +1305,9 @@ git commit -m "feat: 65816 branches, including BRA and BRL"
 - Modify: `tests/SixtyFiveXX.Conformance/Harte816Tests.cs` (242 → 253)
 
 **Interfaces:**
-- Consumes: `PushStack816`, `PullStack816` from task 2; `VectorHi816`'s `PBR` handling as the model for `RTI`'s `PBR` pull.
+- Consumes: `PushStack816`, `PullStack816` and `StackWrapsInPageOne` from task 2; `VectorHi816`'s `PBR` handling as the model for `RTI`'s `PBR` pull.
+
+**The emulation-mode wrap list, per Clark §5.22 — "for all interrupts and 'old' instructions".** `JSR`, `RTS` and `RTI` are old instructions and wrap within page one: **add `Op.Jsr`, `Op.Rts` and `Op.Rti` to `Cpu.StackWrapsInPageOne`.** `JSL` and `RTL` are new to the 65816 and do **not** wrap — measured, 103 and 196 out-of-page-one stack accesses respectively across their vectors — so they stay off the list. Getting this backwards produces exactly the three red emulation-mode files task 2 saw.
 - Produces: `AddrMode.AbsoluteIndirectLong`, `Op.Jml`, `Op.Jsl`, `Op.Rtl`.
 
 - [ ] **Step 1: Read research §14.6 and write its seven answers into the task report**
@@ -1389,6 +1396,8 @@ git commit -m "feat: 65816 jumps, calls and returns"
 
 **Interfaces:**
 - Consumes: `PushStack816` and the push micro-ops from task 2. `StackIsWide()` gains three arms.
+
+**All three are new to the 65816, so none of them wraps within page one in emulation mode** — Clark §5.22's predicate covers only interrupts and "old" instructions. **Do not add `Op.Pea`, `Op.Pei` or `Op.Per` to `Cpu.StackWrapsInPageOne`.** Measured across their vectors: `PER` 34 and `PEA` 51 out-of-page-one stack accesses. Research §14.7 already stated this for `PEA`/`PEI` before §14.1 was amended to agree.
 
 - [ ] **Step 1: Read research §14.7**
 
