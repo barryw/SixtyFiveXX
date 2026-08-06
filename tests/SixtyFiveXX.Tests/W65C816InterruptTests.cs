@@ -455,23 +455,24 @@ public class W65C816InterruptTests
     {
         var (cpu, ram) = Machine(emulation: false);
         ram[0xC000] = 0x40;             // RTI
+        ram[0x00C010] = 0xEA;           // a NOP at the return address — must stay unexecuted
         cpu.State.I = true;             // masked going in, as if still inside a handler
         cpu.State.S = 0x01FB;
         ram[0x0001FC] = 0x00;           // P: everything clear, including I
-        ram[0x0001FD] = 0x00;           // PCL  -> return to $00C000, the shared NOP
+        ram[0x0001FD] = 0x10;           // PCL  -> return to $00C010, the NOP above
         ram[0x0001FE] = 0xC0;           // PCH
         ram[0x0001FF] = 0x00;           // PBR  -> bank 0
         cpu.SetIrq(true);               // held for the whole test
 
         cpu.Step();                     // RTI itself
         Assert.False(cpu.State.I);
-        Assert.Equal(0xC000, cpu.State.PC);
+        Assert.Equal(0xC010, cpu.State.PC);
 
         cpu.Step();                     // the very next boundary
 
         // Recognised at RTI's own boundary: the CPU diverts straight into the interrupt-entry
         // sequence and never fetches the NOP RTI returned to. A one-instruction-late core would
-        // land on $C001 here instead, having run that NOP first.
+        // land on $C011 here instead, having run that NOP first.
         Assert.Equal(0x4400, cpu.State.PC);
     }
 }
