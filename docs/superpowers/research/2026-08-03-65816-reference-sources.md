@@ -2608,6 +2608,22 @@ before that task was dispatched.**
 > `IRQB`/`NMIB`, the `i`-flag special case, `STP`'s reset-only exit — is not in the vectors and can only be
 > covered by unit tests.**
 
+#### How task 5 resolved it, 2026-08-05
+
+The sentinel needed **no cycle kind of its own**. `[null, null, "--------"]` says the processor drove no
+address and performed no access, so the core models the hold as a micro-op that performs no bus access at
+all — `MicroOp.WaiHold816` and `MicroOp.StpHold816` — and `AssertCycles` compares the vector's *access*
+entries, of which there are three, against the log, of which there are three. The sentinel becomes an
+assertion rather than an exemption: a hold that drove any address at all logs a fourth access and fails.
+Probed by building exactly that halt — `cb n 1: expected 3 bus cycles of the vector's 4, got 4`.
+
+All 40,000 pass unchanged otherwise: cycle 1 is the opcode fetch, cycles 2 and 3 are `ImpliedInternal816`
+— row 19b's `IO` at `PBR,PC+1`, the cycle `XBA` already uses — and `PC` ends one past the opcode.
+
+The four unmodelled rules were covered by seventeen `WaiStpTests` cases across both modes. That coverage
+is not decorative: a halt that ends the instruction and merely sets a flag **passes all 40,000 vectors**
+and fails fourteen of those seventeen. The vectors cannot see a hold at all, in either direction.
+
 ### 14.5 The branches
 
 Transcribed from Table 5-7 rows 20 and 21 (p. 41).
@@ -2999,7 +3015,7 @@ as §12.6 and §13.6.
 | 8 | **`JSR (abs,X)`'s push-before-`AAH` ordering has one source, not two.** Table 5-7 row 2b states it; **Clark is silent on the ordering**, giving only the cycle count | **Recorded, single-sourced.** Not a disagreement — no source contradicts the row. Noted so that if a vector disagrees, the row is known to be the only thing behind it |
 | 9 | **The stack's bank-0 wrap at `S == $0000` is cited but not measured.** Clark §5.1.2 and §5.22 state it plainly and Table 5-7 writes the bank as a literal `0` on every stack cycle. But the `08.n` and `28.n` vector sets contain **no vector with `S <= $0001` or `S >= $FFFE`** | **Recorded, cited only.** The emulation-mode page-one wrap *is* measured (`02 e 1`). Noted so a later reader knows a green `PHP`/`PLP` run does not prove the native wrap |
 | 10 | **Table 5-7's note column is misaligned on rows 22a and 22c**, verified against 400 dpi renderings: row 22a prints note `(7)` beside cycle 2 rather than the `PBR` push at cycle 3, and row 22c prints note `(1)` beside cycle 2 rather than the conditional push at `3a` | **Resolved, not open.** Both resolved by cross-row comparison (22j and 22b put the same notes unambiguously) and by §7.11/Clark. Recorded in the form §13.1 uses for row 16b, because the extracted text and the rendered page show the same offset and a reader checking either alone would see it |
-| 11 | **`WAI` and `STP` cannot be fully certified by vectors.** The files model the three executed cycles and then a `[null, null, "--------"]` sentinel; the hold, the wake, `WAI`'s `i`-flag special case and `STP`'s reset-only exit are absent | **CLOSED as a question, open as coverage.** Measured, §14.4. The three cycles are arbitrated; everything else is unit-test territory, and the harness needs a null-address cycle kind and an `AtInstructionBoundary` exemption before those two opcodes can be added to `Harte816Tests` at all |
+| 11 | **`WAI` and `STP` cannot be fully certified by vectors.** The files model the three executed cycles and then a `[null, null, "--------"]` sentinel; the hold, the wake, `WAI`'s `i`-flag special case and `STP`'s reset-only exit are absent | **CLOSED, 2026-08-05, phase 7d task 5.** Measured, §14.4. The three cycles are arbitrated by all 40,000 vectors; everything else is `WaiStpTests`. The harness needed **no** null-address cycle kind in the end — the sentinel means "no address, no access", the core's hold performs none, and `AssertCycles` compares the three access entries against three logged accesses, which makes the sentinel an assertion rather than an exemption. `$CB`/`$DB` join `$54`/`$44` on `VectorsTruncatedMidInstruction` for the boundary assertion. Probed: a halt that ends the instruction and only sets a flag passes **all 40,000** and fails 14 of 17 unit cases — see §14.4's resolution note |
 | 12 | **`MVN`/`MVP` vectors are truncated at 100 cycles** and their final state is mid-instruction | **CLOSED, 2026-08-05, phase 7d task 4.** Measured, §14.3. `Harte816Tests`' `AtInstructionBoundary` assertion fails on 9,999 of 10,000 `54 n` vectors regardless of how correct the core is, so it is skipped for `$54`/`$44` alone — every cycle, register and memory assertion still runs against the vector's own mid-instruction final state, no file is excluded and no vector is skipped. **The truncation costs the harness a second change the row did not predict**, and any future truncated opcode will need it too: see §14.3's "What the exemption actually costs" |
 | 13 | **Whether any of the 44 behaves differently in emulation mode beyond the documented `e` terms and the forced `m = 1`/`x = 1`.** Clark's §6 preamble *"In general, in emulation mode … the 65C816 has the same behavior as 65C02"* is the only general statement, and §12.6 records that it turned out **wrong** for decimal `SBC` | **Open by policy**, exactly as §13.6 gap 5 leaves it. Treat as hypothesis; the vectors arbitrate |
 

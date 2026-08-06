@@ -218,11 +218,22 @@ public class Harte816Tests(ITestOutputHelper output)
             //
             // The condition is AtInstructionBoundary — that is, `_mpc >= 0` — so it catches a
             // core left mid-sequence and nothing else. WAI and STP hold by decrementing _mpc,
-            // which keeps them mid-sequence and so inside this guard; a halt implemented instead
-            // as "end the instruction but leave _waiting or _stopped set" would slip past it, and
-            // the leaked flag would stop the NEXT vector fetching at all. That is the same
-            // vector-2 failure shape as the block moves', and it is a real constraint on how a
-            // halt may be modelled, not an incidental property of the current one.
+            // which keeps them mid-sequence and so inside this guard.
+            //
+            // This comment used to go on to say that a halt implemented instead as "end the
+            // instruction but leave _waiting or _stopped set" would slip past the guard and stop
+            // the NEXT vector fetching at all, the same vector-2 shape as the block moves'.
+            // Phase 7d task 5 PROBED that, by building exactly that halt and running the suite:
+            // it is not what happens, and $CB and $DB pass all 40,000 vectors with it. Cpu.Tick
+            // has no _waiting or _stopped test anywhere — the hold is expressed by _mpc and
+            // nothing else, and those two fields are readback plus Step()'s loop condition. A
+            // leaked flag therefore stops nothing here, and this guard is not what protects the
+            // halts.
+            //
+            // What does is WaiStpTests: 14 of its 17 65816 cases fail against that halt, because
+            // a core that ends the instruction goes on to execute the NEXT one instead of
+            // holding. The constraint on how a halt may be modelled is real; the mechanism that
+            // enforces it is the unit tests, not the harness.
             if (!cpu.AtInstructionBoundary)
                 cpu = new Cpu<Harte816Bus, W65C816Variant>(new Harte816Bus(ram, log));
 
