@@ -38,11 +38,14 @@ public class RoundTripTests(ITestOutputHelper output)
     private const byte OperandHi = 0x12;
 
     /// <summary>
-    /// The third operand byte, reached only by the 65816's four-byte long modes. Without it
-    /// their bank byte would be whichever opcode happens to follow, so the listing would still
-    /// round-trip while covering no particular bank at all. $56 is the value research §15.3
-    /// laid its four listings out with, and being non-zero it is the one that proves a bank is
-    /// carried rather than defaulted.
+    /// The third operand byte, reached only by the 65816's four-byte long modes. Without it,
+    /// <c>ram[cursor + 3]</c> is written by nothing at all: a four-byte instruction ends at
+    /// <c>cursor + 3</c> and the next opcode starts at <c>cursor + 4</c>, so the byte would stay
+    /// $00 from the zeroed array rather than take on any neighboring opcode. The first long form
+    /// would then render <c>ORA @l $001234</c> — the bank silently collapses to $00, and every
+    /// long form starts taking the <c>@l</c> forcing arm instead of the unforced path. $56 is
+    /// the value research §15.3 laid its four listings out with, and being non-zero it is the
+    /// one that proves a bank is carried rather than defaulted.
     /// </summary>
     private const byte OperandBank = 0x56;
 
@@ -144,7 +147,10 @@ public class RoundTripTests(ITestOutputHelper output)
             .Replace("\t.xs" + Environment.NewLine, "\t.xl" + Environment.NewLine);
 
         Assert.NotEqual(source, widened);
-        Assert.NotEqual(expected, Assemble(widened, "65816"));
+
+        var widenedBytes = Assemble(widened, "65816");
+        Assert.NotEqual(expected, widenedBytes);
+        Assert.Equal(571, widenedBytes.Length);
     }
 
     /// <summary>
@@ -185,9 +191,12 @@ public class RoundTripTests(ITestOutputHelper output)
     [Fact]
     public void AbsoluteOperandsBelowTheCollapseBoundary_RoundTrip()
     {
-        // The last opcode of each list is that dialect's three-byte NOP shape, whose collapse
-        // was the real defect. $1C is NOP abs,X on the NMOS parts and $DC is one of the three
-        // NopAbsoluteExtra shapes on the CMOS ones; each is the encoding 64tass picks for its
+        // The last opcode of each list is that dialect's three-byte NOP shape. On the CMOS
+        // parts $DC is one of the three NopAbsoluteExtra shapes, and that trio alone is what
+        // closes the real mode-collapse defect. On the NMOS parts $1C is plain NOP
+        // AddrMode.AbsoluteX (Opcodes6502.cs:237) — NMOS has no NopAbsoluteExtra mode at all —
+        // so it pins the NOP mnemonic through a path $BD already covers rather than closing any
+        // mode-collapse debt of its own. Each is still the encoding 64tass picks for its
         // dialect's text, which is why the shape can be pinned by one opcode and not by the
         // others sharing its rendering.
         BelowTheBoundary<Mos6502Variant>("6502i", [0xAD, 0xBD, 0xB9, 0xBE, 0x8D, 0xEE, 0x1C]);
@@ -253,6 +262,11 @@ public class RoundTripTests(ITestOutputHelper output)
             $"The 65816 listing is {expected.Length} bytes at m={(wideAccumulator ? 16 : 8)}, " +
             $"x={(wideIndex ? 16 : 8)}; research §15.3 measured {expectedBytes}. A length that " +
             $"moved means an opcode changed size, not that the notation changed.");
+
+        // Pins OperandBank: nothing writes ram[cursor + 3] for a four-byte instruction (the
+        // next opcode starts at cursor + 4), so if that write were removed the bank would
+        // silently revert to $00 and this text would read $001234 instead.
+        Assert.Contains("$561234", source);
 
         Compare(expected, Assemble(source, "65816"));
     }
